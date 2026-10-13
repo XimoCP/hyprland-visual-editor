@@ -127,6 +127,7 @@ Test counts are the full-suite totals observed at each commit; the suite started
 | W2c-c | `a1091de` | the bound per THEME and the bound per STORE (both re-judges' finding) | 1776 |
 | W2c-d | `38f02d2` | the budget counted in the currency the store writes (both judges, last round) | 1777 |
 | W2c-e | `4b5e4c9` | the theme NAME enters the budget (the store repeats it in every entry) | 1778 |
+| W4b | `12de244` | the plugin-enabled check before the resolve/download loop (L4) | 1778 |
 | docs | `6b2791d`, `788772a`, `e76882f` | this record: the rounds, the residuals, the open units | — |
 
 **Verification of `4b5e4c9` — DONE, and it could not be refuted.** One independent cross-model verifier (MiMo
@@ -716,9 +717,13 @@ class W2c-d existed to close. Measured name sweep (1,348 minimal presets, counte
   currency (code bytes instead of what the store writes), so the copy could promise a memory the store refused. The
   currency is now ONE pair of functions used by both the scan and the report. Verified by one independent
   cross-model verifier, since the dual review's round budget was spent.
-- **W4b — the W4/W5 reconciliation (L4), decided but not yet applied**: the plugin-enabled check moves BEFORE the
-  resolve/download loop in `src/providers/mpvpaper.rs`, so a disabled plugin never downloads up to 1 GiB for a theme
-  the apply is going to refuse. Two lines plus the ordering assertion in the existing by-construction test.
+- **W4b — DONE** (`12de244`), the W4/W5 reconciliation: the plugin-enabled check now runs BEFORE the resolve/download
+  loop in `src/providers/mpvpaper.rs`, so a disabled plugin never downloads up to 1 GiB for a theme the apply is going
+  to refuse. Verified by the parent's own review of the diff and of the resulting order (confine → enabled check →
+  resolve → live-state write), which is what a single-line logic change with no outside effect requires; the writer
+  also extended the file's existing by-construction test with the ordering assertion, and the full suite (1778) and
+  `cargo check --all-targets` were green. One behaviour change worth knowing: with the plugin disabled, a theme whose
+  videos also cannot be resolved now reports the plugin error instead of "No mpvpaper videos could be resolved".
 - **OWED verification: none.** Every commit in this contract has been verified by a model that did not write it
   (`d5cc429`, `881ae47`, `32b9fcd`, `299af0a`, `9f05e5e`, `0c842d3`, `246bf1c` all closed their rounds, and
   `9d2bcf8`+`d9e12af` closed theirs with a DUAL review by two different models). The ONE boundary that remains
