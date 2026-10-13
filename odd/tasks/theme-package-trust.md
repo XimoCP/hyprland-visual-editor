@@ -129,10 +129,16 @@ Test counts are the full-suite totals observed at each commit; the suite started
 | W2c-e | `4b5e4c9` | the theme NAME enters the budget (the store repeats it in every entry) | 1778 |
 | docs | `6b2791d`, `788772a`, `e76882f` | this record: the rounds, the residuals, the open units | — |
 
-**Verification in flight when this session closed**: `4b5e4c9` was handed to ONE independent cross-model verifier
-(MiMo v2.6-flash) whose brief was to enumerate every byte the store's format writes and name any the budget does not
-charge — the exact hole two previous verifications found. **The next session must read that report** (Engram, project
-`hve`, and the topic `odd/theme-package-trust/w2c-e`) and record its verdict here before treating W2c as closed.
+**Verification of `4b5e4c9` — DONE, and it could not be refuted.** One independent cross-model verifier (MiMo
+v2.6-flash) was briefed to enumerate every byte the store's format writes and name any the budget does not charge.
+Verdict `sound with findings`, measured rather than argued: the worst in-budget single-theme store it could construct
+writes **779,891 bytes** (5.95× the counted bytes, 2.69× under the 2 MiB write bound); the only uncharged bytes are
+constants (the `version` line, a possible once-per-theme parent header) and they are covered by slack; 6× per byte is
+the true worst case for values AND keys (swept over control bytes, C1, astral, quotes, backslashes, newlines); the
+charged name and the written key are the SAME `&str` through every consumer; all four cause messages are true of the
+file they name; both copy branches match the code; and no realistic theme is affected (the keeper's four warning
+themes measure 560-650 counted bytes each, the 33 shipped presets 40,077 as one theme). Its one finding is the
+ADVISORY below, which pre-dates this commit. **W2c is closed.**
 
 ## Log (W2c) — the record this unit answers for
 
@@ -472,6 +478,13 @@ handles its path and its mode, and closes a security MEDIUM, which is Tier 3 by 
 - The headless render check, read by eye, after the copy change (AGENTS.md).
 
 ### Residuals of W2c, disclosed rather than hidden
+
+- **The REMEMBERED copy can still be broken by ACCUMULATION, never by one theme.** If the acceptances already in the
+  store total over its 2 MiB write bound, `save` refuses for a theme that is individually inside every rule, and the
+  warning had promised it would not ask again. Reachable with ~3 adversarial near-budget themes or ~16 realistic ones
+  (the keeper's own measure 560-650 bytes each); the consequence is ONE extra warning, and the behaviour is codified
+  by `an_over_bound_write_is_refused_and_the_old_file_survives`. No per-theme budget can see this case, which is why
+  the store's own bound is kept as the backstop; deleting the store is the keeper's escape hatch.
 
 - **The warning lists preset NAMES and their bodies are not printed.** Hooks show their command text verbatim; a
   preset shows `category/file.lua`. The acceptance now covers the body, so a change re-warns and nothing applies in
