@@ -105,6 +105,7 @@ Test counts are the full-suite totals observed at each commit; the suite started
 | W6 | `eccdd2b` | refuses a theme value that could read as an option | 1653 |
 | W10 | `53eea8c` | bounds the read of an untrusted package (+ W6 residuals `c83f18b`) | 1665 |
 | W10b | `8b591e7` | bounds EVERY remaining theme-file reader; rejects non-regular files | 1685 |
+| W2b | `317d55e` | the warning made operable from the keyboard | 1688 |
 | W4 | `3cad59a` | confines `video_directory` to `$HOME/{Pictures,Videos,Downloads}` | 1632 |
 | W5 | `67a7ee6` | caps the video download at 1 GiB (plus an on-disk re-check) | 1632 |
 | deps | `a0bf10e` | 4 RustSec advisories cleared by lockfile-only bumps | 1616 |
@@ -147,12 +148,36 @@ else.
 - **Ask for the evidence IN the commit message** on Tier 3 units: W10b's commit body is empty, so the audit trail
   lives only in the chat.
 - **`.atl/skill-registry.md` and `.atl/.skill-registry.cache.json` show up modified** in this tree; they are a
-  plugin's artifacts, not this contract's — never stage them with a unit.
+  plugin's artifacts, not this contract's — never stage them with a unit. (They were refreshed and committed on
+  their own in `417203d`.)
+- **A backgrounded build can RESUME the session that launched it.** This is how W2b's dead session came back to
+  life: it had ended its turn waiting for a build, the build finished, the session resumed and started writing the
+  `.slint` implementation — WHILE the replacement session was verifying. The replacement noticed the files moving
+  under it, stopped duplicating and turned into an independent verifier, which is exactly the right reaction. Two
+  sessions on one unit is survivable, but it was luck: the lesson is to treat a session that backgrounded work as
+  possibly ALIVE, not dead.
+- **The flaky module is real and corroborated.** Two DIFFERENT tests in `reload_coalescer` failed under full-suite
+  parallelism across independent runs — `sandboxed_missing_flock_fails_open` (one run) and
+  `sandboxed_no_loss_under_idle_exit_stress` ("bash must spawn: NotFound", another) — and both pass in isolation
+  and as a module. That is the load-dependent flake the health audit predicted (19 sleeps, zero `#[serial]`), now
+  with evidence. It must be fixed in Lane C, not waived.
 
 ## Still pending
 
-- **W2b** (in flight): make the warning operable from the keyboard. Its tests are already written; the `.slint` work
-  is underway.
+- **W2b — DONE** (`317d55e`), but read how it landed: the implementation was written by the RESUMED old session
+  while the replacement verified it. Its own verifier confirmed 6/6 focused, the full suite green apart from the
+  `reload_coalescer` flake, `cargo check --all-targets` clean, and the render read by eye (the blue focus ring
+  moving from Cancel to Continue with identical geometry). It also corrected two of the pre-written assertions that
+  demanded `export function` — syntax Slint 1.17 REJECTS (only `public`/`protected` parse); the fix was legitimate,
+  not a weakening.
+  **Its two residuals, deliberately not fixed** (the parent can queue them):
+  1. The carriers list does not scroll from the keyboard while the gate holds focus — the arrows move the BUTTON
+     cursor, so a long list can only be scrolled with the wheel.
+  2. If a shell reseed fires while the gate is open (an earlier transition finishing, or the panel closing),
+     `shell-kbd.focus()` steals focus from the modal and the keys go back to the gallery behind it. NOT a security
+     hole — the risky theme stays held — but the modal goes keyboard-deaf. Stated one-line fix: add
+     `&& !root.trust-warning-open` to those observers.
+- **Cross-model verification still owed** for W1b, W6, W10, W10b and W2b.
 - **W7**: the IPC socket — mode set BEFORE `bind`, and the `/tmp/hve.sock` fallback made safe. `src/ipc.rs`.
 - **W8**: `hve.log` and the decision log created with mode 0600. `src/main.rs`, `src/decision_log.rs`.
 - **W9**: validate the theme name in `ThemeManager::delete`/`apply`. `src/theme_manager.rs`.
