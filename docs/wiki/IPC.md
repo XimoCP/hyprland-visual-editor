@@ -6,9 +6,9 @@ This page is for people who write scripts or bind keys. If you only use the wind
 
 HVE runs a Unix-socket server in the background, so scripts, keybinds and a second launch can talk to the running instance without touching the GUI.
 
-- Socket path: `$XDG_RUNTIME_DIR/hve.sock`, falling back to `/tmp/hve.sock`.
+- Socket path: `$XDG_RUNTIME_DIR/hve.sock`, used only while that directory is a real directory this user owns with mode `0700`. Otherwise HVE uses `$HOME/.local/share/hve/run/hve.sock`. `/tmp` is never used.
 - One line per connection: the server reads a single command line, dispatches it onto the UI thread, and writes back a single reply line.
-- The socket is created with owner-only permissions (`0700`), a stale socket left by a previous run is removed at startup, and the file is deleted when HVE exits.
+- The socket is bound inside a directory only its owner can enter (mode `0700`, created **before** the bind, so the socket is never reachable while it is more permissive), a stale socket left by a previous run is removed at startup, and the file is deleted when HVE exits. With neither a usable `$XDG_RUNTIME_DIR` nor a `$HOME`, HVE refuses to start the IPC server instead of falling back to a shared directory.
 
 ## 🛠️ The client: `hve-ipc`
 
@@ -17,6 +17,8 @@ HVE runs a Unix-socket server in the background, so scripts, keybinds and a seco
 ```bash
 hve-ipc <command>
 ```
+
+The client resolves the socket exactly like the server does — the same `$XDG_RUNTIME_DIR` rule, then the same `$HOME` fallback.
 
 With no socket it prints `HVE is not running` and exits with status 1. With no argument it prints `Usage: hve-ipc <command>`. An unrecognised command is answered with `error: unknown command '<command>'`.
 

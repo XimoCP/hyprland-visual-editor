@@ -56,7 +56,7 @@ hve/
 | `animation_preset.rs` | 766 | Pure Lua animation preset model and reader |
 | `border_preset.rs` | 1003 | Pure Lua border preset reader |
 | `tray.rs` | 277 | Tray icon (ksni), context menu, active/inactive colours |
-| `ipc.rs` | 1065 | Unix socket server at `$XDG_RUNTIME_DIR/hve.sock`, commands + `status` JSON |
+| `ipc.rs` | 1690 | Unix socket server in a private owner-only directory, commands + `status` JSON |
 | `hypr_ipc.rs` | 1097 | Hyprland event listener (`socket2.sock`), throttled UI refresh |
 | `theme.rs` | 490 | Theme resolution (dark/light/system), palettes, derived Slint colours |
 | `theme_manager.rs` | 2457 | Complete themes: list, save, apply, rename, delete (with providers) |

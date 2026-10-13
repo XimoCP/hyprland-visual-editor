@@ -1,10 +1,46 @@
 #!/usr/bin/env python3
 """HVE IPC Client — send commands to HVE via Unix socket."""
-import os, sys, socket
+import os, stat, sys, socket
 
-socket_path = os.environ.get("XDG_RUNTIME_DIR", "/tmp") + "/hve.sock"
+# Mirrors src/ipc.rs::socket_path_from. The server only ever binds inside a
+# directory this user owns and nobody else can enter, so the client must
+# resolve the same two candidates in the same order — otherwise it would look
+# in /tmp while the running instance listens under $HOME.
+FALLBACK_DIR = os.path.join(".local", "share", "hve", "run")
 
-if not os.path.exists(socket_path):
+
+def resolve_socket_path():
+    """The socket of the running instance, or None when there is nowhere safe.
+
+    $XDG_RUNTIME_DIR wins only when it is a real directory this user owns with
+    mode exactly 0700 (nothing for group or other). Anything else — unset, a
+    planted file, someone else's dir, a group-readable dir — falls through to
+    the private fallback under $HOME. Never /tmp: it is world-writable.
+    """
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if runtime:
+        try:
+            st = os.stat(runtime)
+        except OSError:
+            st = None
+        if (
+            st is not None
+            and stat.S_ISDIR(st.st_mode)
+            and st.st_uid == os.getuid()
+            and stat.S_IMODE(st.st_mode) == 0o700
+        ):
+            return os.path.join(runtime, "hve.sock")
+
+    home = os.environ.get("HOME")
+    if home:
+        return os.path.join(home, FALLBACK_DIR, "hve.sock")
+
+    return None
+
+
+socket_path = resolve_socket_path()
+
+if socket_path is None or not os.path.exists(socket_path):
     print("HVE is not running", file=sys.stderr)
     sys.exit(1)
 

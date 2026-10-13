@@ -302,7 +302,7 @@ HVE integra fondos de pantalla animados (video) para temas de **Noctalia v5** a 
 
 ### IPC (Comunicación entre procesos)
 
-HVE expone un **servidor Unix socket** en `$XDG_RUNTIME_DIR/hve.sock` (fallback `/tmp/hve.sock`).
+HVE expone un **servidor Unix socket** en `$XDG_RUNTIME_DIR/hve.sock`, usado solo mientras ese directorio sea un directorio real de este usuario con modo `0700`; en cualquier otro caso la ruta es `$HOME/.local/share/hve/run/hve.sock`. Nunca `/tmp`: es escribible por cualquiera.
 
 **Cliente incluido**: `hve-ipc <comando>`
 
