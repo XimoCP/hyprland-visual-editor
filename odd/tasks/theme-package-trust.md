@@ -118,6 +118,11 @@ Test counts are the full-suite totals observed at each commit; the suite started
 | W10c | `a3a183e` | the non-regular-file guard moved into the lowest-level reader; both `fs::copy` restore sites; the scan | 1727 |
 | W1c-b | `881ae47` | escaped keys, a UTF-8 BOM and multi-line inline tables: FAIL CLOSED instead of silent | 1733 |
 | W10c-b | `32b9fcd` | the scan refuses a symlinked ROOT too, not only symlinked children | 1734 |
+| W1d | `299af0a` | the hooks detector reads `settings.toml` with the REAL `toml` parser (2290 → 1834 lines, −456) | 1736 |
+| W10c-c | `9f05e5e` | packaging refuses a symlinked theme dir BEFORE any read or write | 1737 |
+| W1d-b | `0c842d3` | a REFUSED `settings.toml` reports "uninspected", never an empty report | 1738 |
+| W10c-d | `246bf1c` | a theme tree carrying a symlinked directory is refused up front | 1741 |
+| docs | `6b2791d`, `788772a` | this record: the second round, the residuals, the open units | — |
 
 ### Cross-model verification (Tier 3 — a DIFFERENT model from the writer)
 
@@ -170,6 +175,41 @@ Test counts are the full-suite totals observed at each commit; the suite started
   inspected, so a detector that lost the table must say so. The user-visible line is: `hooks table — the hooks
   table in <file> (line N) could not be fully read by this scan; it may carry shell commands that are not
   listed here`.
+
+### Cross-model verification, third round (2026-10-13) — and the failure that ended the line-based reader
+
+- **W1c-b REFUTED again**, with the BLOCKER that finally justified a structural rewrite: a header-shaped line
+  INSIDE an untracked multi-line string (`note = """\n[other]\n"""` then a root `hooks.started`) corrupts the
+  document-root state, so a parser-valid root hook reached an EMPTY report — CRITICAL-1 recurring. The inverse
+  also held: `note = """\n[hooks]\nstarted = "not real"\n"""` made a CLEAN theme warn. Three rounds of line-based
+  patches had produced three refutations. **The class, not the spelling, was the defect.**
+- **W1d (the structural fix)** — the detector now parses with the real `toml` crate (`1.1.2+spec-1.1.0`, already
+  in this lockfile transitively; promoting it to a direct dependency changed exactly ONE line of `Cargo.lock`).
+  Every spelling the three rounds fought is now handled by the parser, and the hand parser is GONE: −456 lines.
+  Verified `sound with findings`, no blocker. The one finding that mattered was a real FAIL-OPEN the structural
+  fix exposed: an OVER-BOUND but valid `settings.toml` carrying `[hooks]` reached an empty report, because the
+  bounded reader refuses before parsing — and the writer's own test had PINNED that hole as "no hooks from this
+  file".
+- **W1d-b** closes it: every `Err` the reader can return (over bound, not a regular file, unreadable, not valid
+  UTF-8) now reports the SAME conservative "could not inspect" entry a parse failure produces, while a MISSING
+  settings file still reports EMPTY (a theme with no settings file carries no hooks, and the apply cannot copy a
+  file that does not exist). Verified `sound with findings`.
+- **The finding of the third round, and it is about honesty, not code**: the rationale in the comments claimed
+  "the apply copies `settings.toml` verbatim, so a hook inside it runs on apply" as the reason the refusal entry
+  must exist. Measured: for the over-bound and non-regular classes the apply's own W10c preflight ALREADY refuses
+  the copy, so no hook could have run from them. The entry is still required — the gate layer must not depend on
+  another module's guard — but the causal story was overstated. The comments were corrected to say "defence in
+  depth", not "the only wall". A false claim in a security comment is a defect; this contract now records that
+  rule four times, which is what it cost.
+- **W10c-c/W10c-d** — refusing a symlinked scan ROOT was not refusing the OPERATION: `package_theme_dir` kept
+  going and wrote through the link. It now refuses a symlinked theme dir and (W10c-d) a theme tree carrying any
+  symlinked DIRECTORY up front, before anything is read or written, with the canary fingerprint proving nothing
+  escaped. Verified `sound` — the verifier's own probe run found NO escaping write across a child link at the
+  write site, at depth 3, through a chain, onto `/proc`, hidden, and inside `presets/<category>`, and pinned the
+  budget boundaries empirically (10,000 entries and 31 nested dirs package; one more fails closed).
+- **A `settings.toml` that is exactly AT the 4 MiB bound is claimed to report its hooks, not the conservative
+  entry** — verified by reading (`take(max+1)` + `> max`), NOT by a test, because `inspect_theme_package` is not
+  reachable from the CLI. Named as the one unverified boundary of W1d-b.
 
 ### The keeper's own themes — measured, not assumed
 
@@ -241,10 +281,9 @@ else.
   package today (`main.rs:1453-1459`), but `TrustGate::request` short-circuits on the armed confirmation before
   consulting the fresh report, so a package rewired while the modal is open still applies on the old consent.
   Needs a small state file of its own, never a change to the theme packages.
-- **OWED: the cross-model verification of `881ae47` (W1c-b) and `32b9fcd` (W10c-b)** — MiMo wrote both; a different
-  model must verify them before they count as closed (AGENTS.md, Tier 3). The fail-closed rule W1c-b introduced is
-  the piece to attack hardest: it must be impossible to reach an EMPTY report for a file whose hooks table the
-  detector could not read.
+- **OWED verification: none.** Every commit in this contract has been verified by a model that did not write it
+  (`d5cc429`, `881ae47`, `32b9fcd`, `299af0a`, `9f05e5e`, `0c842d3`, `246bf1c` all closed their rounds). The ONE
+  boundary that remains unverified is stated above: a `settings.toml` exactly AT the 4 MiB bound.
 - **The W4/W5 MEDIUM (unresolved, needs one decision)**: the verified report says the download still happens
   BEFORE the plugin-enabled check, while this contract's line 51 says it must not. The contract line was written
   by the parent; the code follows the older instruction. One of the two is wrong — reconcile them and record which.
@@ -268,12 +307,24 @@ else.
 - **The save-side `fs::copy` from a LIVE path** (`noctalia.rs:2109`, the user's own `settings.toml`) has no
   regular-file predicate: a FIFO planted there hangs `save`. **Out of this contract's scope by its own words**
   (live-config reads are not theme files) and pre-existing. Named so it is a decision, not an oversight.
-- **A bare `true`/number value under `[hooks]` is reported as a command** (`hooks.enabled = true` → command
-  `"true"`). A false positive in the SAFE direction, pre-existing since W1, and narrowing it risks dropping a
-  genuine unquoted command. Left alone on purpose.
-- **A pre-existing silent loss under a `[hooks]` header**: in `started = """ … """" , shutdown = "x"` (a multi-line
-  string and a second key sharing the closing line) `shutdown` is lost. It exists at baseline 1727 and is not one
-  of the refuted spellings; the W1c-b fail-closed rule covers only the forms the reader KNOWS it lost.
+- **CLOSED by W1d — kept here so nobody re-reports them**: the "`true` as a command" false positive and the silent
+  loss of a key sharing a multi-line string's closing line are BOTH gone. A real parser reads the document, a
+  non-string value is data and not a command, and there is no closing-line residue left to lose. `W1d` deleted
+  −456 lines of hand parser and with them both defects.
+- **A write whose FINAL path component is a symlinked FILE still writes through it** (`fs::write` follows the last
+  link). Measured by the verifier and DISCLOSED in `package_theme_dir`'s own docstring. The packaging guards refuse
+  a symlinked DIRECTORY; a file symlink inside a theme is read on purpose, and this is its write-side twin.
+- **`check_theme_tree` and `scan_theme_dir` swallow a mid-iteration `read_dir` error** (`entries.flatten()`), so a
+  tree whose entries cannot all be listed is walked as if it were complete. No realistic trigger under the threat
+  model (the same unreadable path blocks the apply too); ADVISORY, recorded rather than hidden.
+- **The maintenance pass initialises no tracing subscriber**, so a packaging refusal reaches the operator as the
+  stdout `skipped (…)` line only, never as the `warn!`. The warning TEXT itself is test-pinned; the visibility of
+  it in that mode is not.
+- **`ThemeManager::save` uses `create_dir_all`, which follows a pre-planted symlink** at `themes_dir/<name>`. The
+  interactive save path, user-initiated and name-owned by the keeper — outside Lane B, named so it is a decision.
+- **A process lesson that cost a verifier real time**: `cargo test --bin hve` does NOT rebuild `target/debug/hve`,
+  so an end-to-end probe of the CLI binary silently exercises the PREVIOUS build. Run `cargo build --bin hve`
+  first. The stale binary reproduced the very write-through the fix closed, which is how it was caught.
 - **Deliberately NOT bounded** (named by W10b, do not "fix" blindly): binary MEDIA reads (`theme_manager.rs:841/
   858/876`, `shell/gallery/thumbs.rs`) because a wallpaper or video legitimately exceeds the 4 MiB TEXT bound, and
   live-config reads (`noctalia.rs`, `preset_store.rs`) which are not theme files.
