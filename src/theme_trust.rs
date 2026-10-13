@@ -19,7 +19,11 @@
 //!   never `cat`ed (see the filter), so it is not reported.
 //!
 //! [`inspect_theme_package`] reports both so the warning (W2) can word itself
-//! from facts: the hook KEYS with their COMMAND TEXT, and the preset names.
+//! from facts: the hook KEYS with their COMMAND TEXT, and the presets with
+//! their NAMES AND BODIES. The body is part of the report because it is part
+//! of what EXECUTES — the apply copies the file as it is on disk — so a theme
+//! that keeps a preset's name and rewrites its body is a different package
+//! and must warn again (W2c: the blocker a dual verification refuted).
 //!
 //! Honest limit, stated here and in the warning itself: this report feeds a
 //! CONSENT GATE, not a sandbox. It says what a package carries; it cannot
@@ -77,6 +81,35 @@ pub struct ShellHook {
     pub command: String,
 }
 
+/// The largest preset body the scan carries IN FULL: 16 KiB, about five
+/// times the largest preset this project ships (the shaders), so a real
+/// preset always fits. A body over this bound is reported as
+/// [`PresetBody::Unreadable`] instead of being truncated — a truncated
+/// comparison would make two DIFFERENT long bodies compare equal, which is
+/// the collision this whole store exists to avoid.
+pub const MAX_PRESET_BODY_BYTES: usize = 16 * 1024;
+
+/// A preset's content, as far as the scan could read it.
+///
+/// The BODY is what matters and this is why the detector carries it: the
+/// apply copies the file AS IT IS ON DISK into the user preset store, and
+/// (`animations`, `borders`) the assembled `overlay.lua` `dofile`s it — so
+/// the body is executable content exactly like a hook's command text. A
+/// report that named the file but not its body would let an accepted theme
+/// be rewritten in silence (`W2c`, the blocker the dual verification
+/// refuted).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PresetBody {
+    /// The whole file, verbatim.
+    Text(String),
+    /// The file could not be read IN FULL — over
+    /// [`MAX_PRESET_BODY_BYTES`], unreadable, not a regular file, not
+    /// UTF-8. The string says why, for the warning to show; a report
+    /// carrying this is never rememberable (see
+    /// [`ThemeTrustReport::is_uninspected`]).
+    Unreadable(String),
+}
+
 /// One preset file the package carries under `presets/<category>/` that the
 /// report must name: every `*.lua`, plus a `*.frag` in a category the apply
 /// `cat`s (the field keeps the name `lua_presets` — the gate's shape is
@@ -87,6 +120,10 @@ pub struct LuaPreset {
     pub category: String,
     /// The file name (`Space.lua`, `evil.frag`).
     pub file_name: String,
+    /// What the file contains, or why it could not be read in full. Part of
+    /// the report BECAUSE it is part of what executes: a theme that keeps
+    /// this name and rewrites this body is a different package.
+    pub body: PresetBody,
 }
 
 impl LuaPreset {
@@ -134,19 +171,25 @@ impl ThemeTrustReport {
         self.shell_hooks.is_empty() && self.lua_presets.is_empty()
     }
 
-    /// Whether any part of the package could NOT be inspected — the report
-    /// then carries a CONSERVATIVE entry ([`UNINSPECTED_HOOK_KEY`]) instead
-    /// of the truth about a file nobody read.
+    /// Whether any part of the package could NOT be read in full — the
+    /// report then carries a CONSERVATIVE hook entry
+    /// ([`UNINSPECTED_HOOK_KEY`]) or a preset body that says why it could
+    /// not be read ([`PresetBody::Unreadable`]), instead of the truth about
+    /// a file nobody read.
     ///
     /// Consumers must treat such a report as strictly weaker than a full
     /// one. The gate itself only needs "non-empty" (it warns either way),
-    /// but nothing may REMEMBER it: a package HVE could not read can change
+    /// but nothing may REMEMBER it: a file HVE could not read can change
     /// inside without the report changing, so a remembered acceptance of it
     /// would silence a warning over content nobody ever judged (W2c, S1).
     pub fn is_uninspected(&self) -> bool {
         self.shell_hooks
             .iter()
             .any(|h| h.key == UNINSPECTED_HOOK_KEY)
+            || self
+                .lua_presets
+                .iter()
+                .any(|p| matches!(p.body, PresetBody::Unreadable(_)))
     }
 }
 
@@ -388,11 +431,40 @@ fn lua_presets(theme_dir: &Path) -> Vec<LuaPreset> {
             .collect();
         names.sort();
         out.extend(names.into_iter().map(|file_name| LuaPreset {
+            body: preset_body(&dir.join(&file_name)),
             category: category.to_string(),
             file_name,
         }));
     }
     out
+}
+
+/// Read one preset's body, under the SAME guarded reader every untrusted
+/// theme file goes through (its 4 MiB per-file bound, its regular-file
+/// predicate, its one error type) and then under this module's own, far
+/// tighter [`MAX_PRESET_BODY_BYTES`] — the bound the store can afford to
+/// carry verbatim.
+///
+/// A file that cannot be read in full is reported as
+/// [`PresetBody::Unreadable`], NEVER as an empty body and never truncated:
+/// an empty body would read as "this preset contains nothing", and a
+/// truncated one would make two different bodies compare equal.
+fn preset_body(path: &Path) -> PresetBody {
+    match crate::theme_package::read_theme_text(path) {
+        Ok(text) if text.len() <= MAX_PRESET_BODY_BYTES => PresetBody::Text(text),
+        Ok(text) => PresetBody::Unreadable(format!(
+            "the preset {} could not be read in full by this scan: it is {} bytes, \
+             over the {MAX_PRESET_BODY_BYTES}-byte bound for a preset HVE can remember, \
+             so it may carry code that is not shown here",
+            path.display(),
+            text.len()
+        )),
+        Err(e) => PresetBody::Unreadable(format!(
+            "the preset {} could not be read by this scan: {e}; \
+             it may carry code that is not shown here",
+            path.display()
+        )),
+    }
 }
 
 /// Whether a preset file name is content the report must name: one of the
@@ -612,7 +684,17 @@ mod tests {
             .join(crate::theme_presets::PRESETS_DIR)
             .join(category);
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join(name), "-- preset body\n").unwrap();
+        fs::write(dir.join(name), FIXTURE_PRESET_BODY).unwrap();
+    }
+
+    /// The body `write_preset` puts in every fixture preset. The expected
+    /// reports below name it, because the body is PART of the report: a
+    /// theme that keeps a preset's name and rewrites its body is a
+    /// different package (W2c).
+    const FIXTURE_PRESET_BODY: &str = "-- preset body\n";
+
+    fn written_body() -> PresetBody {
+        PresetBody::Text(FIXTURE_PRESET_BODY.into())
     }
 
     /// Every file under `root`, relative and sorted — a read-only fingerprint.
@@ -1527,14 +1609,17 @@ mod tests {
                 LuaPreset {
                     category: "animations".into(),
                     file_name: "travel.lua".into(),
+                    body: written_body(),
                 },
                 LuaPreset {
                     category: "borders".into(),
                     file_name: "Space.lua".into(),
+                    body: written_body(),
                 },
                 LuaPreset {
                     category: "borders".into(),
                     file_name: "scan.frag".into(),
+                    body: written_body(),
                 },
             ],
             "every preset the apply installs and can execute must be named in \
@@ -1580,14 +1665,17 @@ mod tests {
                 LuaPreset {
                     category: "animations".into(),
                     file_name: "evil.frag".into(),
+                    body: written_body(),
                 },
                 LuaPreset {
                     category: "borders".into(),
                     file_name: "evil.frag".into(),
+                    body: written_body(),
                 },
                 LuaPreset {
                     category: "shaders".into(),
                     file_name: "wrapper.lua".into(),
+                    body: written_body(),
                 },
             ],
             "a .frag in a category the scripts cat must be reported and \
@@ -2033,6 +2121,129 @@ mod tests {
             "a clean package applies, and its path does not depend on the store"
         );
         assert!(report.is_empty(), "the fixture must carry neither hooks nor presets");
+    }
+
+    // ── W2c: the preset BODY is part of what runs and of what is accepted ─
+
+    /// W2c: the report carries the preset's BODY, not only its name — the
+    /// body is what runs (the apply copies this file as it is on disk and
+    /// the assembled overlay executes it), so it is part of what the keeper
+    /// accepts.
+    #[test]
+    fn a_preset_is_reported_with_the_body_that_would_run() {
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = tmp.path().join("Theme");
+        write_preset(&theme, "animations", "Space.lua");
+
+        let report = inspect_theme_package(&theme);
+
+        assert_eq!(
+            report.lua_presets,
+            vec![LuaPreset {
+                category: "animations".into(),
+                file_name: "Space.lua".into(),
+                body: written_body(),
+            }],
+            "the preset must be reported WITH its body, got: {:?}",
+            report.lua_presets
+        );
+        assert!(
+            !report.is_uninspected(),
+            "a preset this scan read in full is INSPECTED"
+        );
+    }
+
+    /// W2c: a body over the remember bound is reported as UNREADABLE, never
+    /// truncated and never empty. Truncating would make two DIFFERENT long
+    /// bodies compare equal — the collision this whole store exists to avoid
+    /// — and an empty body would read as "this preset contains nothing".
+    #[test]
+    fn a_preset_body_over_the_remember_bound_is_reported_unreadable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = tmp.path().join("Theme");
+        let dir = theme
+            .join(crate::theme_presets::PRESETS_DIR)
+            .join("animations");
+        fs::create_dir_all(&dir).unwrap();
+        // Over this module's bound, well UNDER the shared reader's 4 MiB
+        // one: the class is "too big to remember", not "too big to read".
+        fs::write(dir.join("Space.lua"), "x".repeat(MAX_PRESET_BODY_BYTES + 1)).unwrap();
+
+        let report = inspect_theme_package(&theme);
+
+        match &report.lua_presets[0].body {
+            PresetBody::Unreadable(cause) => assert!(
+                cause.contains("could not be read in full"),
+                "the cause must say the body was not read in full, got: {cause}"
+            ),
+            other => panic!("an over-bound body must be UNREADABLE, got {other:?}"),
+        }
+        assert!(
+            report.is_uninspected(),
+            "a preset nobody read in full makes the whole report uninspected"
+        );
+        assert!(
+            !report.is_empty(),
+            "an unreadable preset must never read as an empty report"
+        );
+    }
+
+    /// W2c + W10: a preset file the shared reader REFUSES (here: not valid
+    /// UTF-8) is reported as unreadable WITH its cause, and the report is
+    /// uninspected — so the keeper is asked every time instead of a decision
+    /// being remembered over a body nobody read.
+    #[test]
+    fn a_preset_the_reader_refuses_is_reported_unreadable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = tmp.path().join("Theme");
+        let dir = theme
+            .join(crate::theme_presets::PRESETS_DIR)
+            .join("animations");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("Space.lua"), [0xffu8, 0xfe, 0x00]).unwrap();
+
+        let report = inspect_theme_package(&theme);
+
+        assert!(
+            matches!(&report.lua_presets[0].body, PresetBody::Unreadable(cause) if cause.contains("could not be read")),
+            "a refused preset body must be reported with its cause, got: {:?}",
+            report.lua_presets
+        );
+        assert!(report.is_uninspected());
+    }
+
+    /// The preset body reaches the store through the report, so a body the
+    /// scan could not read must not survive a round trip as an EMPTY body:
+    /// nothing is remembered for such a report, and the store's own
+    /// comparison maps the body to "none", which no stored entry can equal.
+    #[test]
+    fn an_unreadable_preset_body_never_matches_a_stored_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = tmp.path().join("Theme");
+        write_preset(&theme, "animations", "Space.lua");
+        let readable = inspect_theme_package(&theme);
+        let mut store = crate::theme_trust_store::TrustStore::default();
+        store.remember("Space", &readable);
+        assert!(store.accepts("Space", &readable));
+
+        let dir = theme
+            .join(crate::theme_presets::PRESETS_DIR)
+            .join("animations");
+        fs::write(dir.join("Space.lua"), "y".repeat(MAX_PRESET_BODY_BYTES + 1)).unwrap();
+        let unreadable = inspect_theme_package(&theme);
+        assert!(unreadable.is_uninspected());
+        assert!(
+            !store.accepts("Space", &unreadable),
+            "a body nobody read in full can never be the accepted one"
+        );
+        // The store compares what it is GIVEN, so the OLD report still
+        // matches the old entry — and that is the mechanism working: the
+        // caller always inspects the package FRESH, so the report it hands
+        // in is the unreadable one above, which matches nothing.
+        assert!(
+            store.accepts("Space", &readable),
+            "the store is a snapshot keyed by content: the old entry answers for the old report"
+        );
     }
 
     // ── W10b: the theme's settings.toml is an UNTRUSTED file ───────────

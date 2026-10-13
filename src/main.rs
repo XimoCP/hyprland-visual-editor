@@ -1402,7 +1402,16 @@ fn trust_warning_lines(
     let presets = report
         .lua_presets
         .iter()
-        .map(|p| slint::SharedString::from(format!("{}/{}", p.category, p.file_name)))
+        .map(|p| {
+            // A preset the scan could NOT read in full says so on its own
+            // line: the copy below tells the keeper part of this package
+            // could not be read, and this is where he sees WHICH part.
+            let cause = match &p.body {
+                crate::theme_trust::PresetBody::Text(_) => String::new(),
+                crate::theme_trust::PresetBody::Unreadable(cause) => format!(" — {cause}"),
+            };
+            slint::SharedString::from(format!("{}/{}{cause}", p.category, p.file_name))
+        })
         .collect();
     (hooks, presets)
 }
