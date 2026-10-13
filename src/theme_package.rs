@@ -630,6 +630,8 @@ pub fn theme_file_is_bounded(path: &Path) -> bool {
 /// walk runs under [`ThemeScanLimits::default()`]. A file, tree or entry
 /// count over the bound is refused with a warning and skipped — the scan
 /// returns everything it could read instead of exhausting memory or stack.
+/// W10c-b: a root that IS a symlink is refused with one warning and walked
+/// not at all — see [`scan_theme_dir`].
 pub fn scan_theme_for_absolute_paths(theme_dir: &Path) -> Vec<(PathBuf, String)> {
     scan_theme_for_absolute_paths_with_limits(theme_dir, ThemeScanLimits::default())
 }
@@ -648,8 +650,16 @@ pub fn scan_theme_for_absolute_paths_with_limits(
 
 /// Walk `dir` depth-first in sorted order, collecting the hits of every text
 /// file under it. The packaged `media/` directory is skipped whole, and so
-/// is any symlinked directory (W10c: it would carry the walk out of the
-/// package); a symlink to a regular file is still read through.
+/// is any symlinked DIRECTORY — the ROOT included: the walk never leaves
+/// the package through a symlink, whether it is met as a child entry
+/// (checked in the loop below) or handed in as the root itself (checked
+/// here first, W10c-b: `list_theme_dirs` follows links, so a themes-root
+/// entry like `Evil -> ~` IS handed in as a root). Exactly what is NOT
+/// protected, stated for the record: a symlink to a regular FILE is still
+/// read through by design (a root symlink to a file cannot be walked at
+/// all — `read_dir` on it fails and nothing is read), and the gallery
+/// LISTING still shows a symlinked theme, because the leak this closes is
+/// the walk, not the list.
 ///
 /// W10: the walk is bounded on four axes ([`ThemeScanLimits`]) and every
 /// refusal is a warning plus a skip, never a panic and never an unbounded
@@ -662,6 +672,28 @@ fn scan_theme_dir(
     budget: &mut ScanBudget,
     hits: &mut Vec<(PathBuf, String)>,
 ) {
+    // W10c-b (MEDIUM): the ROOT can be a symlink too. `list_theme_dirs`
+    // filters with `is_dir()`, which FOLLOWS links, so a themes-root
+    // entry `Evil -> ~` is listed and passed here as `dir` — a level the
+    // child guard in the loop below never sees. Without this check the
+    // walk started OUTSIDE the package and `report_remaining_absolute_
+    // paths` logged one absolute value per file of $HOME into the
+    // warning log on every save/package and on every maintenance run.
+    // Refused exactly like a symlinked child: one warning per scan, zero
+    // reads. A root that is a symlink to a regular FILE is not a
+    // directory to walk either: it falls through, `read_dir` fails and
+    // the silent skip below applies — nothing is read.
+    if dir.is_symlink() && std::fs::metadata(dir).map(|m| m.is_dir()).unwrap_or(false) {
+        if !budget.warned_symlink_dir {
+            budget.warned_symlink_dir = true;
+            tracing::warn!(
+                "[theme-package] skipping the symlinked directory {}: a symlink must \
+                 not carry an untrusted theme scan out of the package",
+                dir.display()
+            );
+        }
+        return;
+    }
     if depth >= budget.limits.max_depth {
         if !budget.warned_depth {
             budget.warned_depth = true;
@@ -695,11 +727,14 @@ fn scan_theme_dir(
         budget.entries_left -= 1;
         // W10c (MEDIUM): `is_dir()` FOLLOWS symlinks, so a package carrying
         // `providers/evil -> ~` would walk files under the keeper's home and
-        // read them into the leak log. A symlinked DIRECTORY is skipped with
-        // one warning per scan; a symlink to a regular FILE stays accepted on
-        // purpose (documented — the file it names is read exactly like a
-        // regular one, and the reader's own guard follows the link, so a
-        // symlink to a FIFO is refused there).
+        // read them into the leak log. A symlinked CHILD directory is
+        // skipped with one warning per scan — the ROOT is checked at the top
+        // of this function (W10c-b), so both levels are covered and the
+        // warning message's claim holds for directories root to leaf; a
+        // symlink to a regular FILE stays accepted on purpose (documented —
+        // the file it names is read exactly like a regular one, and the
+        // reader's own guard follows the link, so a symlink to a FIFO is
+        // refused there).
         if path.is_symlink()
             && std::fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false)
         {
@@ -843,6 +878,12 @@ fn theme_dir_for(themes_root: &Path, name: &str) -> Result<PathBuf, String> {
 
 /// The theme directories under `themes_root`, sorted by name. A non-directory
 /// entry is ignored.
+///
+/// A SYMLINK to a directory counts as one (`is_dir()` follows links) and is
+/// deliberately still listed: the gallery shows the theme name, and the
+/// leak W10c-b closes is the WALK over such a root — `scan_theme_dir`
+/// refuses a symlinked root with one warning — not the list. The listing
+/// itself never reads file content.
 fn list_theme_dirs(themes_root: &Path) -> Result<Vec<PathBuf>, String> {
     let entries = std::fs::read_dir(themes_root)
         .map_err(|e| format!("cannot read the themes dir {}: {e}", themes_root.display()))?;
@@ -1923,6 +1964,37 @@ mod tests {
         assert!(
             text.contains("evil") && text.contains("symlink"),
             "the skip must warn and name the symlink, log was:\n{text}"
+        );
+    }
+
+    /// MEDIUM (W10c-b): `list_theme_dirs` filters with `is_dir()`, which
+    /// FOLLOWS symlinks, so a theme entry at the themes root like
+    /// `Evil -> ~` is listed and handed to the scan as its ROOT — a level
+    /// the child-directory guard never sees. The walk then started
+    /// OUTSIDE the package and logged one absolute value per file of
+    /// $HOME into the warning log (this scan runs on every save/package
+    /// and from `maintenance`). The scan must refuse a SYMLINKED ROOT
+    /// exactly like a symlinked child: warn once, walk nothing.
+    #[test]
+    fn scan_refuses_a_symlinked_root_instead_of_walking_out_of_the_package() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = root.path().join("home");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.txt"), "url = \"/home/someone/.ssh/id_rsa\"\n").unwrap();
+        let link = root.path().join("themes/Evil");
+        fs::create_dir_all(root.path().join("themes")).unwrap();
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+
+        let mut hits = Vec::new();
+        let text = with_warn_capture(|| hits = scan_theme_for_absolute_paths(&link));
+
+        assert!(
+            hits.is_empty(),
+            "a symlinked ROOT must never be walked out of the package, got {hits:?}"
+        );
+        assert!(
+            text.contains("Evil") && text.contains("symlink"),
+            "the refusal must warn once and name the symlinked root, log was:\n{text}"
         );
     }
 
