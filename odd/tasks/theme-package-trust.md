@@ -125,8 +125,14 @@ Test counts are the full-suite totals observed at each commit; the suite started
 | W2c | `9d2bcf8` | the remembered acceptance: `theme-trust.toml`, keyed by the exact content shown | 1763 |
 | W2c-b | `d9e12af` | the acceptance keys a preset's BODY, not only its name (the dual-review blocker) | 1770 |
 | W2c-c | `a1091de` | the bound per THEME and the bound per STORE (both re-judges' finding) | 1776 |
-| W2c-d | (this commit) | the budget counted in the currency the store writes (both judges, last round) | 1777 |
+| W2c-d | `38f02d2` | the budget counted in the currency the store writes (both judges, last round) | 1777 |
+| W2c-e | `4b5e4c9` | the theme NAME enters the budget (the store repeats it in every entry) | 1778 |
 | docs | `6b2791d`, `788772a`, `e76882f` | this record: the rounds, the residuals, the open units | — |
+
+**Verification in flight when this session closed**: `4b5e4c9` was handed to ONE independent cross-model verifier
+(MiMo v2.6-flash) whose brief was to enumerate every byte the store's format writes and name any the budget does not
+charge — the exact hole two previous verifications found. **The next session must read that report** (Engram, project
+`hve`, and the topic `odd/theme-package-trust/w2c-e`) and record its verdict here before treating W2c as closed.
 
 ## Log (W2c) — the record this unit answers for
 
