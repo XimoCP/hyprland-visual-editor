@@ -165,6 +165,19 @@ export component GalleryRoot inherits Rectangle {
             gallery-keys.focus();
         }
     }
+    // W2b: the theme-trust gate borrows the keyboard while it is open
+    // (`trust-gate-open` is bound from ui/shell.slint). When it closes
+    // over a deployed drawer, that drawer's scope takes the keyboard
+    // again. `docking` is true while the panel owns the screen (same
+    // binding source), so in that case the PANEL is handed focus by its
+    // own observer and the covered drawer must not fight it for it.
+    in property <bool> trust-gate-open: false;
+    changed trust-gate-open => {
+        if (!root.trust-gate-open && !root.docking
+            && (root.top-menu-open || root.bottom-menu-open)) {
+            gallery-keys.focus();
+        }
+    }
 
     property <int> shown-style: root.current-style;
     switch-timer := Timer {

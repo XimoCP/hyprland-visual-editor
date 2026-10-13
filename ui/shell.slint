@@ -418,6 +418,23 @@ export component ShellRoot inherits Rectangle {
     changed gallery-bottom-open => { if (!root.gallery-top-open && !root.gallery-bottom-open && !root.is-panel-open && !root.is-mutating) { shell-kbd.focus(); } }
     changed is-panel-open => { if (!root.is-panel-open && !root.is-mutating && !root.gallery-top-open && !root.gallery-bottom-open) { shell-kbd.focus(); } }
     changed is-mutating => { if (!root.is-panel-open && !root.is-mutating && !root.gallery-top-open && !root.gallery-bottom-open) { shell-kbd.focus(); } }
+    // ── Theme-trust gate keyboard handback (W2b) ──
+    // The gate takes the keyboard while it is open (TrustWarning focuses
+    // its own scope) and must not leave it dangling on that hidden scope
+    // when it closes — there every key would be rejected. The two
+    // conditional layers cannot be CALLED from here (Slint forbids
+    // referencing ids declared inside `if` blocks), so they observe the
+    // same flag through their own `trust-gate-open` binding; this branch
+    // is the last of the three, mirroring the reseed observers above:
+    // the panel and a deployed drawer take the keyboard themselves, and
+    // plain shell-kbd gets it only when neither owns the screen.
+    changed trust-warning-open => {
+        if (!root.trust-warning-open
+            && !root.is-panel-open && !root.is-mutating
+            && !root.gallery-top-open && !root.gallery-bottom-open) {
+            shell-kbd.focus();
+        }
+    }
 
     VerticalLayout {
         // ── Chrome top bar: branding + status placeholders ──
@@ -577,6 +594,10 @@ export component ShellRoot inherits Rectangle {
                     mosaic-cursor-requested(pos) => { root.gallery-mosaic-cursor-requested(pos); }
                     top-menu-open <=> root.gallery-top-open;
                     bottom-menu-open <=> root.gallery-bottom-open;
+                    // W2b: the theme-trust gate's keyboard handback —
+                    // GalleryRoot refocuses its drawer scope when the
+                    // gate closes over a deployed drawer.
+                    trust-gate-open: root.trust-warning-open;
                     style-selected(style) => { root.gallery-style-selected(style); }
                     panel-section-selected(section) => { root.panel-section-selected(section); }
                     card-clicked(idx) => { root.gallery-card-clicked(idx); }
@@ -668,6 +689,10 @@ export component ShellRoot inherits Rectangle {
                     save-search-query <=> root.panel-save-search-query;
                     save-dialog-mode <=> root.panel-save-dialog-mode;
                     save-dialog-target <=> root.panel-save-dialog-target;
+                    // W2b: the theme-trust gate's keyboard handback —
+                    // PanelRoot refocuses panel-kbd when the gate closes
+                    // over the open (or mutating) panel.
+                    trust-gate-open: root.trust-warning-open;
                     save-focused-index: root.panel-save-focused-index;
                     save-rename-title: root.panel-save-rename-title;
                     save-confirm-delete: root.panel-save-confirm-delete;

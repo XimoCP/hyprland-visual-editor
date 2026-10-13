@@ -277,6 +277,17 @@ export component PanelRoot inherits Rectangle {
             if (root.open) { panel-kbd.focus(); }
         }
     }
+    // W2b: the theme-trust gate borrows the keyboard while it is open
+    // (`trust-gate-open` is bound from ui/shell.slint — this layer is
+    // conditionally mounted, so the shell cannot call INTO it: Slint
+    // forbids referencing ids inside `if` blocks). When the gate closes
+    // over an open (or mutating) panel, panel-kbd takes the keyboard back.
+    in property <bool> trust-gate-open: false;
+    changed trust-gate-open => {
+        if (!root.trust-gate-open && (root.open || root.mutating)) {
+            panel-kbd.focus();
+        }
+    }
 
     background: HveColors.bg-dark;
     // Full-bleed: the panel fills the HVE slot while it is open, so it has no

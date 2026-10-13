@@ -13,9 +13,12 @@
 // with the keeper's own permissions, and the copy must never be worded
 // as if HVE prevented that.
 //
-// The component draws no focus of its own (no focus is stolen from the
-// gallery or the panel keyboard): Escape routes to the gate through
-// `ui/shell.slint`.
+// The component takes the keyboard when it opens: its own observer on
+// `open` focuses `trust-kbd`, the gate's FocusScope, so the modal owns
+// every key while it is up (Left/Right/Tab move the cursor between
+// Cancel and Continue, Return/Space activate it, Escape declines).
+// When it closes, `ui/shell.slint` hands the keyboard back — never
+// leaving focus on this hidden scope.
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
@@ -36,6 +39,11 @@ export component TrustWarning inherits Rectangle {
     callback confirmed();
     callback cancelled();
 
+    // Keyboard cursor over the two buttons: 0 = Cancel, 1 = Continue.
+    // It starts (and resets) on Cancel, so a stray Enter can never
+    // grant consent — Continue must be asked for deliberately.
+    property <int> focused-button: 0;
+
     // A hidden gate is out of the render tree AND out of hit-testing, so
     // it can never swallow a click while closed.
     visible: root.open;
@@ -43,6 +51,17 @@ export component TrustWarning inherits Rectangle {
     animate opacity {
         duration: root.reduced-motion ? 0ms : SkwdTokens.anim-150;
         easing: cubic-bezier(0.215, 0.61, 0.355, 1);
+    }
+
+    // The gate OWNS the keyboard while it is up: opening focuses the
+    // scope below (programmatic, never from a click), and the cursor
+    // always starts on Cancel. Closing does nothing here — the shell
+    // gives the keyboard back to its previous owner (`ui/shell.slint`).
+    changed open => {
+        if (root.open) {
+            root.focused-button = 0;
+            trust-kbd.focus();
+        }
     }
 
     width: 100%;
@@ -203,9 +222,12 @@ export component TrustWarning inherits Rectangle {
                     width: 96px;
                     height: 32px;
                     border-radius: 6px;
+                    // Icy keyboard ring, the same signal every keyboard
+                    // cursor in this app paints (drawers, FilterBar).
+                    property <bool> key-focused: trust-kbd.has-focus && root.focused-button == 0;
                     background: trust-cancel.has-hover ? HveColors.bg-hover : HveColors.bg-card;
-                    border-width: 1px;
-                    border-color: HveColors.border;
+                    border-width: self.key-focused ? 1.5px : 1px;
+                    border-color: self.key-focused ? #8fd8ff : HveColors.border;
                     Text {
                         text: "Cancel";
                         font-family: SkwdTokens.font-body;
@@ -227,9 +249,14 @@ export component TrustWarning inherits Rectangle {
                     width: 112px;
                     height: 32px;
                     border-radius: 6px;
+                    // Same ring on the primary button; border-width 0 at
+                    // rest keeps the resting look byte-for-byte unchanged.
+                    property <bool> key-focused: trust-kbd.has-focus && root.focused-button == 1;
                     background: trust-continue.has-hover
                         ? HveColors.accent-amber
                         : HveColors.accent-amber.transparentize(0.2);
+                    border-width: self.key-focused ? 1.5px : 0px;
+                    border-color: #8fd8ff;
                     Text {
                         text: "Continue";
                         font-family: SkwdTokens.font-body;
@@ -247,6 +274,37 @@ export component TrustWarning inherits Rectangle {
                     }
                 }
             }
+        }
+    }
+
+    // ── Keyboard (W2b): the modal owns every key while it is up ──
+    // Focused from the `open` observer above when the gate opens, handed
+    // back by ui/shell.slint when it closes. Left/Right move the cursor
+    // between Cancel and Continue, Tab is ACCEPTED (a rejected Tab would
+    // walk focus out of the modal — it toggles the two stops instead),
+    // Return/Space activate the focused button, Escape declines. The
+    // icy ring on the focused button is the same keyboard cursor signal
+    // the drawers and the FilterBar paint.
+    trust-kbd := FocusScope {
+        width: 0px;
+        height: 0px;
+        focus-on-click: false;
+        enabled: root.open;
+        key-pressed(event) => {
+            if (!root.open) { return reject; }
+            if (event.text == Key.Escape) { root.cancelled(); return accept; }
+            if (event.text == Key.LeftArrow) { root.focused-button = 0; return accept; }
+            if (event.text == Key.RightArrow) { root.focused-button = 1; return accept; }
+            if (event.text == Key.Tab || event.text == Key.Backtab) {
+                root.focused-button = root.focused-button == 0 ? 1 : 0;
+                return accept;
+            }
+            if (event.text == Key.Return || event.text == Key.Space) {
+                if (root.focused-button == 1) { root.confirmed(); }
+                else { root.cancelled(); }
+                return accept;
+            }
+            return reject;
         }
     }
 }

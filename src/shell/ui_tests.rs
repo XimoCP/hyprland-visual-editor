@@ -19599,6 +19599,40 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
         "the warning must paint over the gallery — got {gallery_diff} changed pixels in the centre band"
     );
 
+    // W2b: with the gate open the keyboard cursor sits on Cancel (the icy
+    // ring every keyboard cursor in this app paints), and Right moves it
+    // to Continue — the gate OWNS the keyboard (focus comes from its own
+    // `open` observer, no click involved). Checked HERE, before anything
+    // else runs: opening the panel below deliberately takes the keyboard
+    // from the gate (panel-kbd owns it while the panel is up). The two
+    // buttons sit at FIXED geometry (620px card centred in 1920x1080,
+    // 24px padding, 32px-tall buttons on the card's bottom row), so the
+    // ring can be read per button.
+    let gate_cancel_ring = count_icy_in_region(&gallery_open, 1024, 1130, 796, 844);
+    let gate_continue_ring = count_icy_in_region(&gallery_open, 1128, 1252, 796, 844);
+    assert!(
+        gate_cancel_ring > 40,
+        "the keyboard cursor must start on Cancel — got {gate_cancel_ring} icy px in the Cancel button"
+    );
+    assert!(
+        gate_continue_ring < 20,
+        "Continue must not show the ring while Cancel holds the cursor — got {gate_continue_ring} icy px"
+    );
+    focus_press_key(&win, slint::platform::Key::RightArrow);
+    settle();
+    let gate_continue = win.window().take_snapshot().expect("gallery, Continue focused");
+    save_slice_png(gate_continue.clone(), "trust_warning_gallery_continue_focused.png");
+    let gate_cancel_ring_after = count_icy_in_region(&gate_continue, 1024, 1130, 796, 844);
+    let gate_continue_ring_after = count_icy_in_region(&gate_continue, 1128, 1252, 796, 844);
+    assert!(
+        gate_cancel_ring_after < 20,
+        "the ring must leave Cancel when the cursor moves — got {gate_cancel_ring_after} icy px"
+    );
+    assert!(
+        gate_continue_ring_after > 40,
+        "Right must move the ring onto Continue — got {gate_continue_ring_after} icy px"
+    );
+
     // Same state over the OPEN panel: the overlay must sit above it.
     win.set_is_panel_open(true);
     settle();
@@ -19633,6 +19667,335 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
     assert!(
         panel_diff > 5000,
         "the warning must paint above the open panel — got {panel_diff} changed pixels in the centre band"
+    );
+}
+
+/// Icy focus-ring pixels inside a rectangle of the frame (W2b). The two
+/// gate buttons sit at fixed geometry, so the cursor's ring can be read
+/// per button: a high count = the ring is on that button, ~0 = it is not.
+fn count_icy_in_region(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    x0: usize,
+    x1: usize,
+    y0: usize,
+    y1: usize,
+) -> usize {
+    let w = buf.width() as usize;
+    let bytes = buf.as_bytes();
+    let mut count = 0usize;
+    for y in y0..y1.min(buf.height() as usize) {
+        for x in x0..x1.min(w) {
+            let idx = (y * w + x) * 4;
+            if bytes[idx + 3] < 200 {
+                continue;
+            }
+            let dr = (bytes[idx] as i16 - 143).abs();
+            let dg = (bytes[idx + 1] as i16 - 216).abs();
+            let db = (bytes[idx + 2] as i16 - 255).abs();
+            if dr <= 60 && dg <= 60 && db <= 60 {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+// ── W2b: the gate is fully keyboard-operable (odd/tasks/theme-package-trust.md) ──
+// The warning is a MODAL consent gate: while open it OWNS the keyboard
+// (a FocusScope inside TrustWarning takes it when the gate opens), Left/
+// Right/Tab move the cursor between Cancel and Continue, Return/Space
+// activate the focused button — so Continue is reachable without a
+// mouse — and Escape still declines. On close the keyboard goes back to
+// whoever owned it (panel, drawer, or shell-kbd), so focus is never
+// left dangling on the hidden gate scope.
+
+/// The decision test: real key events through the real window. The cursor
+/// starts on Cancel (a stray Enter must never grant consent), Right/Tab
+/// move it, Return/Space activate it, Escape still declines — and while
+/// the gate is open, no key may leak to the gallery behind the modal.
+#[test]
+fn theme_trust_warning_is_operable_from_the_keyboard() {
+    use slint::ComponentHandle as _;
+    use slint::platform::Key;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let win = focus_open_system_panel();
+    let confirmed: Rc<RefCell<u32>> = Rc::new(RefCell::new(0));
+    let cancelled: Rc<RefCell<u32>> = Rc::new(RefCell::new(0));
+    {
+        let confirmed = confirmed.clone();
+        let weak = win.as_weak();
+        win.on_trust_warning_confirmed(move || {
+            *confirmed.borrow_mut() += 1;
+            // Production (`hide_trust_warning` in src/main.rs) closes the flag.
+            if let Some(w) = weak.upgrade() {
+                w.set_trust_warning_open(false);
+            }
+        });
+    }
+    {
+        let cancelled = cancelled.clone();
+        let weak = win.as_weak();
+        win.on_trust_warning_cancelled(move || {
+            *cancelled.borrow_mut() += 1;
+            if let Some(w) = weak.upgrade() {
+                w.set_trust_warning_open(false);
+            }
+        });
+    }
+    let moves: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_nav_move({
+        let moves = moves.clone();
+        move |dir| moves.borrow_mut().push(dir.to_string())
+    });
+
+    // Gallery with the panel closed: shell-kbd owns the keyboard.
+    win.set_is_panel_open(false);
+    let settle = || {
+        for _ in 0..4 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+    };
+    settle();
+
+    // 1) The cursor starts on CANCEL: a stray Enter declines, never confirms.
+    win.set_trust_warning_open(true);
+    settle();
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        *cancelled.borrow(),
+        1,
+        "the default keyboard cursor must sit on Cancel"
+    );
+    assert_eq!(
+        *confirmed.borrow(),
+        0,
+        "an unqualified Enter must never grant consent"
+    );
+
+    // 2) Right moves to Continue, Enter activates it — and the SAME arrow
+    //    must NOT navigate the gallery behind the modal while the gate is open.
+    win.set_trust_warning_open(true);
+    settle();
+    focus_press_key(&win, Key::RightArrow);
+    assert!(
+        moves.borrow().is_empty(),
+        "the gate must swallow the arrow — a modal must not let keys through to the gallery"
+    );
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        *confirmed.borrow(),
+        1,
+        "Continue must be reachable from the keyboard"
+    );
+
+    // 3) Tab is trapped in the modal and also moves to Continue; Space activates.
+    win.set_trust_warning_open(true);
+    settle();
+    focus_press_key(&win, Key::Tab);
+    focus_press_key(&win, Key::Space);
+    assert_eq!(
+        *confirmed.borrow(),
+        2,
+        "Tab must move within the gate and Space must activate the focused button"
+    );
+
+    // 4) Left walks back to Cancel.
+    win.set_trust_warning_open(true);
+    settle();
+    focus_press_key(&win, Key::RightArrow);
+    focus_press_key(&win, Key::LeftArrow);
+    focus_press_key(&win, Key::Return);
+    assert_eq!(*cancelled.borrow(), 2, "Left must walk back to Cancel");
+
+    // 5) Escape still declines.
+    win.set_trust_warning_open(true);
+    settle();
+    focus_press_key(&win, Key::Escape);
+    assert_eq!(*cancelled.borrow(), 3, "Escape must still decline the gate");
+    assert!(
+        !win.get_trust_warning_open(),
+        "Escape must close the warning"
+    );
+}
+
+/// The gate borrows the keyboard while open; closing it must hand it back
+/// to whoever owned it — panel-kbd over the panel, shell-kbd over the
+/// gallery — never leaving focus dangling on the hidden gate scope (where
+/// every key would be rejected and the app would go deaf). The focus
+/// trace the panel already emits makes the handoff observable.
+#[test]
+fn theme_trust_warning_returns_the_keyboard_when_it_closes() {
+    use slint::platform::Key;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let win = focus_open_system_panel();
+    let traces: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_panel_focus_trace({
+        let traces = traces.clone();
+        move |reason| traces.borrow_mut().push(reason.to_string())
+    });
+    let moves: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_nav_move({
+        let moves = moves.clone();
+        move |dir| moves.borrow_mut().push(dir.to_string())
+    });
+    let settle = || {
+        for _ in 0..4 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+    };
+    let count = |needle: &str| traces.borrow().iter().filter(|t| t.contains(needle)).count();
+
+    // ── Panel path: the gate takes the keyboard FROM panel-kbd and gives it back ──
+    let losses = count("panel-kbd lost");
+    let gains = count("panel-kbd gained");
+    win.set_trust_warning_open(true);
+    settle();
+    assert!(
+        count("panel-kbd lost") > losses,
+        "the gate must take the keyboard from the panel while it is open"
+    );
+    win.set_trust_warning_open(false);
+    settle();
+    assert!(
+        count("panel-kbd gained") > gains,
+        "closing the gate must return the keyboard to panel-kbd"
+    );
+
+    // ── Gallery path: shell-kbd takes it back, and keys WORK again ──
+    win.set_is_panel_open(false);
+    settle();
+    let gains = count("shell-kbd gained");
+    win.set_trust_warning_open(true);
+    settle();
+    win.set_trust_warning_open(false);
+    settle();
+    assert!(
+        count("shell-kbd gained") > gains,
+        "closing the gate must return the keyboard to shell-kbd"
+    );
+    moves.borrow_mut().clear();
+    focus_press_key(&win, Key::RightArrow);
+    assert!(
+        !moves.borrow().is_empty(),
+        "the gallery keyboard must work after the gate closes"
+    );
+}
+
+/// The keyboard wiring itself, pinned at the source level: the gate owns a
+/// FocusScope that never grabs focus from a click, traps Tab inside the
+/// modal, activates the focused button on Return/Space, paints the icy
+/// ring on BOTH buttons, takes the keyboard when it opens, and — through
+/// the shell's own reseed plus the bound handback observers in the two
+/// conditional layers (Slint forbids calling into ids inside `if` blocks)
+/// — gives it back when it closes.
+#[test]
+fn trust_warning_keyboard_wiring_is_pinned_by_construction() {
+    let warn = std::fs::read_to_string("ui/gallery/TrustWarning.slint")
+        .expect("ui/gallery/TrustWarning.slint must exist");
+    let kbd_at = warn
+        .find("trust-kbd := FocusScope")
+        .expect("the gate must own a FocusScope for the keyboard");
+    assert!(
+        warn.contains("focus-on-click: false;"),
+        "the gate scope must never grab focus from a click (double-click barrier)"
+    );
+    let kbd: String = warn[kbd_at..].chars().take(1600).collect();
+    assert!(
+        kbd.contains("if (!root.open)"),
+        "the scope must ignore keys while the gate is closed"
+    );
+    assert!(
+        kbd.contains("Key.Escape") && kbd.contains("root.cancelled()"),
+        "Escape must decline the gate"
+    );
+    assert!(
+        kbd.contains("Key.LeftArrow") && kbd.contains("Key.RightArrow"),
+        "the arrows must move the keyboard cursor"
+    );
+    assert!(
+        kbd.contains("Key.Tab"),
+        "Tab must be trapped in the modal (a rejected Tab would walk focus out of it)"
+    );
+    assert!(
+        kbd.contains("Key.Return || event.text == Key.Space"),
+        "Return/Space must activate the focused button"
+    );
+    assert!(
+        kbd.contains("root.confirmed()"),
+        "the focused button must be able to confirm — Continue must not be mouse-only"
+    );
+    // The cursor is taken on open, with Cancel as the safe default.
+    let open_at = warn
+        .find("changed open")
+        .expect("the gate must observe its own open flag");
+    let open: String = warn[open_at..].chars().take(300).collect();
+    assert!(
+        open.contains("trust-kbd.focus()"),
+        "opening must give the keyboard to the gate"
+    );
+    assert!(
+        open.contains("focused-button = 0"),
+        "every open must reset the cursor to Cancel"
+    );
+    // Both buttons paint the icy keyboard ring while the scope holds focus.
+    assert!(
+        warn.matches("key-focused: trust-kbd.has-focus").count() >= 2,
+        "BOTH buttons must show the keyboard ring on the focused one"
+    );
+
+    let shell = std::fs::read_to_string("ui/shell.slint").expect("ui/shell.slint must exist");
+    let reseed: String = shell
+        .split("changed trust-warning-open")
+        .nth(1)
+        .expect("the shell must observe the gate closing to reseed the keyboard")
+        .chars()
+        .take(700)
+        .collect();
+    assert!(
+        reseed.contains("shell-kbd.focus()"),
+        "closing over the plain gallery must return the keyboard to shell-kbd"
+    );
+    assert!(
+        reseed.contains("!root.is-panel-open") && reseed.contains("!root.gallery-top-open"),
+        "shell-kbd must take the keyboard only when neither conditional layer owns it"
+    );
+    // The two conditional layers cannot be called from shell.slint (ids
+    // inside `if` blocks are not addressable), so the shell BINDS the flag
+    // into both and each layer hands the keyboard back itself.
+    assert!(
+        shell.matches("trust-gate-open: root.trust-warning-open;").count() == 2,
+        "the gate flag must be bound into BOTH conditional layers (gallery + panel)"
+    );
+
+    let panel = std::fs::read_to_string("ui/panel/PanelRoot.slint")
+        .expect("ui/panel/PanelRoot.slint must exist");
+    let panel_reseed: String = panel
+        .split("changed trust-gate-open")
+        .nth(1)
+        .expect("PanelRoot must observe the gate flag to take the keyboard back")
+        .chars()
+        .take(400)
+        .collect();
+    assert!(
+        panel_reseed.contains("panel-kbd.focus()"),
+        "closing over the open panel must return the keyboard to panel-kbd"
+    );
+    let gallery = std::fs::read_to_string("ui/gallery/GalleryRoot.slint")
+        .expect("ui/gallery/GalleryRoot.slint must exist");
+    let gallery_reseed: String = gallery
+        .split("changed trust-gate-open")
+        .nth(1)
+        .expect("GalleryRoot must observe the gate flag to take the keyboard back")
+        .chars()
+        .take(400)
+        .collect();
+    assert!(
+        gallery_reseed.contains("gallery-keys.focus()"),
+        "closing over a deployed drawer must return the keyboard to it"
     );
 }
 
