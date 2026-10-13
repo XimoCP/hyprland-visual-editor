@@ -771,9 +771,13 @@ fn report_remaining_absolute_paths(theme_dir: &Path) {
 
 /// Resolve the theme dir for `name` under `themes_root`, guarding the name so
 /// it can never escape the themes root.
+///
+/// W9: the guard itself now lives in ONE place —
+/// `theme_manager::validate_theme_name` — shared with `ThemeManager`'s
+/// `apply`/`delete`/`save`, so this path and the store cannot drift. The
+/// error shape is unchanged.
 fn theme_dir_for(themes_root: &Path, name: &str) -> Result<PathBuf, String> {
-    crate::preset_store::PresetStore::validate_name(name)
-        .map_err(|reason| format!("invalid theme name '{name}': {reason}"))?;
+    crate::theme_manager::validate_theme_name(name)?;
     Ok(themes_root.join(name))
 }
 

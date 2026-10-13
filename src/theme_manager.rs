@@ -283,6 +283,29 @@ pub struct ThemeManager {
     pub last_applied: String,
 }
 
+/// W9 of `odd/tasks/theme-package-trust.md`: the ONE rule for a theme name.
+///
+/// A legal name is a plain single path component: non-empty, not `.`, `..`
+/// or dot-prefixed, no `/`, no `\`, no NUL (so never absolute — the
+/// separator rule already covers that), and no leading `-` (W6: a value that
+/// starts with `-` must never reach an external CLI as an option).
+///
+/// The first half IS the preset rule — `PresetStore::validate_name`, the one
+/// `theme_package::theme_dir_for` already used — extracted here and CALLED,
+/// not copied, so the package path, `apply`/`delete` and `save`/`rename`
+/// cannot drift apart. Every caller joins the name onto a directory, so
+/// every caller must refuse a non-component name first.
+pub(crate) fn validate_theme_name(name: &str) -> Result<(), String> {
+    crate::preset_store::PresetStore::validate_name(name)
+        .map_err(|reason| format!("invalid theme name '{name}': {reason}"))?;
+    if name.starts_with('-') {
+        return Err(format!(
+            "invalid theme name '{name}': a theme name must not start with '-'"
+        ));
+    }
+    Ok(())
+}
+
 impl ThemeManager {
     pub fn new(config_dir: &Path) -> Self {
         let themes_dir = config_dir.join("hve").join("themes");
@@ -453,9 +476,11 @@ impl ThemeManager {
         if t.len() > 64 {
             return Err("name-too-long".into());
         }
-        if t.contains('/') || t.contains('\\') || t.contains('\0') || t == ".." {
-            return Err("name-invalid".into());
-        }
+        // One rule with `apply`/`delete` (W9): a name the store can CREATE
+        // must be a name the store can APPLY and DELETE, or a theme saved
+        // from the panel could be stuck for ever. The legacy error codes are
+        // kept because the UI already maps them.
+        validate_theme_name(t).map_err(|_| "name-invalid".to_string())?;
         Ok(t.to_string())
     }
 
@@ -599,6 +624,10 @@ impl ThemeManager {
         reload_after_post_apply: impl FnOnce() -> Result<(), String>,
     ) -> Result<(), String> {
         let name = name.trim().to_string();
+        // W9: defence in depth — the name is JOINed onto the themes dir, so
+        // `..`, `/etc`, "" or a NUL would escape the store (or name the
+        // store itself). Same rule as `save` and as the package path.
+        validate_theme_name(&name)?;
         let theme_dir = self.themes_dir.join(&name);
 
         if !theme_dir.exists() {
@@ -647,6 +676,10 @@ impl ThemeManager {
 
     pub fn delete(&mut self, name: &str) -> Result<(), String> {
         let name = name.trim();
+        // W9: `remove_dir_all` follows the join, so an unvalidated name could
+        // delete OUTSIDE the store — `..` reaches its parent, `/etc` replaces
+        // the base entirely, "" and "." name the store itself. Refuse first.
+        validate_theme_name(name)?;
         let theme_dir = self.themes_dir.join(name);
         if !theme_dir.exists() {
             return Err(format!("Theme '{}' not found", name));
@@ -1419,6 +1452,176 @@ mod tests {
         assert_eq!(
             ThemeManager::validate_name("Joker").unwrap(),
             "Joker".to_string()
+        );
+    }
+
+    // ── W9: a theme name is ONE plain path component ─────────────────
+    //
+    // `apply` and `delete` JOIN the name onto the themes dir, unvalidated.
+    // `..` escapes the store, an ABSOLUTE name replaces the base entirely
+    // (`Path::join` with an absolute path wins), "" and "." name the store
+    // ITSELF — so a hostile name could delete outside the store or the whole
+    // store at once. The rule is the one the package path already uses,
+    // extracted once as `validate_theme_name`, never a second copy.
+
+    /// Every name that must be refused, in the order the tests walk them.
+    /// The first entry (`..`) is the one that fails first in a regression,
+    /// and it only ever reaches inside the temp fixture.
+    const HOSTILE_NAMES: &[&str] = &[
+        "..",
+        "../evil",
+        "/etc",
+        "",
+        "  ",
+        ".",
+        "bad\0name",
+        "-Night",
+    ];
+
+    struct StoreFixture {
+        _root: TempDir,
+        tm: ThemeManager,
+        themes_dir: PathBuf,
+        canary: PathBuf,
+    }
+
+    /// A store holding the keeper's four real themes, plus a canary OUTSIDE
+    /// the store that must survive every refusal.
+    fn store_fixture() -> StoreFixture {
+        let root = TempDir::new().unwrap();
+        let config_dir = root.path().join("config");
+        let themes_dir = config_dir.join("hve").join("themes");
+        for name in ["Cars", "Night", "Space", "Spiderman"] {
+            seed_meta(
+                &themes_dir,
+                name,
+                "2026-10-10T00:00:00.000Z",
+                "",
+                &["stub"],
+            );
+        }
+        let canary = root.path().join("canary");
+        fs::create_dir_all(&canary).unwrap();
+        fs::write(canary.join("keep.txt"), b"canary").unwrap();
+        let mut tm = ThemeManager::new(&config_dir);
+        tm.register_provider(Box::new(StubProvider { id: "stub" }));
+        StoreFixture {
+            _root: root,
+            tm,
+            themes_dir,
+            canary,
+        }
+    }
+
+    /// The canary and every stored theme are still there after a refusal.
+    fn assert_store_and_canary_survive(fx: &StoreFixture, refused: &str) {
+        assert!(
+            fx.canary.join("keep.txt").exists(),
+            "the canary OUTSIDE the store must survive {refused:?}"
+        );
+        for theme in ["Cars", "Night", "Space", "Spiderman"] {
+            assert!(
+                fx.themes_dir.join(theme).exists(),
+                "the store must keep {theme:?} after refusing {refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn delete_refuses_every_name_that_is_not_a_plain_path_component() {
+        let _env = crate::test_utils::TempEnv::new();
+        let mut fx = store_fixture();
+
+        for name in HOSTILE_NAMES {
+            let err = fx
+                .tm
+                .delete(name)
+                .expect_err(&format!("delete({name:?}) must be refused"));
+            assert!(
+                err.starts_with("invalid theme name"),
+                "delete({name:?}) must be refused by the NAME rule, not by a \
+                 missing directory: {err}"
+            );
+            assert_store_and_canary_survive(&fx, name);
+        }
+        assert_eq!(
+            fx.tm.list().unwrap().len(),
+            4,
+            "every stored theme must survive the refused deletes"
+        );
+    }
+
+    #[test]
+    fn apply_refuses_every_name_that_is_not_a_plain_path_component() {
+        let _env = crate::test_utils::TempEnv::new();
+        let mut fx = store_fixture();
+
+        for name in HOSTILE_NAMES {
+            let err = fx
+                .tm
+                .apply(name, || Ok(()))
+                .expect_err(&format!("apply({name:?}) must be refused"));
+            assert!(
+                err.starts_with("invalid theme name"),
+                "apply({name:?}) must be refused by the NAME rule: {err}"
+            );
+            assert!(
+                fx.tm.last_applied.is_empty(),
+                "a refused apply must record nothing, got {:?} after {name:?}",
+                fx.tm.last_applied
+            );
+            assert_store_and_canary_survive(&fx, name);
+        }
+    }
+
+    /// The keeper's own four themes must behave EXACTLY as before: apply,
+    /// record, delete — end to end, canary untouched.
+    #[test]
+    fn the_keepers_own_theme_names_still_apply_and_delete_end_to_end() {
+        let _env = crate::test_utils::TempEnv::new();
+        let mut fx = store_fixture();
+
+        for name in ["Cars", "Night", "Space", "Spiderman"] {
+            fx.tm
+                .apply(name, || Ok(()))
+                .unwrap_or_else(|e| panic!("a legitimate name {name:?} must still apply: {e}"));
+            assert_eq!(fx.tm.last_applied, name, "apply must record {name:?}");
+            fx.tm
+                .delete(name)
+                .unwrap_or_else(|e| panic!("a legitimate name {name:?} must still delete: {e}"));
+            assert!(
+                !fx.themes_dir.join(name).exists(),
+                "{name:?} must be gone from the store"
+            );
+        }
+        assert!(fx.tm.list().unwrap().is_empty());
+        assert!(
+            fx.canary.join("keep.txt").exists(),
+            "deleting themes must never reach outside the store"
+        );
+    }
+
+    /// No dead-end: a name the store can CREATE must also be a name the store
+    /// can APPLY and DELETE, otherwise a theme saved from the panel could
+    /// neither be applied nor removed. Same rule, same vocabulary.
+    #[test]
+    fn save_refuses_every_name_that_apply_and_delete_refuse() {
+        let config_dir = TempDir::new().unwrap();
+        let mut tm = ThemeManager::new(config_dir.path());
+
+        for name in HOSTILE_NAMES {
+            let err = tm.save(name, &[]).expect_err(&format!(
+                "save({name:?}) must be refused too, or the panel could create a \
+                 theme that can never be applied or deleted"
+            ));
+            assert!(
+                err == "name-empty" || err == "name-invalid" || err.starts_with("invalid theme name"),
+                "unexpected refusal shape for {name:?}: {err}"
+            );
+        }
+        assert!(
+            tm.list().unwrap().is_empty(),
+            "a refused save must create nothing"
         );
     }
 
