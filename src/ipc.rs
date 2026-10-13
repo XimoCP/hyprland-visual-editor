@@ -41,12 +41,16 @@ fn our_uid() -> u32 {
 /// `0700` (owner rwx, group and other nothing). Pure over `uid`, so the
 /// "another user's directory" case is testable without root.
 ///
+/// The mask covers the full 12-bit field on purpose: the Python client reads
+/// `S_IMODE`, which includes setuid/setgid/sticky, so a 9-bit mask here would
+/// let the two resolve DIFFERENT sockets for the same runtime directory.
+///
 /// `metadata` follows symlinks: the question is about the directory the
 /// socket would actually land in, whatever links point at it.
 fn is_private_dir_of(path: &Path, uid: u32) -> bool {
     use std::os::unix::fs::MetadataExt;
     match std::fs::metadata(path) {
-        Ok(meta) => meta.is_dir() && meta.uid() == uid && meta.mode() & 0o777 == 0o700,
+        Ok(meta) => meta.is_dir() && meta.uid() == uid && meta.mode() & 0o7777 == 0o700,
         Err(_) => false,
     }
 }
@@ -610,6 +614,13 @@ fn resolve_assert_color_authority(
 ) -> String {
     if last_applied.is_empty() {
         return "noop\n".to_string();
+    }
+    // W9, read path: the name comes from the on-disk config and is joined
+    // onto the themes dir, so it must be ONE plain component — the same rule
+    // `apply` and `delete` enforce. Read-only, so an escape costs a metadata
+    // read and nothing else; refusing it keeps the two paths consistent.
+    if crate::theme_manager::validate_theme_name(last_applied).is_err() {
+        return format_response(Err(format!("theme '{last_applied}' not found")));
     }
     let theme_dir = themes_dir.join(last_applied);
     if !theme_dir.is_dir() {
@@ -1686,5 +1697,63 @@ mod tests {
                 "{signature} must resolve the socket through get_socket_path(), got:\n{body}"
             );
         }
+    }
+
+    /// Cross-model finding (W7): a runtime dir carrying the sticky or setgid
+    /// bit is NOT "mode exactly 0700". Group and other still have nothing, so
+    /// the socket is not reachable — but the Python client reads the FULL
+    /// 12-bit field (`S_IMODE`), so a 9-bit mask here lets the two resolve
+    /// DIFFERENT sockets for the same environment and the client reports "HVE
+    /// is not running" against a live instance.
+    #[test]
+    fn a_runtime_dir_with_the_sticky_or_setgid_bit_is_not_private_0700() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("runtime");
+        std::fs::create_dir_all(&path).unwrap();
+
+        for (mode, label) in [(0o1700u32, "sticky"), (0o2700u32, "setgid")] {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().mode() & 0o7777,
+                mode,
+                "sanity: the {label} bit is really set on the fixture"
+            );
+            assert!(
+                !is_private_dir_of(&path, our_uid()),
+                "0700 plus the {label} bit is not 'exactly 0700'"
+            );
+        }
+
+        // The plain 0700 case must keep working: this is a narrowing, not a
+        // refusal of the normal runtime dir.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(is_private_dir_of(&path, our_uid()));
+    }
+
+    /// Cross-model finding (W9, read path): `assert-color-authority` joins the
+    /// CONFIGURED theme name onto the themes dir. Read-only, so the escape
+    /// costs a metadata read — but the name must be refused like `apply` and
+    /// `delete` refuse it, never used to name a directory outside the store.
+    #[test]
+    fn assert_color_authority_refuses_a_name_that_escapes_the_store() {
+        let (config_dir, themes_dir, mut tm) = colour_test_setup();
+        let calls = register_fake(&mut tm, None);
+        // A theme-shaped directory OUTSIDE the store, reachable only by
+        // traversal from the themes dir.
+        let outside = config_dir.path().join("outside");
+        seed_theme_meta(&outside, "Hijack", &["fake-colours"]);
+
+        let response = resolve_assert_color_authority("../../outside/Hijack", &themes_dir, &tm);
+
+        assert!(
+            response.starts_with("error: "),
+            "a traversal name must be refused, got: {response}"
+        );
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "a name outside the store must never reach a provider, got {:?}",
+            calls.lock().unwrap()
+        );
     }
 }

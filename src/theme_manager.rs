@@ -535,19 +535,17 @@ impl ThemeManager {
 
     /// Automatic, read-only facts for one saved theme, gathered by asking
     /// every provider the theme itself recorded. `None` for an unknown theme
-    /// or an unsafe name (separators / traversal), never for a readable one.
+    /// or a name the shared rule refuses, never for a readable one.
     ///
     /// The theme's own `meta.json` is the source of the provider list, so a
     /// theme saved by a backend that is not registered today still reports
     /// through the read-only declarer the router ships for that id.
     pub fn theme_info(&self, name: &str) -> Option<ThemeFacts> {
-        if name.is_empty()
-            || name.starts_with('.')
-            || name.contains('/')
-            || name.contains('\\')
-        {
-            return None;
-        }
+        // One rule with `apply`/`delete`/`save`: an inline copy here drifted
+        // (it accepted a name starting with `-`, which the store can neither
+        // apply nor delete) and would have kept reporting for a theme the
+        // store refuses.
+        validate_theme_name(name).ok()?;
         let theme_dir = self.themes_dir.join(name);
         if !theme_dir.is_dir() {
             return None;
@@ -742,6 +740,10 @@ impl ThemeManager {
 
     pub fn rename(&mut self, old_name: &str, new_name: &str) -> Result<(), String> {
         let old_name = old_name.trim();
+        // One rule with `apply`/`delete`: `old_name` is JOINED onto the themes
+        // dir, so `themes_dir.join("../outside/Evil")` would pull a directory
+        // from outside the store INTO it under the new name.
+        validate_theme_name(old_name).map_err(|_| "name-invalid".to_string())?;
         let new_name = Self::validate_name(new_name)?;
         if old_name == new_name {
             return Ok(());
@@ -1452,6 +1454,60 @@ mod tests {
         assert_eq!(
             ThemeManager::validate_name("Joker").unwrap(),
             "Joker".to_string()
+        );
+    }
+
+    /// Cross-model finding (W9, drift): `rename` joined `old_name` with NO
+    /// rule at all. `themes_dir.join("../outside/Evil")` names a directory
+    /// outside the store, and the rename then pulls it INTO the store under
+    /// the new name — a real write outside the store, not a read.
+    #[test]
+    fn rename_refuses_an_old_name_that_escapes_the_store() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let mut tm = ThemeManager::new(config_dir.path());
+        let themes = config_dir.path().join("hve").join("themes");
+        std::fs::create_dir_all(&themes).unwrap();
+        let outside = config_dir.path().join("outside").join("Evil");
+        std::fs::create_dir_all(&outside).unwrap();
+
+        let err = tm
+            .rename("../outside/Evil", "Stolen")
+            .expect_err("a traversal old_name must be refused");
+
+        assert!(
+            err.contains("name-invalid") || err.contains("invalid theme name"),
+            "the refusal must be the shared name rule, got: {err}"
+        );
+        assert!(
+            outside.is_dir(),
+            "the refusal must leave the outside directory where it was"
+        );
+        assert!(
+            !themes.join("Stolen").exists(),
+            "no directory may be pulled into the store through a traversal name"
+        );
+    }
+
+    /// Cross-model finding (W9, drift): `theme_info` kept its OWN weaker copy
+    /// of the name rule. A theme whose name the store can neither apply nor
+    /// delete must not report facts either.
+    #[test]
+    fn theme_info_refuses_a_name_the_shared_rule_refuses() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let tm = ThemeManager::new(config_dir.path());
+        let themes = config_dir.path().join("hve").join("themes");
+        let dashed = themes.join("-dashed");
+        std::fs::create_dir_all(&dashed).unwrap();
+        std::fs::write(
+            dashed.join("meta.json"),
+            "{\"saved_at\":\"\",\"description\":\"\",\"providers\":[]}",
+        )
+        .unwrap();
+        assert!(dashed.is_dir(), "sanity: the theme exists on disk");
+
+        assert!(
+            tm.theme_info("-dashed").is_none(),
+            "a name the shared rule refuses must not be reported"
         );
     }
 

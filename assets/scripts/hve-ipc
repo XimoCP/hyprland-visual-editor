@@ -32,6 +32,8 @@ def resolve_socket_path():
             return os.path.join(runtime, "hve.sock")
 
     home = os.environ.get("HOME")
+    if home is not None:
+        home = home.strip()
     if home:
         return os.path.join(home, FALLBACK_DIR, "hve.sock")
 

@@ -3072,23 +3072,29 @@ fn log_dir() -> PathBuf {
 fn open_log_file_in(dir: &std::path::Path) -> std::io::Result<std::sync::Mutex<std::fs::File>> {
     std::fs::create_dir_all(dir)?;
     let path = dir.join("hve.log");
+    let rotated = dir.join("hve.log.1");
     if let Ok(meta) = std::fs::metadata(&path) {
         if log_rotate_due(meta.len()) {
             // Replaces any previous `hve.log.1` (atomic rename on Unix).
             // Best-effort: a failed rotation must not cost us the file layer.
-            let rotated = dir.join("hve.log.1");
             let _ = std::fs::rename(&path, &rotated);
-            // The rotated copy is the OLD file: created before this
-            // hardening it is world-readable, which is the same leak this
-            // unit closes. Best-effort — a failure never blocks logging.
-            let _ = std::fs::set_permissions(
-                &rotated,
-                std::os::unix::fs::PermissionsExt::from_mode(0o600),
-            );
         }
     }
     let file = open_private_log(&path)?;
+    // The previous generation is the file this one replaced: one created
+    // before this hardening is world-readable. The rotation above tightens
+    // only the copy IT makes, so an OLD `.1` whose log never fills up again
+    // would stay loose for ever — hence the tighten on every OPEN.
+    tighten_previous_generation(&rotated);
     Ok(std::sync::Mutex::new(file))
+}
+
+/// Best-effort 0600 on a rotated generation. Swallowed on purpose: logging
+/// must never fail startup, and the residual is a `.1` this user owns but
+/// cannot chmod, which cannot happen for a file we created ourselves.
+fn tighten_previous_generation(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
 }
 
 /// The production tighten: exactly 0600, applied to every log this crate
@@ -6178,6 +6184,35 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
             .expect("chmod the fixture");
+    }
+
+    /// Cross-model finding (W8): the rotation tightens only the copy IT makes,
+    /// so a `hve.log.1` written before this hardening stays world-readable
+    /// until its log happens to grow past the cap again — which may never
+    /// happen. The tighten must therefore run on every OPEN, not just on
+    /// rotation.
+    #[test]
+    fn a_preexisting_rotated_generation_is_tightened_on_the_next_open() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let live = dir.path().join("hve.log");
+        let rotated = dir.path().join("hve.log.1");
+        std::fs::write(&live, b"one line\n").expect("small live log");
+        std::fs::write(&rotated, b"old generation\n").expect("old rotation");
+        set_file_mode(&rotated, 0o644);
+
+        let writer = open_log_file_in(dir.path()).expect("open must succeed");
+        drop(writer);
+
+        assert_eq!(
+            file_mode(&rotated),
+            0o600,
+            "the previous generation must be tightened even when nothing rotated"
+        );
+        assert_eq!(
+            std::fs::read(&rotated).expect("the rotated copy survives"),
+            b"old generation\n",
+            "tightening must never truncate or delete the previous generation"
+        );
     }
 
     #[test]

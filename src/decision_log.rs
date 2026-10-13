@@ -73,7 +73,19 @@ fn append_bounded_with(
     rotate_if_needed(&path)?;
     let mut file = open(&path)?;
     file.write_all(line.as_bytes())?;
+    // The previous generation is the file this one replaced: one written
+    // before this hardening is world-readable. The rotation tightens only the
+    // copy IT makes, so an OLD `.1` whose log never fills up again would stay
+    // loose for ever — hence the tighten on every append. Best-effort, like
+    // the rotation: a failure never blocks the decision being recorded.
+    tighten_previous_generation(&rotated_path());
     Ok(())
+}
+
+/// Best-effort 0600 on the previous generation of the decision log.
+fn tighten_previous_generation(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
 }
 
 /// Rotate the live log to its single previous generation when it has reached
@@ -90,11 +102,6 @@ fn rotate_if_needed(path: &Path) -> std::io::Result<()> {
     let rotated = rotated_path();
     let _ = fs::remove_file(&rotated);
     fs::rename(path, &rotated)?;
-    // The rotated copy is the OLD file: created before this hardening it is
-    // world-readable, which is the same leak this unit closes. Best-effort —
-    // a failure never blocks the decision being recorded.
-    use std::os::unix::fs::PermissionsExt;
-    let _ = fs::set_permissions(&rotated, fs::Permissions::from_mode(0o600));
     Ok(())
 }
 
@@ -182,9 +189,36 @@ mod tests {
         );
     }
 
+    /// Cross-model finding (W8): the rotation tightens only the copy IT makes,
+    /// so a `.1` written before the hardening stays world-readable until its
+    /// log happens to fill up again. The tighten runs on every append instead.
     #[test]
-    fn a_failed_write_never_panics_and_never_aborts_the_decision() {
+    fn a_preexisting_rotated_decision_log_is_tightened_on_the_next_append() {
+        use std::os::unix::fs::PermissionsExt;
         let _env = TempEnv::new();
+        let path = log_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let rotated = rotated_path();
+        fs::write(&rotated, b"old decision\n").unwrap();
+        fs::set_permissions(&rotated, fs::Permissions::from_mode(0o644)).unwrap();
+        fs::write(&path, b"one short line\n").unwrap();
+
+        record("MUTE SET", "after the hardening");
+
+        let mode = fs::metadata(&rotated).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "the previous generation must be tightened even when nothing rotated"
+        );
+        assert_eq!(
+            fs::read(&rotated).unwrap(),
+            b"old decision\n",
+            "tightening must never truncate the previous generation"
+        );
+    }
+
+    #[test]
+    fn a_failed_write_never_panics_and_never_aborts_the_decision() {        let _env = TempEnv::new();
         // Make the cache dir itself a FILE: creating or writing the log must
         // fail, and `record` must swallow it instead of panicking.
         let cache = hve_cache_dir();
