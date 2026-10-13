@@ -256,15 +256,38 @@ fn read_active_presets(state_path: &Path) -> crate::theme_presets::ActivePresets
 /// Package `theme_dir` in place using the real T1/T3/T4 helpers.
 ///
 /// Returns [`PackageStatus::Skipped`] when the theme carries no resolvable
-/// background record. Otherwise the poster, the video and the custom presets
-/// are (re)packaged exactly like a save. The only files ever written live
-/// inside `theme_dir`.
+/// background record, or when `theme_dir` is a SYMLINK (refused before any
+/// read or write — see the guard below). Otherwise the poster, the video and
+/// the custom presets are (re)packaged exactly like a save. The only files
+/// ever written live inside `theme_dir`, which the symlink guard keeps a real
+/// directory.
 pub fn package_theme_dir(
     theme_dir: &Path,
     assets_dir: &Path,
     user_presets_root: &Path,
     max_video_bytes: u64,
 ) -> PackageStatus {
+    // W10c-c (CRITICAL-class): the scan's own symlink-root refusal
+    // (`scan_theme_dir`) is NOT this operation's guard — it only stops the
+    // walk, and this function kept going, so `sanitize_settings_file` still
+    // wrote through `theme_dir` (`noctalia.rs`) and the poster/preset writes
+    // landed in the symlink target — OUTSIDE the themes root. A symlinked
+    // theme dir is refused HERE, before the first read or write, with ONE
+    // warning, so nothing escapes: `is_symlink()` inspects the path itself
+    // (it does not follow the final link), which is exactly the property that
+    // must be refused. The honest limit, stated for the record: this guard
+    // covers a symlinked theme directory handed in as the root; a symlinked
+    // CHILD inside a real theme dir is the walk's job (`scan_theme_dir`).
+    if theme_dir.is_symlink() {
+        tracing::warn!(
+            "[theme-package] refusing to package {}: a symlinked theme directory \
+             must not read or write outside the themes root",
+            theme_dir.display()
+        );
+        return PackageStatus::Skipped(
+            "symlinked theme directory (refused, nothing read or written)".into(),
+        );
+    }
     let provider_dir = theme_dir.join("providers").join("noctalia-v5");
     // The theme's background provider, asked through the registration router
     // (never a hardcoded record format): it declares its own live-assignment
@@ -653,13 +676,17 @@ pub fn scan_theme_for_absolute_paths_with_limits(
 /// is any symlinked DIRECTORY — the ROOT included: the walk never leaves
 /// the package through a symlink, whether it is met as a child entry
 /// (checked in the loop below) or handed in as the root itself (checked
-/// here first, W10c-b: `list_theme_dirs` follows links, so a themes-root
-/// entry like `Evil -> ~` IS handed in as a root). Exactly what is NOT
-/// protected, stated for the record: a symlink to a regular FILE is still
-/// read through by design (a root symlink to a file cannot be walked at
-/// all — `read_dir` on it fails and nothing is read), and the gallery
-/// LISTING still shows a symlinked theme, because the leak this closes is
-/// the walk, not the list.
+/// here first, W10c-b: both sources of roots follow links — the gallery's
+/// `ThemeManager::list` (`theme_manager.rs`, `is_dir()` follows links) and
+/// this module's maintenance `list_theme_dirs` (same filter) — so a
+/// themes-root entry like `Evil -> ~` IS handed in as a root). Exactly
+/// what is NOT protected, stated for the record: a symlink to a regular
+/// FILE is still read through by design (a root symlink to a file cannot
+/// be walked at all — `read_dir` on it fails and nothing is read), and the
+/// gallery LISTING still shows a symlinked theme, because the leak this
+/// closes is the walk, not the list. W10c-c adds the operation-level
+/// guard: `package_theme_dir` refuses a symlinked theme dir before any
+/// read or write, so a packaging pass cannot write through the link.
 ///
 /// W10: the walk is bounded on four axes ([`ThemeScanLimits`]) and every
 /// refusal is a warning plus a skip, never a panic and never an unbounded
@@ -672,13 +699,15 @@ fn scan_theme_dir(
     budget: &mut ScanBudget,
     hits: &mut Vec<(PathBuf, String)>,
 ) {
-    // W10c-b (MEDIUM): the ROOT can be a symlink too. `list_theme_dirs`
-    // filters with `is_dir()`, which FOLLOWS links, so a themes-root
-    // entry `Evil -> ~` is listed and passed here as `dir` — a level the
-    // child guard in the loop below never sees. Without this check the
-    // walk started OUTSIDE the package and `report_remaining_absolute_
-    // paths` logged one absolute value per file of $HOME into the
-    // warning log on every save/package and on every maintenance run.
+    // W10c-b (MEDIUM): the ROOT can be a symlink too. Both root sources
+    // filter with `is_dir()`, which FOLLOWS links — the gallery's
+    // `ThemeManager::list` (`theme_manager.rs`) and this module's
+    // maintenance `list_theme_dirs` — so a themes-root entry `Evil -> ~`
+    // is listed and passed here as `dir`, a level the child guard in the
+    // loop below never sees. Without this check the walk started OUTSIDE
+    // the package and `report_remaining_absolute_paths` logged one
+    // absolute value per file of $HOME into the warning log on every
+    // save/package and on every maintenance run.
     // Refused exactly like a symlinked child: one warning per scan, zero
     // reads. A root that is a symlink to a regular FILE is not a
     // directory to walk either: it falls through, `read_dir` fails and
@@ -880,10 +909,12 @@ fn theme_dir_for(themes_root: &Path, name: &str) -> Result<PathBuf, String> {
 /// entry is ignored.
 ///
 /// A SYMLINK to a directory counts as one (`is_dir()` follows links) and is
-/// deliberately still listed: the gallery shows the theme name, and the
-/// leak W10c-b closes is the WALK over such a root — `scan_theme_dir`
-/// refuses a symlinked root with one warning — not the list. The listing
-/// itself never reads file content.
+/// deliberately still listed: this list serves ONLY the maintenance
+/// `--package-themes` pass — the gallery's source is `ThemeManager::list`
+/// (`theme_manager.rs`), not this function. A listed symlink is refused one
+/// level down, twice over: `scan_theme_dir` refuses to WALK a symlinked
+/// root (W10c-b) and `package_theme_dir` refuses to package through one at
+/// all (W10c-c). The listing itself never reads file content.
 fn list_theme_dirs(themes_root: &Path) -> Result<Vec<PathBuf>, String> {
     let entries = std::fs::read_dir(themes_root)
         .map_err(|e| format!("cannot read the themes dir {}: {e}", themes_root.display()))?;
@@ -1063,6 +1094,30 @@ mod tests {
 
     fn provider_dir(theme: &Path) -> PathBuf {
         theme.join("providers").join("noctalia-v5")
+    }
+
+    /// Every file under `root`, relative path + content, sorted — a
+    /// read-only fingerprint that proves a refusal touched NOTHING.
+    fn walk(root: &Path) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    let relative = path.strip_prefix(root).unwrap().display().to_string();
+                    let body = fs::read(&path).unwrap_or_default();
+                    out.push(format!("{relative} {}", String::from_utf8_lossy(&body)));
+                }
+            }
+        }
+        out.sort();
+        out
     }
 
     fn write_static_theme(root: &Path, theme_name: &str, image_bytes: &[u8]) -> (PathBuf, PathBuf) {
@@ -1967,14 +2022,16 @@ mod tests {
         );
     }
 
-    /// MEDIUM (W10c-b): `list_theme_dirs` filters with `is_dir()`, which
-    /// FOLLOWS symlinks, so a theme entry at the themes root like
-    /// `Evil -> ~` is listed and handed to the scan as its ROOT — a level
-    /// the child-directory guard never sees. The walk then started
-    /// OUTSIDE the package and logged one absolute value per file of
-    /// $HOME into the warning log (this scan runs on every save/package
-    /// and from `maintenance`). The scan must refuse a SYMLINKED ROOT
-    /// exactly like a symlinked child: warn once, walk nothing.
+    /// MEDIUM (W10c-b): BOTH root sources filter with `is_dir()`, which
+    /// FOLLOWS symlinks — the gallery's `ThemeManager::list`
+    /// (`theme_manager.rs`) and the maintenance pass's `list_theme_dirs` —
+    /// so a theme entry at the themes root like `Evil -> ~` is listed and
+    /// handed to the scan as its ROOT — a level the child-directory guard
+    /// never sees. The walk then started OUTSIDE the package and logged one
+    /// absolute value per file of $HOME into the warning log (this scan runs
+    /// on every save/package and from `maintenance`). The scan must refuse a
+    /// SYMLINKED ROOT exactly like a symlinked child: warn once, walk
+    /// nothing.
     #[test]
     fn scan_refuses_a_symlinked_root_instead_of_walking_out_of_the_package() {
         let root = tempfile::tempdir().unwrap();
@@ -2019,6 +2076,65 @@ mod tests {
                 "/home/someone/wall.png".to_string()
             )],
             "a symlink to a regular file must still be read through"
+        );
+    }
+
+    /// W10c-c, CRITICAL-class: the SCAN refusing a symlinked root is not the
+    /// OPERATION refusing it. `package_theme_dir` ignored the scan's early
+    /// return and kept going, so `sanitize_settings_file` still wrote through
+    /// `theme_dir` (`noctalia.rs`) and the poster/preset writes landed in the
+    /// symlink target — OUTSIDE the themes root. Packaging must refuse a
+    /// symlinked theme directory EARLY, before any read or write of it, with
+    /// ONE warning.
+    #[test]
+    fn package_refuses_a_symlinked_theme_dir_before_any_read_or_write() {
+        let root = tempfile::tempdir().unwrap();
+        // A real directory OUTSIDE the themes root, carrying a theme a
+        // packaging pass would normally rewrite.
+        let outside = root.path().join("outside/Evil");
+        let provider = provider_dir(&outside);
+        fs::create_dir_all(&provider).unwrap();
+        fs::write(
+            provider.join("settings.toml"),
+            "[wallpaper]\npath = \"/home/someone/wall.png\"\n",
+        )
+        .unwrap();
+        let themes_root = root.path().join("themes");
+        fs::create_dir_all(&themes_root).unwrap();
+        let link = themes_root.join("Evil");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        let before = walk(&outside);
+
+        let mut status = None;
+        let text = with_warn_capture(|| {
+            status = Some(package_theme_dir(
+                &link,
+                &root.path().join("assets"),
+                &root.path().join("presets"),
+                1024,
+            ));
+        });
+
+        assert_eq!(
+            status,
+            Some(PackageStatus::Skipped(
+                "symlinked theme directory (refused, nothing read or written)".into()
+            )),
+            "a symlinked theme dir must be refused up front, not half-packaged"
+        );
+        assert_eq!(
+            walk(&outside),
+            before,
+            "nothing behind the symlink may be read or written"
+        );
+        assert!(
+            text.contains("Evil") && text.contains("symlink"),
+            "the refusal must warn and name the symlink, log was:\n{text}"
+        );
+        assert_eq!(
+            text.matches("[theme-package]").count(),
+            1,
+            "the refusal is ONE warning, log was:\n{text}"
         );
     }
 }
