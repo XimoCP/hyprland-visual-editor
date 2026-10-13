@@ -54,16 +54,24 @@ pub(crate) fn record(decision: &str, detail: &str) {
 }
 
 fn append_bounded(line: &str) -> std::io::Result<()> {
+    append_bounded_with(line, crate::open_private_log)
+}
+
+/// The opener is injected so a FAILED tighten (a chmod that cannot be
+/// performed) is observable in a test: as the file's owner a real failure
+/// cannot be produced without root. `record` still swallows the error — this
+/// module never aborts the decision it records.
+fn append_bounded_with(
+    line: &str,
+    open: impl FnOnce(&Path) -> std::io::Result<fs::File>,
+) -> std::io::Result<()> {
     use std::io::Write;
     let path = log_path();
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
     rotate_if_needed(&path)?;
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)?;
+    let mut file = open(&path)?;
     file.write_all(line.as_bytes())?;
     Ok(())
 }
@@ -81,7 +89,13 @@ fn rotate_if_needed(path: &Path) -> std::io::Result<()> {
     }
     let rotated = rotated_path();
     let _ = fs::remove_file(&rotated);
-    fs::rename(path, &rotated)
+    fs::rename(path, &rotated)?;
+    // The rotated copy is the OLD file: created before this hardening it is
+    // world-readable, which is the same leak this unit closes. Best-effort —
+    // a failure never blocks the decision being recorded.
+    use std::os::unix::fs::PermissionsExt;
+    let _ = fs::set_permissions(&rotated, fs::Permissions::from_mode(0o600));
+    Ok(())
 }
 
 fn timestamp() -> String {
@@ -187,5 +201,92 @@ mod tests {
             !log_path().exists(),
             "a failed write must not create a log file"
         );
+    }
+
+    // ── W8: the decision log is private (mode 0600) ──────────────────
+    //
+    // It records which palette decisions the guard took, line by line. It is
+    // a log of the session, so it is created 0600 AND an existing file from
+    // before this hardening is tightened on the next append — that old
+    // world-readable file is the leak.
+
+    /// File mode (permission bits only) of `path`.
+    fn file_mode(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(path)
+            .expect("path must be readable")
+            .permissions()
+            .mode()
+            & 0o777
+    }
+
+    /// Set the permission bits of `path` (fixture setup).
+    fn set_file_mode(path: &Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("chmod the fixture");
+    }
+
+    #[test]
+    fn the_decision_log_is_created_with_mode_0600() {
+        let _env = TempEnv::new();
+
+        record("MUTE SET", "the log must be private");
+
+        assert_eq!(
+            file_mode(&log_path()),
+            0o600,
+            "color-authority.log must be private to its owner"
+        );
+    }
+
+    #[test]
+    fn a_preexisting_world_readable_decision_log_is_tightened_and_never_truncated() {
+        let _env = TempEnv::new();
+        let path = log_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "[HVE Authority] older line\n").unwrap();
+        set_file_mode(&path, 0o644);
+
+        record("MUTE SET", "after the tighten");
+
+        assert_eq!(
+            file_mode(&path),
+            0o600,
+            "a decision log created before this change must be tightened"
+        );
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(
+            text.starts_with("[HVE Authority] older line\n"),
+            "the existing lines must survive, got: {text:?}"
+        );
+        assert!(
+            text.contains("MUTE SET after the tighten"),
+            "the new decision must be appended, got: {text:?}"
+        );
+    }
+
+    #[test]
+    fn a_failed_tighten_returns_the_error_and_keeps_the_existing_lines() {
+        let _env = TempEnv::new();
+        let path = log_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "[HVE Authority] older line\n").unwrap();
+        set_file_mode(&path, 0o644);
+
+        let err = append_bounded_with("[HVE Authority] must not land\n", |_| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "chmod denied",
+            ))
+        })
+        .expect_err("a failed chmod on the create path must be returned");
+
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "[HVE Authority] older line\n",
+            "a failed tighten must not destroy or truncate the decision log"
+        );
+        assert_eq!(file_mode(&path), 0o644, "and must not pretend it succeeded");
     }
 }

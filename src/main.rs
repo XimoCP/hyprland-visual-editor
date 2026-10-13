@@ -3076,14 +3076,54 @@ fn open_log_file_in(dir: &std::path::Path) -> std::io::Result<std::sync::Mutex<s
         if log_rotate_due(meta.len()) {
             // Replaces any previous `hve.log.1` (atomic rename on Unix).
             // Best-effort: a failed rotation must not cost us the file layer.
-            let _ = std::fs::rename(&path, dir.join("hve.log.1"));
+            let rotated = dir.join("hve.log.1");
+            let _ = std::fs::rename(&path, &rotated);
+            // The rotated copy is the OLD file: created before this
+            // hardening it is world-readable, which is the same leak this
+            // unit closes. Best-effort — a failure never blocks logging.
+            let _ = std::fs::set_permissions(
+                &rotated,
+                std::os::unix::fs::PermissionsExt::from_mode(0o600),
+            );
         }
     }
+    let file = open_private_log(&path)?;
+    Ok(std::sync::Mutex::new(file))
+}
+
+/// The production tighten: exactly 0600, applied to every log this crate
+/// opens — freshly created or inherited from before this hardening.
+fn tighten_log_permissions(file: &std::fs::File) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))
+}
+
+/// W8 seam: open `path` for append and hand the open file to `tighten`.
+///
+/// The opener is injected so a FAILED tighten is observable in a test: as the
+/// file's owner you can always `fchmod` your own file, so a real failure
+/// cannot be produced without root. A failed tighten is RETURNED (never
+/// swallowed), and the file is neither deleted nor truncated either way.
+pub(crate) fn open_private_log_with(
+    path: &std::path::Path,
+    tighten: impl FnOnce(&std::fs::File) -> std::io::Result<()>,
+) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    // `mode` applies only when the file is CREATED, and umask still masks
+    // it — so the explicit tighten below is what makes 0600 certain, and it
+    // is also the only thing that fixes a file created before this change.
     let file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&path)?;
-    Ok(std::sync::Mutex::new(file))
+        .mode(0o600)
+        .open(path)?;
+    tighten(&file)?;
+    Ok(file)
+}
+
+/// The production opener used by every log this crate writes.
+pub(crate) fn open_private_log(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    open_private_log_with(path, tighten_log_permissions)
 }
 
 /// Production entry point: the log lives in the cache dir, next to the lock.
@@ -6114,6 +6154,117 @@ mod tests {
         let blocker = dir.path().join("blocker");
         std::fs::write(&blocker, b"not a dir").expect("blocker file");
         assert!(open_log_file_in(&blocker.join("hve")).is_err(), "unusable dir must return Err");
+    }
+
+    // ── W8: the logs are private (mode 0600) ─────────────────────────
+    //
+    // `hve.log` holds every gallery/preview trail of the session. Created
+    // with the default mode it is world-readable, and a log created BEFORE
+    // this hardening keeps its old (loose) mode for ever — that old file is
+    // the actual leak, so the tighten runs on every open.
+
+    /// File mode (permission bits only) of `path`.
+    fn file_mode(path: &std::path::Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .expect("path must be readable")
+            .permissions()
+            .mode()
+            & 0o777
+    }
+
+    /// Set the permission bits of `path` (fixture setup).
+    fn set_file_mode(path: &std::path::Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+            .expect("chmod the fixture");
+    }
+
+    #[test]
+    fn the_log_file_is_created_with_mode_0600() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        let writer = open_log_file_in(dir.path()).expect("open must succeed");
+        drop(writer);
+
+        assert_eq!(
+            file_mode(&dir.path().join("hve.log")),
+            0o600,
+            "hve.log must be private to its owner"
+        );
+    }
+
+    #[test]
+    fn a_preexisting_world_readable_log_is_tightened_on_the_next_open() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log = dir.path().join("hve.log");
+        std::fs::write(&log, b"keeper's earlier lines").expect("seed the old log");
+        set_file_mode(&log, 0o644);
+        assert_eq!(file_mode(&log), 0o644, "fixture: the old log is world-readable");
+
+        let writer = open_log_file_in(dir.path()).expect("open must succeed");
+        drop(writer);
+
+        assert_eq!(
+            file_mode(&log),
+            0o600,
+            "a log created before this change must be tightened on the next open"
+        );
+        assert_eq!(
+            std::fs::read(&log).expect("existing lines"),
+            b"keeper's earlier lines",
+            "tightening must never truncate the log"
+        );
+    }
+
+    #[test]
+    fn a_rotated_previous_generation_is_tightened_too() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log = dir.path().join("hve.log");
+        std::fs::write(&log, vec![b'x'; (LOG_ROTATE_BYTES + 1) as usize]).expect("oversized log");
+        set_file_mode(&log, 0o644);
+
+        let writer = open_log_file_in(dir.path()).expect("open must succeed");
+        drop(writer);
+
+        assert_eq!(
+            file_mode(&dir.path().join("hve.log.1")),
+            0o600,
+            "the rotated copy is the OLD world-readable file: same leak, same fix"
+        );
+    }
+
+    #[test]
+    fn a_failed_tighten_returns_the_error_and_leaves_the_log_intact() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log = dir.path().join("hve.log");
+        std::fs::write(&log, b"keeper's earlier lines").expect("seed the old log");
+        set_file_mode(&log, 0o644);
+
+        let err = open_private_log_with(&log, |_| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "chmod denied",
+            ))
+        })
+        .expect_err("a failed chmod must be returned, never swallowed");
+
+        assert_eq!(
+            err.kind(),
+            std::io::ErrorKind::PermissionDenied,
+            "the caller must see why the tighten failed"
+        );
+        assert!(log.exists(), "a failed tighten must never delete the log");
+        assert_eq!(
+            std::fs::read(&log).expect("content"),
+            b"keeper's earlier lines",
+            "a failed tighten must never truncate the log"
+        );
+        assert_eq!(
+            file_mode(&log),
+            0o644,
+            "and the code must not pretend the chmod happened"
+        );
     }
 
     // ── W1: the transition masks must actually reach the compositor ──
