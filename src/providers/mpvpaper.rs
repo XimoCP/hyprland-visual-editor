@@ -470,6 +470,19 @@ pub fn apply_manifest(theme_dir: &Path) -> Result<(), String> {
         }
     };
 
+    // G3 (W4b): refuse BEFORE resolving or downloading anything, and before
+    // writing any live state or killing anything. The download is driven by
+    // UNTRUSTED theme input, so a disabled plugin must never download a
+    // theme's videos (up to the 1 GiB curl cap) for an apply that is going
+    // to be refused anyway; a disabled plugin must never be re-enabled by a
+    // theme apply, and no half-written assignments file may linger for its
+    // next boot.
+    if !mpvpaper_enabled() {
+        return Err(format!(
+            "{MPVPAPER_PLUGIN_ID} plugin is not enabled; videos not launched (live state untouched)"
+        ));
+    }
+
     let mut resolved: HashMap<String, String> = HashMap::new();
     let mut failures: Vec<String> = Vec::new();
     for (connector, video) in &manifest.assignments {
@@ -488,15 +501,6 @@ pub fn apply_manifest(theme_dir: &Path) -> Result<(), String> {
         return Err(format!(
             "No mpvpaper videos could be resolved{}",
             if failures.is_empty() { String::new() } else { format!(" ({} failed)", failures.len()) }
-        ));
-    }
-
-    // G3: refuse BEFORE writing any live state or killing anything. A
-    // disabled plugin must never be re-enabled by a theme apply, and no
-    // half-written assignments file may linger for its next boot.
-    if !mpvpaper_enabled() {
-        return Err(format!(
-            "{MPVPAPER_PLUGIN_ID} plugin is not enabled; videos not launched (live state untouched)"
         ));
     }
 
@@ -1004,7 +1008,9 @@ video_directory = "~/Videos"
     /// so this backend must reach that guarded bounce BY DELEGATION — the
     /// property is guarded in its new location, not re-implemented here.
     /// `apply_manifest` must still refuse a disabled plugin before any
-    /// write or kill. Comment lines are stripped first so a commented-out
+    /// write or kill, and (W4b) BEFORE the resolve/download loop, so a
+    /// disabled plugin never downloads a theme's videos for an apply that
+    /// will be refused. Comment lines are stripped first so a commented-out
     /// guard cannot satisfy this. Needles are built with concat() so this
     /// test's own source — it lives in the file it inspects — can never
     /// satisfy them.
@@ -1034,6 +1040,15 @@ video_directory = "~/Videos"
         assert!(
             apply_guard < live_write,
             "apply_manifest must refuse a disabled plugin before writing any live state"
+        );
+        let resolve_at = after_apply
+            .find(&["resolve", "_video"].concat())
+            .expect("apply_manifest must still contain the resolve/download loop");
+        assert!(
+            apply_guard < resolve_at,
+            "apply_manifest must refuse a disabled plugin BEFORE the resolve loop: a disabled \
+             plugin must never download (curl, up to the 1 GiB cap) a theme's videos for an \
+             apply that is going to be refused anyway"
         );
     }
 
