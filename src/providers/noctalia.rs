@@ -2366,6 +2366,11 @@ impl ThemeProvider for NoctaliaV5Provider {
         // degrade gracefully, never fail the apply and never panic.
         // (`fs::copy` itself streams, but it would plant untrusted bytes in
         // the live file for the layout verify to slurp right after.)
+        // W10c: the pre-flight ALSO refuses a non-regular source (warns
+        // inside `theme_file_is_bounded`): `fs::metadata` answers `len = 0`
+        // for a FIFO, so the size-only check alone would have let
+        // `fs::copy` block on the open for ever — exactly like a missing
+        // file, the restore is skipped and the apply continues.
         if saved_settings.exists() && crate::theme_package::theme_file_is_bounded(&saved_settings) {
             if let Some(state_dir) = noctalia_state_dir() {
                 let dst = state_dir.join("settings.toml");
@@ -2870,6 +2875,11 @@ impl ThemeProvider for NoctaliaV5Provider {
             // theme input too — an oversized one is refused (warns inside)
             // and the custom restore degrades to "no palette copied, no
             // named scheme set" (the descriptor-clearing branch below).
+            // W10c: the pre-flight ALSO refuses a non-regular source (warns
+            // inside `theme_file_is_bounded`): a FIFO answers `len = 0` to
+            // `fs::metadata`, so the size-only check alone would have let
+            // `fs::copy` block on the open for ever — the restore degrades
+            // exactly like for a missing file.
             if !name.is_empty() && !refused_name && palette_src.exists()
                 && crate::theme_package::theme_file_is_bounded(&palette_src)
             {

@@ -31,13 +31,15 @@ const POSTER_STEM: &str = "poster";
 //
 // A theme package is UNTRUSTED input: anyone can hand HVE a directory that
 // claims to be a theme. W10 (`src/theme_package.rs`) owns the ONE set of
-// limits (`MAX_THEME_FILE_BYTES` = 4 MiB) and the ONE error type
-// (`ThemeReadError`); this module reuses them through
-// `crate::theme_package::read_theme_text` and never duplicates a number. The
-// only thing added here is the REGULAR-FILE half of the guard, which W10's
-// `Read::take` bound cannot express: a FIFO, socket or device named like a
-// theme record makes `File::open` block forever, so it must be refused
-// BEFORE the open.
+// limits (`MAX_THEME_FILE_BYTES` = 4 MiB), the ONE error type
+// (`ThemeReadError`) AND the regular-file guard: W10c moved it into the
+// lowest-level bounded reader (`read_theme_bytes_capped`), because the W10b
+// guard that lived only in the `read_theme_record` wrapper below was
+// bypassed by ~17 apply-side call sites that read through the bounded
+// readers directly. A FIFO, socket or device named like a theme record makes
+// `File::open` block forever, so it is refused BEFORE the open — now where
+// every bounded theme read actually goes through. This module reuses W10's
+// readers and never duplicates a number or a guard.
 
 /// Whether `path` resolves to a regular file.
 ///
@@ -54,29 +56,18 @@ pub fn theme_file_is_regular(path: &Path) -> bool {
     }
 }
 
-/// Read one untrusted theme text record under W10's bound, refusing a
-/// non-regular file first.
+/// Read one untrusted theme text record under W10's bound.
 ///
-/// This is the single entry point every read of a THEME file goes through: it
-/// adds the regular-file guard on top of W10's bounded
-/// [`crate::theme_package::read_theme_text`] (the ONE source of the 4 MiB
-/// limit and the `ThemeReadError` type). A refusal — over-bound OR
-/// non-regular — is a warning plus an `Err`; callers skip gracefully exactly
-/// like a missing file.
+/// A convenience delegation to [`crate::theme_package::read_theme_text`]
+/// (the ONE source of the 4 MiB limit, the `ThemeReadError` type AND the
+/// regular-file guard — W10c moved the guard into that lowest-level reader,
+/// so every bounded theme read is covered whether it goes through this
+/// wrapper or calls the bounded readers directly). A refusal — over-bound
+/// OR non-regular — is a warning plus an `Err`; callers skip gracefully
+/// exactly like a missing file.
 pub fn read_theme_record(
     path: &Path,
 ) -> Result<String, crate::theme_package::ThemeReadError> {
-    if !theme_file_is_regular(path) {
-        tracing::warn!(
-            "[theme-trust] refusing to read {}: it is not a regular file (a FIFO, socket or \
-             device named like a theme record would block or mislead); skipping",
-            path.display()
-        );
-        return Err(crate::theme_package::ThemeReadError::Unreadable(format!(
-            "{} is not a regular file",
-            path.display()
-        )));
-    }
     crate::theme_package::read_theme_text(path)
 }
 
@@ -1230,13 +1221,14 @@ mod tests {
 
     // ── W10b: bounded reads of untrusted theme records ─────────────────
     //
-    // A theme package is UNTRUSTED input. Every THEME-file read now goes
-    // through `read_theme_record`, which layers W10's regular-file guard on
-    // top of the bounded reader `crate::theme_package::read_theme_text` (the
-    // ONE source of the 4 MiB limit and the `ThemeReadError` type). These
-    // prove: an oversized record is refused without being slurped, a FIFO is
-    // refused instead of blocking, a legitimate record reads byte-identically,
-    // and a symlink to a regular file still works.
+    // A theme package is UNTRUSTED input. Every bounded THEME-file read now
+    // carries the regular-file guard, because W10c moved it into the
+    // lowest-level reader `crate::theme_package::read_theme_text` (the ONE
+    // source of the 4 MiB limit, the `ThemeReadError` type AND the guard) —
+    // not into this wrapper, whose guard was bypassed by the direct call
+    // sites. These prove: an oversized record is refused without being
+    // slurped, a FIFO is refused instead of blocking, a legitimate record
+    // reads byte-identically, and a symlink to a regular file still works.
 
     /// Create a FIFO at `path` (no std equivalent; `libc::mkfifo`).
     fn mkfifo(path: &Path) {

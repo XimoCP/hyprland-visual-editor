@@ -460,6 +460,7 @@ struct ScanBudget {
     warned_depth: bool,
     warned_entries: bool,
     warned_bytes: bool,
+    warned_symlink_dir: bool,
 }
 
 impl ScanBudget {
@@ -471,6 +472,7 @@ impl ScanBudget {
             warned_depth: false,
             warned_entries: false,
             warned_bytes: false,
+            warned_symlink_dir: false,
         }
     }
 }
@@ -510,14 +512,36 @@ impl std::fmt::Display for ThemeReadError {
 
 /// Read at most `max_bytes` + 1 bytes of `path`.
 ///
-/// W10: the bound is enforced by the READ itself (`Read::take`), not by a
-/// stat-then-read — so a file that grows between the check and the read (or
+/// W10: the size bound is enforced by the READ itself (`Read::take`), not by
+/// a stat-then-read — so a file that grows between the check and the read (or
 /// a `/proc` entry that reports size 0) can never open an unbounded window.
-/// A refusal warns (clear, once per file) and comes back as `Err`, never a
-/// panic; ordinary I/O errors come back as `Err` without a warning, so
-/// callers keep their lenient "missing file is not an error" behaviour.
+///
+/// W10c: the REGULAR-FILE guard lives HERE, in the lowest-level reader every
+/// bounded theme read goes through (`read_theme_text`, `read_theme_bytes`
+/// and the leak scan) — not in a wrapper that call sites can bypass. A FIFO,
+/// socket or device named like a theme record makes `File::open` block
+/// forever (FIFO) or mislead (device), so it must be refused BEFORE the
+/// open, where the `Read::take` bound cannot help. A refusal warns (clear,
+/// once per file) and comes back as `Err`; ordinary I/O errors come back as
+/// `Err` without a warning, so callers keep their lenient "missing file is
+/// not an error" behaviour.
 fn read_theme_bytes_capped(path: &Path, max_bytes: u64) -> Result<Vec<u8>, ThemeReadError> {
     use std::io::Read;
+    // W10c: `theme_file_is_regular` follows symlinks, so a symlink to a
+    // regular file still reads (documented behaviour) while a symlink to a
+    // FIFO is refused here. A path that cannot be stat'ed answers `true`,
+    // so the open below reports it exactly as today.
+    if !crate::theme_media::theme_file_is_regular(path) {
+        tracing::warn!(
+            "[theme-package] refusing to read {}: it is not a regular file (a FIFO, socket \
+             or device named like a theme record would block or mislead)",
+            path.display()
+        );
+        return Err(ThemeReadError::Unreadable(format!(
+            "{} is not a regular file",
+            path.display()
+        )));
+    }
     let file = std::fs::File::open(path)
         .map_err(|e| ThemeReadError::Unreadable(format!("cannot open {}: {e}", path.display())))?;
     let mut bytes = Vec::new();
@@ -557,15 +581,29 @@ pub fn read_theme_bytes(path: &Path) -> Result<Vec<u8>, ThemeReadError> {
     read_theme_bytes_capped(path, MAX_THEME_FILE_BYTES)
 }
 
-/// Whether `path` is small enough to be COPIED under the per-file bound —
-/// the pre-flight for a `fs::copy` of untrusted theme bytes (a streamed
-/// copy allocates no memory, but it would otherwise plant untrusted bytes
-/// in the live config for a later unbounded read). Warns and answers
-/// `false` when the file is over the bound; a file whose size cannot be
+/// Whether `path` is safe to copy under the per-file bound — the
+/// pre-flight for a `fs::copy` of untrusted theme bytes (a streamed copy
+/// allocates no memory, but it would otherwise plant untrusted bytes in
+/// the live config for a later unbounded read). Warns and answers `false`
+/// when the file is over the bound; a file whose size cannot be
 /// determined answers `true` so the caller's own error handling stays in
 /// charge exactly as today. The stat/copy race it cannot close is bounded:
 /// the copy itself is streamed, never a memory allocation.
+///
+/// W10c: a NON-REGULAR file also fails the pre-flight, with a warning
+/// naming it. `fs::metadata` answers `len = 0` for a FIFO, so the
+/// size-only check called it "bounded" and `fs::copy` would block on the
+/// open for ever. A symlink to a regular file stays accepted (the stat
+/// follows links, like the copy itself).
 pub fn theme_file_is_bounded(path: &Path) -> bool {
+    if !crate::theme_media::theme_file_is_regular(path) {
+        tracing::warn!(
+            "[theme-package] refusing to copy {}: it is not a regular file (a FIFO, socket \
+             or device named like a theme record would block or mislead)",
+            path.display()
+        );
+        return false;
+    }
     match std::fs::metadata(path).map(|m| m.len()) {
         Ok(len) if len > MAX_THEME_FILE_BYTES => {
             tracing::warn!(
@@ -609,7 +647,9 @@ pub fn scan_theme_for_absolute_paths_with_limits(
 }
 
 /// Walk `dir` depth-first in sorted order, collecting the hits of every text
-/// file under it. The packaged `media/` directory is skipped whole.
+/// file under it. The packaged `media/` directory is skipped whole, and so
+/// is any symlinked directory (W10c: it would carry the walk out of the
+/// package); a symlink to a regular file is still read through.
 ///
 /// W10: the walk is bounded on four axes ([`ThemeScanLimits`]) and every
 /// refusal is a warning plus a skip, never a panic and never an unbounded
@@ -653,6 +693,26 @@ fn scan_theme_dir(
             return;
         }
         budget.entries_left -= 1;
+        // W10c (MEDIUM): `is_dir()` FOLLOWS symlinks, so a package carrying
+        // `providers/evil -> ~` would walk files under the keeper's home and
+        // read them into the leak log. A symlinked DIRECTORY is skipped with
+        // one warning per scan; a symlink to a regular FILE stays accepted on
+        // purpose (documented — the file it names is read exactly like a
+        // regular one, and the reader's own guard follows the link, so a
+        // symlink to a FIFO is refused there).
+        if path.is_symlink()
+            && std::fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false)
+        {
+            if !budget.warned_symlink_dir {
+                budget.warned_symlink_dir = true;
+                tracing::warn!(
+                    "[theme-package] skipping the symlinked directory {}: a symlink must \
+                     not carry an untrusted theme scan out of the package",
+                    path.display()
+                );
+            }
+            continue;
+        }
         if path.is_dir() {
             if path.file_name().and_then(|n| n.to_str()) == Some(crate::theme_media::MEDIA_DIR) {
                 continue;
@@ -1699,5 +1759,194 @@ mod tests {
         let bomb = root.path().join("bomb.toml");
         fs::write(&bomb, vec![b'x'; MAX_THEME_FILE_BYTES as usize + 1]).unwrap();
         assert!(!theme_file_is_bounded(&bomb), "an over-bound file must be refused");
+    }
+
+    // ── W10c: the regular-file guard lives in the LOWEST-level reader ────
+    //
+    // The W10b guard sat only in the `theme_media::read_theme_record`
+    // wrapper, which ~17 apply-side call sites bypass by calling the bounded
+    // readers directly — and `fs::metadata` answers `len = 0` for a FIFO, so
+    // the size-only pre-flight called it "bounded" and `fs::copy` would block
+    // on the open. These tests pin the three refuted holes. SAFETY NOTE: a
+    // test that OPENS a FIFO blocks the whole suite forever, so every FIFO
+    // probe here either asserts a STAT-only predicate or runs the reader on
+    // a worker thread under a timeout; every `File::open` probe that must
+    // fail fast uses a Unix socket (ENXIO), never a FIFO.
+
+    /// Create a FIFO at `path` (no std equivalent; `libc::mkfifo`). Never
+    /// opened here — stat-only fixtures are safe, open probes are not.
+    fn mkfifo(path: &Path) {
+        use std::os::unix::ffi::OsStrExt;
+        let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        let rc = unsafe { libc::mkfifo(c.as_ptr(), 0o600) };
+        assert_eq!(rc, 0, "mkfifo must succeed for the sandbox fixture");
+    }
+
+    /// Create a Unix socket at `path`. `File::open` on a socket fails fast
+    /// with ENXIO (never blocks), so it pins "refused BEFORE the open"
+    /// without the FIFO hazard.
+    fn unix_socket(path: &Path) {
+        let listener = std::os::unix::net::UnixListener::bind(path).expect("socket must bind");
+        // The bound listener only creates the socket file; dropping it
+        // leaves the file in place, still non-regular and still ENXIO.
+        drop(listener);
+    }
+
+    /// Hole (a): the bounded TEXT reader itself must refuse a non-regular
+    /// file BEFORE the open, with the refusal named in the error and in the
+    /// warning — the Unix socket fails fast with ENXIO if it is ever opened,
+    /// so this can never hang the suite.
+    #[test]
+    fn read_theme_text_refuses_a_non_regular_file_instead_of_opening_it() {
+        let root = tempfile::tempdir().unwrap();
+        let sock = root.path().join("wallpaper.txt");
+        unix_socket(&sock);
+
+        let text = with_warn_capture(|| {
+            let err = read_theme_text(&sock).expect_err("a socket must be refused");
+            assert!(
+                err.to_string().contains("not a regular file"),
+                "the refusal must name the non-regular file, got: {err}"
+            );
+        });
+        assert!(
+            text.contains("wallpaper.txt") && text.contains("not a regular file"),
+            "the refusal must warn and name the file, log was:\n{text}"
+        );
+    }
+
+    /// Hole (a), same contract for the bounded BYTE reader.
+    #[test]
+    fn read_theme_bytes_refuses_a_non_regular_file_instead_of_opening_it() {
+        let root = tempfile::tempdir().unwrap();
+        let sock = root.path().join("palette.json");
+        unix_socket(&sock);
+
+        let text = with_warn_capture(|| {
+            let err = read_theme_bytes(&sock).expect_err("a socket must be refused");
+            assert!(
+                err.to_string().contains("not a regular file"),
+                "the refusal must name the non-regular file, got: {err}"
+            );
+        });
+        assert!(
+            text.contains("palette.json") && text.contains("not a regular file"),
+            "the refusal must warn and name the file, log was:\n{text}"
+        );
+    }
+
+    /// Hole (a) — the auditor's exact counter-example: a FIFO named like a
+    /// theme record must be REFUSED, not block. The read runs on a worker
+    /// thread and a timeout proves it returned before any open (a naive
+    /// open on the FIFO would block the suite forever, so the guard MUST
+    /// precede the open for this test to be safe at all).
+    #[test]
+    fn read_theme_text_refuses_a_fifo_instead_of_blocking() {
+        let root = tempfile::tempdir().unwrap();
+        let fifo = root.path().join("wallpaper.txt");
+        mkfifo(&fifo);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let fifo = fifo.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(read_theme_text(&fifo));
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+            Ok(result) => assert!(result.is_err(), "a FIFO must be refused, got: {result:?}"),
+            Err(_) => panic!("read_theme_text blocked on a FIFO instead of refusing it"),
+        }
+    }
+
+    /// Hole (b): the `fs::copy` pre-flight answered "bounded" for a FIFO,
+    /// because `fs::metadata` reports `len = 0` for one. A non-regular file
+    /// must fail the pre-flight (stat-only probe — no open can hang here).
+    #[test]
+    fn theme_file_is_bounded_refuses_a_non_regular_file() {
+        let root = tempfile::tempdir().unwrap();
+        let fifo = root.path().join("settings.toml");
+        mkfifo(&fifo);
+
+        let text = with_warn_capture(|| {
+            assert!(
+                !theme_file_is_bounded(&fifo),
+                "a FIFO must not answer bounded: fs::copy would block on its open"
+            );
+        });
+        assert!(
+            text.contains("settings.toml") && text.contains("not a regular file"),
+            "the refusal must warn and name the file, log was:\n{text}"
+        );
+    }
+
+    /// Hole (c): ONE FIFO anywhere in a tree fed to the leak scan hung the
+    /// package path for ever, because the scan called the unguarded reader.
+    /// Worker thread + timeout again: proof the scan returns without ever
+    /// opening the FIFO.
+    #[test]
+    fn scan_skips_a_fifo_without_blocking() {
+        let root = tempfile::tempdir().unwrap();
+        let theme = root.path().join("themes/Trap");
+        fs::create_dir_all(&theme).unwrap();
+        mkfifo(&theme.join("notes.txt"));
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let theme = theme.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(scan_theme_for_absolute_paths(&theme));
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+            Ok(hits) => assert!(hits.is_empty(), "a FIFO must be skipped, got {hits:?}"),
+            Err(_) => panic!("the scan blocked on a FIFO instead of skipping it"),
+        }
+    }
+
+    /// MEDIUM (W10): `is_dir()` follows symlinks, so a package carrying
+    /// `evil -> <outside dir>` walked files OUTSIDE the package into the
+    /// leak log. A symlinked directory must be skipped with a warning.
+    #[test]
+    fn scan_skips_a_symlinked_directory_out_of_the_package() {
+        let root = tempfile::tempdir().unwrap();
+        let theme = root.path().join("themes/Evil");
+        fs::create_dir_all(&theme).unwrap();
+        let outside = root.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.txt"), "url = \"/home/someone/.ssh/id_rsa\"\n").unwrap();
+        std::os::unix::fs::symlink(&outside, theme.join("evil")).unwrap();
+
+        let mut hits = Vec::new();
+        let text = with_warn_capture(|| hits = scan_theme_for_absolute_paths(&theme));
+
+        assert!(
+            hits.is_empty(),
+            "a symlinked directory must never be walked out of the package, got {hits:?}"
+        );
+        assert!(
+            text.contains("evil") && text.contains("symlink"),
+            "the skip must warn and name the symlink, log was:\n{text}"
+        );
+    }
+
+    /// Requirement 6, characterization: a symlink to a regular FILE stays
+    /// accepted on purpose (documented behaviour — the record it names is
+    /// read exactly like a regular file). This must stay green.
+    #[test]
+    fn scan_still_reads_through_a_symlink_to_a_regular_file() {
+        let root = tempfile::tempdir().unwrap();
+        let theme = root.path().join("themes/Link");
+        fs::create_dir_all(&theme).unwrap();
+        let outside = root.path().join("outside.txt");
+        fs::write(&outside, "url = \"/home/someone/wall.png\"\n").unwrap();
+        std::os::unix::fs::symlink(&outside, theme.join("notes.txt")).unwrap();
+
+        let hits = scan_theme_for_absolute_paths(&theme);
+
+        assert_eq!(
+            hits,
+            vec![(
+                theme.join("notes.txt"),
+                "/home/someone/wall.png".to_string()
+            )],
+            "a symlink to a regular file must still be read through"
+        );
     }
 }
