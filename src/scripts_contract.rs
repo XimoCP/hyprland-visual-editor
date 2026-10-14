@@ -2055,6 +2055,34 @@ fn install_sh_excludes_themes_from_the_local_assets_copy() {
     );
 }
 
+/// The installer used to rewrite the desktop entry with a GREEDY
+/// `sed -i "s|Exec=.*hve|Exec=$HVE_BIN|"`, which mangled the shipped line
+/// `Exec=sh -c "exec $HOME/.local/bin/hve"` into `Exec=/home/…/.local/bin/hve"`
+/// — a broken launcher, reproduced by running the install on 2026-10-14. The
+/// rewrite is unnecessary: the shipped entry resolves the binary through $HOME
+/// at launch. This pins that no ACTIVE line of the installer sed's it again
+/// (the comment that documents the history is allowed to quote it), and that
+/// the desktop entry stays portable.
+#[test]
+fn install_sh_leaves_the_portable_desktop_exec_line_alone() {
+    let src = std::fs::read_to_string(repo_root().join("install.sh")).unwrap();
+    let offenders: Vec<&str> = src
+        .lines()
+        .filter(|l| !l.trim_start().starts_with('#'))
+        .filter(|l| l.contains("sed") && l.contains("Exec="))
+        .collect();
+    assert!(
+        offenders.is_empty(),
+        "no active line of install.sh may rewrite the desktop Exec line: {offenders:?}"
+    );
+    let desktop = std::fs::read_to_string(repo_root().join("hve.desktop")).unwrap();
+    assert!(
+        desktop.contains("Exec=sh -c \"exec \\$HOME/.local/bin/hve\""),
+        "the desktop entry must launch the binary through $HOME, never as a bare \
+         `hve` (PATH-dependent) or an absolute path (breaks on a move)"
+    );
+}
+
 /// The same sandbox with the installed binary present: the watchdog must do
 /// nothing at all.
 #[test]

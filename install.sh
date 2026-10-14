@@ -408,8 +408,14 @@ fi
 if [ -f "$SCRIPT_DIR/hve.desktop" ]; then
     mkdir -p "$HOME/.local/share/applications"
     cp "$SCRIPT_DIR/hve.desktop" "$HVE_DESKTOP"
-    # Use the actual binary path so the launcher doesn't depend on PATH
-    sed -i "s|Exec=.*hve|Exec=$HVE_BIN|" "$HVE_DESKTOP"
+    # NO rewrite of the Exec line. It used to be
+    #     sed -i "s|Exec=.*hve|Exec=$HVE_BIN|" "$HVE_DESKTOP"
+    # and that greedy pattern MANGLED the shipped line
+    # (`Exec=sh -c "exec $HOME/.local/bin/hve"` became
+    # `Exec=/home/…/.local/bin/hve"`, a broken launcher). It is also unnecessary:
+    # the shipped entry already resolves the binary through $HOME at launch, so
+    # the launcher does not depend on PATH. Reproduced by installing on
+    # 2026-10-14; pinned by install_sh_leaves_the_portable_desktop_exec_line_alone.
     ok "$(msg_fmt "$MSG_DESKTOP_TO" "$HVE_DESKTOP" "$HVE_BIN")"
 fi
 
