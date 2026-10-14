@@ -13,6 +13,9 @@ HVE publishes a tray icon through the **KDE Status Notifier Item** protocol usin
 - The icon is drawn in Rust from the HVE logo as RGBA pixel data and handed to the tray as a **48×48** image — no system icon theme is involved.
 - Its tint follows the current theme accent (lightened for dark panels); the on/off state of HVE is shown by the menu, not by an icon colour swap.
 - The tray title is `HVE — Hyprland Visual Editor`.
+- If the tray cannot be created at all (no D-Bus session bus to talk to), HVE logs a warning and keeps running
+  without a tray icon: a missing notification area never stops the editor. If the bus exists but the panel is not
+  up yet, the icon still appears when the panel starts.
 
 ### 📋 Context menu
 

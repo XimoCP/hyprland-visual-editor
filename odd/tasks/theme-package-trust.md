@@ -71,7 +71,9 @@ sandbox**. If he accepts, the theme's code runs as him. The warning must not be 
 - **W14 — the fragile test patterns**: the source-text assertions and the worst `thread::sleep` tests.
 - **W15 — `cargo fmt`**: LAST or FIRST, never in between — 23,362 diff lines across 12+ files, one dedicated
   commit.
-- **W16 — the `ksni` 0.2 → 0.3 bump** (dedupes and drops clap v2): needs care, the tray API changes.
+- **W16 — the `ksni` 0.2 → 0.3 bump** (dedupes and drops clap v2): **DONE, after this contract closed** — it was
+  the one item deferred here because it changes the tray's failure semantics. Plan, decisions and evidence live in
+  `odd/tasks/ksni-0.3-bump.md`.
 
 ## Acceptance criteria
 
@@ -741,8 +743,9 @@ class W2c-d existed to close. Measured name sweep (1,348 minimal presets, counte
   "flake" turned out to be a FULL `/tmp`** (a 16 GiB tmpfs at 100 %, filled by previous verification rounds' scratch),
   reproduced as `Os { code: 28, kind: StorageFull }` and cleaned, with the timing hypothesis unproven in 8 targeted
   rounds and NOTHING loosened for it; the ~65 source-text assertions KEPT with the policy written down; and the
-  release build installed after a return point. **The one item deferred is the `ksni` 0.2 → 0.3 bump**, with the
-  measured reason and the exact next steps in that document (it changes the tray's failure semantics and needs a live
+  release build installed after a return point. **The one item deferred is the `ksni` 0.2 → 0.3 bump** — later done
+  and independently verified in `odd/tasks/ksni-0.3-bump.md`; the measured reason and the exact next steps stay in
+  that document (it changes the tray's failure semantics and needs a live
   `StatusNotifierHost` to check). Original scope, kept for the record:
   - `cargo fmt` (23,362 diff lines — a dedicated commit, never mixed), the ~70 autofixable clippy lints (NEVER the
     float-comparison class — it changes NaN semantics the layout relies on), the `tray.rs` pixel-chunk guard, the

@@ -4970,15 +4970,37 @@ fn main() -> Result<(), slint::PlatformError> {
     )));
 
     // ── Dynamic theme + logo + tray icon ──
+    // The "Toggle System" flag is shared with the tray's own menu item, so the
+    // caller owns it: it is passed to `setup_callbacks` below whether or not a
+    // tray could be created.
+    let tray_system_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let tray_handle = match refresh_visual_state(&window, &engine, &cfg.theme) {
         Some((icon, primary)) => {
             tracing::info!("Theme loaded: {} (pref={})", primary, cfg.theme);
-            tray::start_tray(window.as_weak(), tr.clone(), icon, 48, 48)
+            tray::start_tray(
+                window.as_weak(),
+                tr.clone(),
+                icon,
+                48,
+                48,
+                tray_system_active.clone(),
+            )
         }
-        None => tray::start_tray(window.as_weak(), tr.clone(), Vec::new(), 48, 48),
+        None => tray::start_tray(
+            window.as_weak(),
+            tr.clone(),
+            Vec::new(),
+            48,
+            48,
+            tray_system_active.clone(),
+        ),
     };
-    let tray_system_active = tray_handle.system_active.clone();
-    tray::init_global(tray_handle);
+    // `None` = the notification area is unreachable; `start_tray` already
+    // warned, and every `tray::*` call below is a no-op while nothing is
+    // registered.
+    if let Some(handle) = tray_handle {
+        tray::init_global(handle);
+    }
 
     // ── Seed the Borders tune pane from the loaded theme ──
     // This runs once, strictly AFTER `refresh_visual_state` above: the sync

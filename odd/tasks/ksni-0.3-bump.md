@@ -1,0 +1,120 @@
+# ksni 0.2.2 → 0.3 bump (HVE)
+
+Branch `hve2-visual-rewrite`. Test runner `cargo test`; the UI renders need
+`HVE_RENDER_DIR=<dir> cargo test --bin hve <test> -- --nocapture` and the frames are read by eye.
+Delivery: ONE work-unit commit (Cargo.toml + tray + its callers + tests + docs together), because the
+Cargo.toml line alone does not compile.
+Deferred from Lane C (S5 / T5, `odd/tasks/lane-c-health.md`), which holds the recon this plan was built from.
+
+## Specs
+
+- **S1 — the dependency outcome.** `ksni` is `0.3` with `default-features = false, features = ["blocking", "async-io"]`.
+  The build graph loses `ksni 0.2.2`, `dbus 0.9.11`, `dbus-tree 0.9.2`, the BUILD-time `dbus-codegen 0.9.1` and with it
+  `clap 2.34.0` (+ `ansi_term`, `atty`, `strsim 0.8`, `textwrap`, `vec_map`), and gains NOTHING: `ksni 0.3.5` is
+  already in the graph on `async-io` (slint's own dependency) and `tokio` must not appear in the lock. Measured, not
+  assumed — the claim is the DELTA, since the absolute package count depends on the toolchain and the flags:
+  **16 packages leave `Cargo.lock` and none enter** (the lock keeps `thiserror 1.0.69` for its other consumers), and
+  the Linux build tree loses 12. The feature set is forced, not chosen: `tokio` + `async-io` together trips ksni's
+  `compile_error!`, and no runtime feature at all trips the other one (`compat.rs:1-5`).
+- **S2 — "no tray" means HVE keeps running, with a warning.** `start_tray` returns `Option<TrayHandle>`. On a failure
+  it logs `tracing::warn!` with the ksni error and the app continues without a tray. Nothing on HVE's failure paths
+  panics, in any thread (ksni's own internal `assert`/`expect` calls, e.g. the per-PID `NameTaken` assert, are not
+  reachable from those paths — checked against the crate's sources).
+  Today's behaviour on the same failure is a panic inside 0.2's spawned thread (`thread::spawn(|| self.run().unwrap())`)
+  that the user never sees; HVE keeps running there too, so this is the behaviour-preserving option, not a new choice.
+- **S3 — a panel that starts LATER still gets the icon.** The service is spawned with `assume_sni_available(true)`,
+  so a missing `org.kde.StatusNotifierWatcher` is a soft error routed to `Tray::watcher_offline` (default: keep
+  running, which HVE does not override) and the service re-registers when the watcher appears. This is required to
+  match 0.2: `ksni 0.2.2` subscribes to `NameOwnerChanged` and calls `register_status_notifier_item` when the watcher
+  appears (`service.rs:180-217`), while 0.3 WITHOUT the flag returns `Err` immediately and never retries.
+- **S4 — the tray the user sees does not change.** Same 48×48 BGRA icon from the theme, same menu (title, Toggle
+  System, Next Animation/Border/Shader, Hide/Show Window, Quit), same labels from `Tr`, the Hide/Show label still
+  refreshes, and the IPC paths (`update_global_icon`, `refresh_global_menu`) still reach a live tray. No icon that
+  appears today may stop appearing.
+- **S5 — one owner for `system_active`.** `main.rs` creates the `Arc<AtomicBool>`, passes it into `start_tray`, and
+  passes the SAME Arc to `setup_callbacks` no matter what the tray did. The tray no longer hands one back.
+- **S6 — checks.** A permanent deterministic test proves the no-tray path returns `None` and does not panic without a
+  session bus; a TEMPORARY probe run under `dbus-run-session` proves the success path on a private bus and is deleted
+  before the commit (a permanent one would register a second StatusNotifierItem on the keeper's live bus and put a
+  duplicate icon in his panel). `cargo check --all-targets` clean; full suite green; clippy must not gain warnings.
+  Note for anyone repeating this: with BOTH bus variables unset, zbus 5.16 falls back to `/run/user/<euid>/bus`
+  (`address/mod.rs:74-75`), which on a logged-in machine IS the live session bus — a real "no bus" probe needs its own
+  namespace (`unshare -r`), not just an unset variable.
+- **S7 — the docs say what happens now.** `docs/wiki/Tray-and-Automation.md` states that when the tray cannot be
+  created, HVE warns and keeps running without it.
+
+## Tasks
+
+| ID | Specs | Route | Status | Commit |
+|----|-------|-------|--------|--------|
+| T1 | S1-S7 | inline (parent writes; high risk → independent verifier after) | DONE, verified by `opencode-go/mimo-v2.6-flash` (no blockers) | `deps(tray): bump ksni 0.2 -> 0.3 and survive a missing tray` |
+
+### T1 evidence
+
+- **RED (compile level, and it has to be)**: `cargo test --bin hve start_tray_without_a_session_bus` failed with
+  `error[E0061]: this function takes 5 arguments but 6 arguments were supplied` and
+  `error[E0599]: no method named `is_none` found for struct `TrayHandle``. A runtime RED is not expressible here:
+  the failure path does not exist in the old API at all (0.2 panics inside a thread nobody watches), which is the
+  whole point of the unit.
+- **GREEN**: same test → `test tray::tests::start_tray_without_a_session_bus_returns_none ... ok` (0.09 s).
+- **S3 proved load-bearing, not decorative**: the temporary probe run under a private bus with no watcher
+  (`dbus-run-session -- cargo test --bin hve probe_live_bus_with_no_watcher -- --nocapture`) passed with
+  `assume_sni_available(true)` — verbatim output `PROBE RESULT: spawn -> Ok, update -> Some, icon + menu refresh
+  clean` — and the SAME probe with the flag removed (`tray.spawn()`) **FAILED** on that same bus. That is the
+  "HVE started before the panel" case, and it would have been a silent regression against 0.2.
+- **Probe deleted before the commit**: `grep -c 'probe_live_bus' src/tray.rs` → 0. Kept, it would run on the
+  keeper's live bus and register a second StatusNotifierItem in his panel.
+- **S1 measured**: `cargo tree --prefix none | sort -u | wc -l` → **456 before, 444 after** (−12 in the Linux
+  tree, same workspace, same flags; an independent verifier re-measured the same delta as 593 → 581 from a detached
+  baseline worktree, so the DELTA is the durable claim and the absolute numbers are environment-specific).
+  `Cargo.lock`: **−16 packages, +0**, verbatim removed names `ansi_term, atty, clap, dbus, dbus-codegen,
+  dbus-tree, hermit-abi, ksni, libdbus-sys, strsim, textwrap, unicode-width, vec_map, winapi,
+  winapi-i686-pc-windows-gnu, winapi-x86_64-pc-windows-gnu`. `ksni v0.2.2` is gone from `cargo tree`; only
+  `ksni v0.3.5` remains (reached from `i-slint-core` and from `hve`); **`tokio` is still absent**. Corrected after
+  independent verification: `thiserror 1.0.69` was NOT removed (its other consumers keep it) — S1 no longer claims it.
+- **Checks on the frozen bytes**: `cargo check --all-targets` clean (no warning, no error); `cargo clippy
+  --all-targets` → **67 warnings, the same count Lane C left** (none new); `cargo fmt --check` clean;
+  full suite **1786 passed / 0 failed / 0 ignored** in 167.13 s (it was 1785 before this unit — the +1 is this
+  unit's own test).
+- **NOT verified here, and it cannot be**: that the icon actually appears in the keeper's notification area. That
+  needs a live `StatusNotifierHost` in his session, so it is his check after installing the new build. The private
+  bus can prove registration happens; it cannot prove his panel draws it.
+
+### Independent verification (2026-10-14, after the commit)
+
+- **Verifier: `opencode-go/mimo-v2.6-flash`** — a different model from the writer (`deepseek-v4.1-flash`), launched
+  as a fresh subagent with no shared context, explicitly asked to REFUTE the change.
+- **Result: no blockers.** S1..S7 each returned SOUND, with the strongest claims re-proved from scratch rather than
+  read: it built a **python fake `org.kde.StatusNotifierWatcher` on a `dbus-run-session` private bus** and observed
+  the item register late (`RegisterStatusNotifierItem(org.kde.StatusNotifierItem-<pid>-1)`), plus a live readback of
+  `Title`, `Id`, `IconPixmap` (48×48, 9216 bytes) and the full menu label list — that is S3 and S4 proved
+  behaviourally, not by argument. It also ran the same probe with the flag removed and saw `Err(ServiceUnknown)`
+  with zero registrations, confirming the flag is load-bearing.
+- **Advisories it raised, and what was done with each**: (1) the lock loses 16 packages, not 17 — corrected in S1
+  and here; (2) `thiserror 1.0.69` stays in the graph — S1 corrected; (3) absolute tree counts are
+  environment-brittle — S1 now states the delta as the claim; (4) ksni's own internal `assert`/`expect` calls make
+  "nothing panics" too absolute — S2 scoped to HVE's failure paths; (5) the zbus `/run/user/<euid>/bus` fallback
+  makes "no session bus" loose — recorded in S6. None of them is a code defect.
+- **What it could not verify**: whether the keeper's own panel draws the icon (no live host), and the baseline's
+  clippy count (that would need a full rebuild of the old dbus stack).
+- **Workspace left clean by the verifier**: `git status --porcelain` empty, all its probes and scratch deleted, no
+  new files and no worktrees left behind.
+
+## Log
+
+- **L1 (2026-10-14, the keeper, verbatim)**: `arranca con ksni 2.2`
+- **L2 (2026-10-14, the parent, recon)**: read the plan in `odd/tasks/lane-c-health.md` ("T5 recon") and the Engram
+  record `deps/ksni-bump`; then read BOTH crates' sources to settle what the plan left open:
+  `ksni 0.2.2 service.rs:91-95` (`thread::spawn(|| self.run().unwrap())` — a failure is an invisible thread panic) and
+  `:180-217` (it waits for the watcher via `NameOwnerChanged`); `ksni 0.3.5 blocking.rs:176-192` (`spawn_with_options`
+  makes one synchronous registration and only then spawns the thread, so the caller gets a `Result`),
+  `service.rs:84-97` and `:114-120` (`assume_sni_available` is what turns a missing watcher into a soft error, and is
+  also what skips the `WontShow` check), and `Cargo.lock` (ksni 0.3.5 already resolves on `async-executor`/`async-io`/
+  `async-lock`/`futures-*` + `zbus`, with NO `tokio`, so the feature choice must be `async-io` or ksni's own
+  `compile_error!` "Features tokio and async-io cannot be enabled at the same time" fires).
+  Baseline before the change: `cargo tree` = **456 unique packages**, 6 lines matching dbus/dbus-tree/dbus-codegen/
+  clap v2.34, `ksni v0.2.2` reached only from `hve`, `ksni v0.3.5` only from `i-slint-core`.
+- **L3 (2026-10-14, the parent, decisions)**: (1) "no tray" = warn and continue, because it is what today's code
+  already does observably — a panic nobody sees does not stop the editor. (2) `assume_sni_available(true)` is NOT
+  slipped in as a preference: without it the bump regresses the case where HVE starts before the panel.
+  (3) `system_active` moves to the caller (S5) so the `None` case does not need a fake Arc.

@@ -177,7 +177,9 @@ hiding behind green tests.
 
 - [ ] **M1 — dead code** left by the removed UI (76 i18n keys, `HexDelegate.slint`,
       `PickTuneBlock.slint`, `FilterBar.slint`, and the smaller leftovers).
-- [ ] **M2 — dependency chain** (`ksni` → `dbus-codegen` → `clap 2.34` / `bitflags 1.3.2`).
+- [x] **M2 — dependency chain** (`ksni` → `dbus-codegen` → `clap 2.34` / `bitflags 1.3.2`): the `ksni` 0.2 → 0.3 bump
+      removed it (`odd/tasks/ksni-0.3-bump.md`). Measured after the bump: `bitflags 1.3.2` is NOT part of that chain
+      — it arrives via `png` ← `tiny-skia` ← `hve`/`resvg`, so it needs a `tiny-skia`/`png` decision, not a ksni one.
 - [ ] **M3 — clippy debt** (the audit's counts) plus a release-time gate.
 - [ ] **M4 — `install.sh`**: five of its six distro branches have never run.
 

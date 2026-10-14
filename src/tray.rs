@@ -1,4 +1,4 @@
-use ksni::{self, Handle, TrayService};
+use ksni::blocking::{Handle, TrayMethods};
 use slint::ComponentHandle;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -10,7 +10,6 @@ static GLOBAL_TRAY: OnceLock<Mutex<TrayHandle>> = OnceLock::new();
 
 /// Handle to control the tray icon after creation.
 pub struct TrayHandle {
-    pub system_active: Arc<AtomicBool>,
     handle: Handle<HveTray>,
 }
 
@@ -32,13 +31,15 @@ fn rgba_to_bgra(rgba: &[u8]) -> Vec<u8> {
 impl TrayHandle {
     /// Force a tray menu refresh so the UI picks up the latest visibility state.
     pub fn refresh_menu(&self) {
-        self.handle.update(|_| {});
+        // `update` answers `None` once the service has shut down (ksni 0.3);
+        // there is nothing to refresh then, and nothing to report.
+        let _ = self.handle.update(|_| {});
     }
 
     /// Update the tray icon with new RGBA pixel data (will be converted to BGRA internally).
     pub fn update_icon(&self, rgba: Vec<u8>) {
         let bgra = rgba_to_bgra(&rgba);
-        self.handle.update(move |tray: &mut HveTray| {
+        let _ = self.handle.update(move |tray: &mut HveTray| {
             tray.icon_bgra = bgra;
         });
     }
@@ -73,34 +74,51 @@ pub fn refresh_global_menu() {
 /// Start the system tray icon in a background thread.
 ///
 /// `icon_rgba` is the raw RGBA pixel data rendered from the SVG template,
-/// at the given `icon_w × icon_h` resolution.
+/// at the given `icon_w × icon_h` resolution. `system_active` is the shared
+/// "Toggle System" state, owned by the caller because the callers need it
+/// whether or not a tray exists.
 ///
-/// Returns a `TrayHandle` that can be used to update the icon later.
+/// Returns `None` when the tray cannot be created (no D-Bus session bus, no
+/// usable connection). The caller keeps running WITHOUT a tray and only gets a
+/// warning: a missing notification area must not stop the editor. Under ksni
+/// 0.2 this same failure was an `unwrap()` inside a spawned thread — a panic
+/// nobody could see, and the process survived it anyway; 0.3 does the
+/// registration synchronously and returns the error instead.
 pub fn start_tray(
     window: slint::Weak<crate::MainWindow>,
     tr: Arc<Tr>,
     icon_rgba: Vec<u8>,
     icon_w: u32,
     icon_h: u32,
-) -> TrayHandle {
+    system_active: Arc<AtomicBool>,
+) -> Option<TrayHandle> {
     // Convert RGBA → BGRA (ksni expects Cairo ARGB32 = BGRA in LE)
     let icon_bgra = rgba_to_bgra(&icon_rgba);
 
-    let system_active = Arc::new(AtomicBool::new(false));
     let tray = HveTray {
         window,
-        system_active: system_active.clone(),
+        system_active,
         tr,
         icon_bgra,
         icon_w,
         icon_h,
     };
-    let service = TrayService::new(tray);
-    let handle = service.handle();
-    service.spawn();
-    TrayHandle {
-        system_active,
-        handle,
+
+    // `assume_sni_available(true)` keeps the 0.2 behaviour of a panel that
+    // starts LATER: without it, a missing `org.kde.StatusNotifierWatcher` makes
+    // `spawn` return `Err` for good, while 0.2 subscribed to `NameOwnerChanged`
+    // and registered the item as soon as the watcher appeared. With it, the
+    // missing watcher is a soft error routed to `Tray::watcher_offline`
+    // (default: keep running) and the item registers when the panel shows up.
+    match tray.assume_sni_available(true).spawn() {
+        Ok(handle) => Some(TrayHandle { handle }),
+        Err(err) => {
+            tracing::warn!(
+                "system tray unavailable, continuing without a tray icon: {err} \
+                 (no D-Bus session bus, or no StatusNotifier support)"
+            );
+            None
+        }
     }
 }
 
@@ -296,7 +314,60 @@ impl ksni::Tray for HveTray {
 
 #[cfg(test)]
 mod tests {
-    use super::rgba_to_bgra;
+    use super::{rgba_to_bgra, start_tray};
+    use slint::ComponentHandle;
+    use std::sync::Arc;
+
+    /// Restores an environment variable when it goes out of scope, so the tests
+    /// that point the session bus at nothing cannot leak that into other tests.
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    /// Spec S2/S6 of `odd/tasks/ksni-0.3-bump.md`: a tray that cannot be created
+    /// must not take anything down. Under ksni 0.2 a registration failure was an
+    /// `unwrap()` inside a spawned thread — an invisible panic — while 0.3
+    /// resolves the service synchronously and hands the caller the error (search
+    /// the crate: `blocking.rs` -> `spawn_with_options` -> `compat::block_on(...)?`).
+    /// The failure is now observable, so it must come back as `None`.
+    #[test]
+    #[serial_test::serial]
+    fn start_tray_without_a_session_bus_returns_none() {
+        i_slint_backend_testing::init_no_event_loop();
+        let win = crate::MainWindow::new().expect("test window");
+        let tr = Arc::new(crate::tr::Tr::with_lang("en"));
+        let system_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        // Nothing to connect to: the address points at a socket that does not
+        // exist, and the fallback (the runtime dir) is pointed at an empty one.
+        let _bus = EnvVarGuard::set("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent-hve-bus");
+        let _runtime = EnvVarGuard::set("XDG_RUNTIME_DIR", "/nonexistent-hve-runtime");
+
+        let tray = start_tray(win.as_weak(), tr, Vec::new(), 48, 48, system_active.clone());
+
+        assert!(
+            tray.is_none(),
+            "no session bus means no tray, and HVE must keep running without one"
+        );
+    }
 
     /// Lane C, S3: the conversion indexes `p[2]`/`p[3]` for every chunk, so a
     /// buffer whose length is not a multiple of 4 PANICS on its last, short

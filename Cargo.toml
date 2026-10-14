@@ -13,7 +13,11 @@ bitflags = "2"
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
 image = "0.25"
-ksni = "0.2"
+# ksni 0.3 WITHOUT its default `tokio` runtime: the lock already resolves
+# ksni 0.3.5 on `async-io` (slint's own dependency) and cargo unifies features,
+# so asking for `tokio` would add a whole runtime and trip ksni's own
+# "Features tokio and async-io cannot be enabled at the same time" error.
+ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
 rustix = { version = "1", features = ["fs"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
