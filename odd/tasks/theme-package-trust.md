@@ -801,9 +801,13 @@ shared with the panel, the drawers and the screens.
 - RED, observed verbatim before any fix: `Down must scroll the carrier list — got 0 changed pixels in the card body`
   and `a restore ping must not take the keyboard from the open gate` (`left: 0, right: 1`).
 - GREEN: the gate's own `debug()` prints NOTHING in tests (no `log` subscriber is installed), so the scroll was
-  measured with a temporary visible probe inside the card. It printed `0|917|325|-40|-592` — the list's offset, its
-  content height, the visible pane, the step, and the computed end of the list. The probe was removed before the
-  commit; it is named here so nobody wonders what the extra frames in that run were.
+  measured with a temporary visible probe inside the card. That probe run printed `0|917|325|-40|-592` — the list's
+  offset, its content height, the visible pane, the step, and the computed end of the list. **Those pane numbers were
+  measured in an INSTRUMENTED build: the probe itself was a text line inside the card, so it took ~25px from the
+  list.** The clean numbers, measured independently in the committed build by the verifying model, are pane **350**,
+  list end **−567**, one step **40** and one page **310** (`preset-00` moving from y=367 to y=327 in a single Down,
+  and a single PageDown landing `preset-12`..`preset-27`). Corrected here because a stale measurement in the record
+  is exactly what this contract refuses to leave behind (cf. the copy-lie gap of W2c-c).
 - The frames of the run were read BY EYE (AGENTS.md): the list at the top, scrolled to `preset-39` with the scrollbar
   thumb at the bottom, and one page down (`preset-12`..`preset-27`, clipped cleanly at the pane edge). The card, the
   copy and the button row keep their geometry in every one of them.
@@ -834,4 +838,36 @@ shared with the panel, the drawers and the screens.
 - **L12 (2026-10-14, the parent, a premise corrected by measurement, not by argument)**: residual 1's stated cause
   ("the arrows move the BUTTON cursor") was wrong. Measured: Up/Down were dead. Recorded here because the same wrong
   mental model would otherwise be re-derived by the next reader of this file.
+- **L13 (2026-10-14, the independent verifier, `mimo-v2.6-flash`)**: verdict **no blockers**, S1..S6 MET, with five
+  advisories. Its own measurements reproduce the writer's suite (`1781 passed / 0 failed`), the scroll geometry, the
+  clamp in both directions, the short-list no-op, the wheel still alive, and the window sizes 1100x520 / 900x600
+  (buttons inside the card, no clipping, no overlap). Two of its advisories became follow-up work in
+  `acb5353`'s successor commit: **A1** (the focus-taking statements of `GalleryRoot.slint` and `PanelRoot.slint`
+  were outside every scan and outside the guard — proof that the same class was not closed uniformly) and **A3** (a
+  stale probe measurement quoted as evidence). **A2** is recorded below as a residual, not fixed here.
+
+## W2b-r2 — the layers' own focus calls (2026-10-14)
+
+**Specs.** S7 — every focus-taking statement in the two conditionally-mounted layers (`GalleryRoot.slint`,
+`PanelRoot.slint`) either stands down while the trust gate is open or IS the gate's own handback; the source pin
+scans BOTH files line by line with a 4-line window, so a new unguarded focus call fails the count. S8 — the same
+pin still proves the shell's six reseed observers and the mount reseed.
+
+**Evidence.** RED observed first, verbatim: `a drawer deploying under the gate must not take the keyboard from it`
+(`left: 0, right: 1`) — a drawer deploying under the open modal really did take the keyboard. Five guards added
+(`changed top-menu-open`, `changed bottom-menu-open`, `changed open`, `changed section`, and the mounted layer's
+`init`). Counts pinned exactly: GalleryRoot 2 gated + 1 handback, PanelRoot 3 gated + 1 handback. Focused tests
+`theme_trust_warning_` = 10 passed; the wiring pin green.
+
+**Why an invariant and not a defect report.** The verifier could NOT find an entry path that reaches those
+observers while the gate is open today (the scrim swallows clicks, no Rust setter drives a drawer, the IPC commands
+neither open nor close a panel, and the gallery apply path checks `is_mutating` before requesting the gate). It is
+pinned so a future path cannot silently silence the consent question — which is exactly how the mount reseed was
+found in W2b-r.
+
+**A2 stays open as a residual**: `on_panel_apply_saved_theme` (`src/main.rs`, the panel apply path) does not check
+`is_mutating` BEFORE requesting the trust gate, while the gallery path does (`main.rs:4019`). A sequence of two
+actions inside the panel's 350 ms morph could therefore open the gate and mount the panel layer underneath it. The
+layer's `init` is guarded now, so the keyboard damage is closed; the ORDERING difference between the two apply
+paths is a theme-package-trust finding that belongs to its own unit, with a reproduction, not to a keyboard lane.
 

@@ -20426,6 +20426,87 @@ fn theme_trust_warning_keeps_the_keyboard_when_the_shell_reseeds() {
     );
 }
 
+/// The same invariant one layer deeper (the independent verifier's advisory
+/// A1/A2, 2026-10-14): the two conditionally-mounted layers take the keyboard
+/// for THEMSELVES — `gallery-keys.focus()` when a drawer deploys,
+/// `panel-kbd.focus()` when the panel opens, when Rust moves its section, and
+/// on the mounted layer's own `init`. None of them stood down for the open
+/// gate.
+///
+/// NO ENTRY PATH EXISTS TODAY — the scrim swallows every click, no Rust setter
+/// drives a drawer, and the IPC commands neither open nor close a panel — so
+/// this is pinned as an INVARIANT rather than reported as a live defect: a
+/// future path that does reach them would silence the consent question exactly
+/// the way the shell reseeds did before this unit.
+#[test]
+fn theme_trust_warning_keeps_the_keyboard_when_a_layer_takes_it_for_itself() {
+    use slint::ComponentHandle as _;
+    use slint::platform::Key;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let win = focus_open_system_panel();
+    let confirmed: Rc<RefCell<u32>> = Rc::new(RefCell::new(0));
+    {
+        let confirmed = confirmed.clone();
+        let weak = win.as_weak();
+        win.on_trust_warning_confirmed(move || {
+            *confirmed.borrow_mut() += 1;
+            if let Some(w) = weak.upgrade() {
+                w.set_trust_warning_open(false);
+            }
+        });
+    }
+    let moves: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_nav_move({
+        let moves = moves.clone();
+        move |dir| moves.borrow_mut().push(dir.to_string())
+    });
+
+    win.set_is_panel_open(false);
+    let settle = || {
+        for _ in 0..4 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+    };
+    settle();
+
+    // 1) A drawer deploys while the gate is up.
+    win.set_trust_warning_open(true);
+    settle();
+    win.set_gallery_top_open(true);
+    settle();
+    focus_press_key(&win, Key::RightArrow);
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        *confirmed.borrow(),
+        1,
+        "a drawer deploying under the gate must not take the keyboard from it"
+    );
+    win.set_gallery_top_open(false);
+    settle();
+
+    // 2) The panel's own layer MOUNTS while the gate is up: its `init` seeded
+    //    panel-kbd over the modal, which is the mount half of A2.
+    win.set_trust_warning_open(true);
+    settle();
+    win.set_is_mutating(true);
+    settle();
+    focus_press_key(&win, Key::RightArrow);
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        *confirmed.borrow(),
+        2,
+        "a layer mounting under the gate must not take the keyboard from it"
+    );
+
+    assert!(
+        moves.borrow().is_empty(),
+        "no layer may hand the gate's keys to the gallery — got {:?}",
+        moves.borrow()
+    );
+}
+
 /// The gate borrows the keyboard while open; closing it must hand it back
 /// to whoever owned it — panel-kbd over the panel, shell-kbd over the
 /// gallery — never leaving focus dangling on the hidden gate scope (where
@@ -20679,5 +20760,41 @@ fn trust_warning_keyboard_wiring_is_pinned_by_construction() {
         gallery_reseed.contains("gallery-keys.focus()"),
         "closing over a deployed drawer must return the keyboard to it"
     );
+
+    // A1 (2026-10-14): the invariant is uniform across the LAYERS, not only the
+    // shell — the independent verifier found focus-taking statements in
+    // GalleryRoot and PanelRoot that no scan covered, because the reseed scan
+    // above reads ui/shell.slint alone. Every `.focus()` in either layer must
+    // either stand down for the open gate or BE the handback (which runs when
+    // the flag goes false). The 4-line window recognises both the block form
+    // and the single-line form, and a NEW focus call cannot be added unguarded
+    // without failing the count.
+    for (name, src, expected_gated) in [
+        ("GalleryRoot", gallery.as_str(), 2usize),
+        ("PanelRoot", panel.as_str(), 3usize),
+    ] {
+        let lines: Vec<&str> = src.lines().collect();
+        let (mut gated, mut handbacks) = (0usize, 0usize);
+        for (i, line) in lines.iter().enumerate() {
+            if !line.contains(".focus()") {
+                continue;
+            }
+            let window = lines[i.saturating_sub(4)..=i].join("\n");
+            if window.contains("changed trust-gate-open") {
+                handbacks += 1;
+            } else if window.contains("!root.trust-gate-open") {
+                gated += 1;
+            } else {
+                panic!(
+                    "{name} takes the keyboard without standing down for the open gate: {line}"
+                );
+            }
+        }
+        assert_eq!(
+            gated, expected_gated,
+            "{name} must gate every one of its own focus calls"
+        );
+        assert_eq!(handbacks, 1, "{name} must keep exactly one gate handback");
+    }
 }
 

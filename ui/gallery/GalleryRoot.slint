@@ -156,13 +156,20 @@ export component GalleryRoot inherits Rectangle {
     changed top-menu-open => {
         if (root.top-menu-open) {
             root.top-focused = 0;
-            gallery-keys.focus();
+            // A1 (2026-10-14): the OPEN trust gate owns the keyboard; a drawer
+            // deploying under it must not take it (no entry path does that
+            // today — this keeps the invariant uniform across the layers).
+            if (!root.trust-gate-open) {
+                gallery-keys.focus();
+            }
         }
     }
     changed bottom-menu-open => {
         if (root.bottom-menu-open) {
             root.bottom-focused = 0;
-            gallery-keys.focus();
+            if (!root.trust-gate-open) {
+                gallery-keys.focus();
+            }
         }
     }
     // W2b: the theme-trust gate borrows the keyboard while it is open

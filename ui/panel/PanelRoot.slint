@@ -261,7 +261,11 @@ export component PanelRoot inherits Rectangle {
             root.menu-focused-index = root.section;
             root.menu-active = false;
             root.system-option-engaged = false;
-            panel-kbd.focus();
+            // A1 (2026-10-14): never over the OPEN trust gate, which owns the
+            // keyboard until it closes (see the gate handback below).
+            if (!root.trust-gate-open) {
+                panel-kbd.focus();
+            }
         }
     }
     changed section => {
@@ -274,7 +278,7 @@ export component PanelRoot inherits Rectangle {
         // from shell-kbd — leaving the Gallery keyboard dead.
         if (!root.menu-active) {
             root.system-option-engaged = false;
-            if (root.open) { panel-kbd.focus(); }
+            if (root.open && !root.trust-gate-open) { panel-kbd.focus(); }
         }
     }
     // W2b: the theme-trust gate borrows the keyboard while it is open
@@ -384,7 +388,11 @@ export component PanelRoot inherits Rectangle {
                     // is seeded programmatically (init / changed open / changed
                     // section).
                     focus-on-click: false;
-                    init => { panel-kbd.focus(); }
+                    // A1/A2 (2026-10-14): this layer can MOUNT while the trust
+                    // gate is already up (open or mutating flips under it), and
+                    // seeding panel-kbd here silenced the modal. The gate's own
+                    // handback gives the keyboard to panel-kbd when it closes.
+                    init => { if (!root.trust-gate-open) { panel-kbd.focus(); } }
                     focus-gained(reason) => { root.focus-trace("panel-kbd gained via " + root.focus-reason-label(reason)); }
                     focus-lost(reason) => { root.focus-trace("panel-kbd lost via " + root.focus-reason-label(reason)); }
                     key-pressed(event) => {
