@@ -119,7 +119,31 @@ present: features + `spawn()` result + the "no tray" path + a `dbus-run-session`
 | T5 | DEFERRED | see the recon above; the reason and the exact next steps are written there |
 | T6 | DONE (cause found, nothing to loosen) | see below |
 | T7 | DONE (decision) | see below |
-| T8 | in progress | final suite + release build + install |
+| T8 | DONE | see below — installed, verified, and one extra real bug found by installing |
+
+### T8 — the install, and what it caught
+
+- Full suite green on the exact bytes to install: **1785 passed / 0 failed**; `cargo check --all-targets` clean.
+- `cargo build --release` → `target/release/hve`, md5 **`56142fae465844d4f093b5ad5e1cc26c`**, 40,983,560 bytes.
+- Installed to `~/.local/bin/hve` with the md5 verified EQUAL to the build. **The binary was replaced by RENAME,
+  not by `cp`**: the keeper's HVE is RUNNING right now and `cp` over a live executable fails with
+  `Text file busy`. Rename replaces the directory entry, the running process keeps its old inode, and the next
+  launch uses the new build. **Consequence to tell the keeper: the window on screen is the OLD build — close and
+  reopen HVE to test this one.**
+- Assets: `scripts`, `borders`, `shaders`, `fragments`, `animations` re-copied. Four files were STALE in the
+  installed copy, including `assets/scripts/hve-ipc` — the client the W7b unit fixed to resolve the socket the same
+  way the server does. That fix is now actually installed.
+- `cargo build --release` after the last commit reports nothing to recompile, which is the proof that the installed
+  bytes are the committed HEAD (`043339b`).
+- **A real bug found BY installing** (fixed in `043339b`): the installer's greedy
+  `sed -i "s|Exec=.*hve|Exec=$HVE_BIN|"` mangled the desktop entry
+  (`Exec=sh -c "exec $HOME/.local/bin/hve"` → `Exec=/home/…/.local/bin/hve"`, a broken launcher). It is unnecessary
+  — the shipped entry already resolves through `$HOME` — so it was removed, and a new contract test pins that no
+  active line of `install.sh` may rewrite an `Exec=` line again.
+- Housekeeping done on the way (NOT part of the repo): `/tmp` was a 16 GiB tmpfs at **100 %**, filled by previous
+  verification rounds' scratch (`/tmp/w2c-target` alone 9.0 G). Cleaned to 29 %. This is what made a full-suite run
+  fail in unrelated tests with `StorageFull` (see T6).
+
 
 ### T6 — what the "corroborated flake" actually was
 
