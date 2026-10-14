@@ -80,6 +80,23 @@ Deferred from Lane C (S5 / T5, `odd/tasks/lane-c-health.md`), which holds the re
   needs a live `StatusNotifierHost` in his session, so it is his check after installing the new build. The private
   bus can prove registration happens; it cannot prove his panel draws it.
 
+### Install (2026-10-14, with the keeper's authorization)
+
+- **Return point first**: tag `pre-ksni-0.3-20261014` at `6fd7faf`, and the installed binary copied to
+  `target/backup/hve-pre-ksni-0.3-6fd7faf`, md5 `56142fae465844d4f093b5ad5e1cc26c` — identical to
+  `~/.local/bin/hve` at that moment (the Lane C build).
+- `cargo build --release` → `target/release/hve`, md5 **`379412a71f9d19dd1a4fd38cb9539cb5`**, 2m10s. A second
+  `cargo build --release` reports nothing to recompile, which is the proof that the installed bytes are committed
+  HEAD (`ca5b6bf`).
+- Installed by RENAME (temp file + `mv`), not `cp`: the keeper's HVE was RUNNING and `cp` over a live executable
+  fails with `Text file busy`. Installed md5 verified EQUAL to the build; `~/.local/bin/hve --version` → `hve 1.0.0`.
+- **No assets were re-copied**, deliberately: this change touches no shipped asset (unlike Lane C's install, which
+  found four stale files under the installed assets directory).
+- **What only the keeper can check**: close and reopen HVE — the window he had open was the old build — and look at
+  the notification area: the HVE icon must be there, and the menu's Hide/Show Window label must follow the window.
+  If the tray does NOT appear, the new warning line is the first thing to read, because it now says why.
+
+
 ### Independent verification (2026-10-14, after the commit)
 
 - **Verifier: `opencode-go/mimo-v2.6-flash`** — a different model from the writer (`deepseek-v4.1-flash`), launched
