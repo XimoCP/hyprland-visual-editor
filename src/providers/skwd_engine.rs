@@ -54,7 +54,10 @@ pub(crate) fn socket_available() -> bool {
 pub(crate) fn delegate_to_skwd_walld(wallpaper_path: &Path) -> bool {
     let socket = skwd_wall_socket_path();
     if !socket.exists() {
-        tracing::debug!("[skwd-wall] socket absent at {:?} — skipping delegation", socket);
+        tracing::debug!(
+            "[skwd-wall] socket absent at {:?} — skipping delegation",
+            socket
+        );
         return false;
     }
     let path_str = match wallpaper_path.to_str() {
@@ -113,7 +116,10 @@ pub(crate) fn delegate_to_skwd_walld(wallpaper_path: &Path) -> bool {
             }
         }
     }
-    tracing::warn!("[skwd-wall] delegation failed for {} (daemon may be unreachable)", path_str);
+    tracing::warn!(
+        "[skwd-wall] delegation failed for {} (daemon may be unreachable)",
+        path_str
+    );
     false
 }
 
@@ -364,10 +370,7 @@ mod tests {
         let orig_path = std::env::var("PATH").unwrap_or_default();
         std::env::set_var("XDG_RUNTIME_DIR", tmp_runtime.path());
         std::env::remove_var("SKWD_WALL_V2_SOCK");
-        std::env::set_var(
-            "PATH",
-            format!("{}:{}", bin_dir.display(), orig_path),
-        );
+        std::env::set_var("PATH", format!("{}:{}", bin_dir.display(), orig_path));
         // Must not panic, must swallow the error — and must report failure
         // so the caller keeps its fallback routes.
         assert!(!delegate_to_skwd_walld(Path::new("/tmp/another.jpg")));
@@ -632,14 +635,11 @@ mod tests {
             let bin_dir = tmp.path().join("bin");
             std::fs::create_dir_all(&bin_dir).unwrap();
             recording_engine_stubs(&bin_dir, &log);
-            let saved: Vec<(&'static str, Option<String>)> = [
-                "XDG_RUNTIME_DIR",
-                "SKWD_WALL_V2_SOCK",
-                "PATH",
-            ]
-            .iter()
-            .map(|k| (*k, std::env::var(k).ok()))
-            .collect();
+            let saved: Vec<(&'static str, Option<String>)> =
+                ["XDG_RUNTIME_DIR", "SKWD_WALL_V2_SOCK", "PATH"]
+                    .iter()
+                    .map(|k| (*k, std::env::var(k).ok()))
+                    .collect();
             let orig_path = std::env::var("PATH").unwrap_or_default();
             std::env::set_var("XDG_RUNTIME_DIR", tmp.path());
             std::env::remove_var("SKWD_WALL_V2_SOCK");

@@ -22,16 +22,10 @@ pub struct ColorScheme {
 #[derive(Debug)]
 pub enum EngineError {
     /// The requested script file does not exist on disk.
-    ScriptNotFound {
-        path: PathBuf,
-        script_name: String,
-    },
+    ScriptNotFound { path: PathBuf, script_name: String },
     /// The script path is not valid UTF-8 (e.g. from a non-UTF-8 project dir)
     /// and cannot be passed to `bash`.
-    InvalidScriptPath {
-        path: PathBuf,
-        script_name: String,
-    },
+    InvalidScriptPath { path: PathBuf, script_name: String },
     /// The script process could not be spawned (I/O error).
     ProcessSpawnFailed {
         script_name: String,
@@ -69,7 +63,10 @@ impl fmt::Display for EngineError {
                     path.display()
                 )
             }
-            EngineError::ProcessSpawnFailed { script_name, source } => {
+            EngineError::ProcessSpawnFailed {
+                script_name,
+                source,
+            } => {
                 write!(f, "Failed to execute '{}': {}", script_name, source)
             }
             EngineError::ExecutionFailed {
@@ -136,10 +133,12 @@ impl Engine {
             });
         }
 
-        let script_str = script_path.to_str().ok_or_else(|| EngineError::InvalidScriptPath {
-            path: script_path.clone(),
-            script_name: script_name.to_string(),
-        })?;
+        let script_str = script_path
+            .to_str()
+            .ok_or_else(|| EngineError::InvalidScriptPath {
+                path: script_path.clone(),
+                script_name: script_name.to_string(),
+            })?;
 
         let output = Command::new("bash")
             .arg(script_str)
@@ -289,7 +288,10 @@ mod tests {
         };
         let msg = err.to_string();
         assert!(msg.contains("foo.sh"), "msg should name the script: {msg}");
-        assert!(msg.contains("/tmp/foo.sh"), "msg should show the path: {msg}");
+        assert!(
+            msg.contains("/tmp/foo.sh"),
+            "msg should show the path: {msg}"
+        );
     }
 
     #[test]
@@ -300,7 +302,10 @@ mod tests {
         };
         let msg = err.to_string();
         assert!(msg.contains("foo.sh"), "msg should name the script: {msg}");
-        assert!(msg.contains("non-UTF-8"), "msg should explain the problem: {msg}");
+        assert!(
+            msg.contains("non-UTF-8"),
+            "msg should explain the problem: {msg}"
+        );
     }
 
     #[test]
@@ -321,7 +326,10 @@ mod tests {
         };
         let msg = err.to_string();
         assert!(msg.contains("run.sh"), "msg should name the script: {msg}");
-        assert!(msg.contains("no such file"), "msg should include the io error: {msg}");
+        assert!(
+            msg.contains("no such file"),
+            "msg should include the io error: {msg}"
+        );
     }
 
     #[test]
@@ -521,7 +529,10 @@ mod tests {
         let entry: ScanEntry = serde_json::from_str(json).expect("valid JSON should parse");
         assert_eq!(entry.file, "wobbly.ron");
         assert_eq!(entry.title.as_deref(), Some("Wobbly Animations"));
-        assert_eq!(entry.desc.as_deref(), Some("Smooth wobbly animation effects"));
+        assert_eq!(
+            entry.desc.as_deref(),
+            Some("Smooth wobbly animation effects")
+        );
         assert_eq!(entry.raw_title.as_deref(), Some("Wobbly"));
         assert_eq!(entry.raw_desc.as_deref(), Some("Wobbly animations desc"));
         assert_eq!(entry.tag.as_deref(), Some("SYSTEM"));
@@ -558,8 +569,7 @@ mod tests {
     #[test]
     fn test_scan_entry_deserialise_empty_vec() {
         let json = "[]";
-        let entries: Vec<ScanEntry> =
-            serde_json::from_str(json).expect("empty array should parse");
+        let entries: Vec<ScanEntry> = serde_json::from_str(json).expect("empty array should parse");
         assert!(entries.is_empty());
     }
 
@@ -585,8 +595,7 @@ mod tests {
             { "file": "a.ron", "title": "A" },
             { "file": "b.ron", "title": "B" }
         ]"##;
-        let entries: Vec<ScanEntry> =
-            serde_json::from_str(json).expect("valid array should parse");
+        let entries: Vec<ScanEntry> = serde_json::from_str(json).expect("valid array should parse");
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].file, "a.ron");
         assert_eq!(entries[1].file, "b.ron");

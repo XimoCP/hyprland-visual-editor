@@ -237,7 +237,10 @@ fn copy_preset(source: &Path, dest: &Path) -> bool {
         }
     }
     let Some(name) = dest.file_name().and_then(|n| n.to_str()) else {
-        tracing::warn!("[theme-presets] invalid preset destination {}", dest.display());
+        tracing::warn!(
+            "[theme-presets] invalid preset destination {}",
+            dest.display()
+        );
         return false;
     };
     let tmp = dest.with_file_name(format!(".part-{name}"));
@@ -997,7 +1000,9 @@ mod tests {
                     "a FIFO preset must not be copied into the user store"
                 );
             }
-            Err(_) => panic!("install_theme_presets blocked on a FIFO preset instead of skipping it"),
+            Err(_) => {
+                panic!("install_theme_presets blocked on a FIFO preset instead of skipping it")
+            }
         }
     }
 }

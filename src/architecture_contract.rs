@@ -202,7 +202,9 @@ fn rs_files_under(dir: &std::path::Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&d) else { continue };
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
@@ -316,9 +318,7 @@ const EXEMPT_TOKENS: &[(&str, &str)] = &[
 ];
 
 fn is_exempt(file: &str, token: &str) -> bool {
-    EXEMPT_TOKENS
-        .iter()
-        .any(|(f, t)| *f == file && *t == token)
+    EXEMPT_TOKENS.iter().any(|(f, t)| *f == file && *t == token)
 }
 
 /// Pinned (file, token, count) triples measured on 2026-09-28 by running
@@ -580,7 +580,9 @@ fn scanner_reports_a_new_leak_in_a_temp_copy() {
     );
     let failures = check_body_against_pins(file, &tampered_body);
     assert!(
-        failures.iter().any(|m| m.contains("NEW COUPLING") && m.contains("hyprctl")),
+        failures
+            .iter()
+            .any(|m| m.contains("NEW COUPLING") && m.contains("hyprctl")),
         "the pin check must flag the injected leak, got: {failures:?}"
     );
 }
@@ -744,9 +746,8 @@ fn scanner_covers_desktop_preference_backends_and_catches_a_sibling_reach() {
             "the scanner no longer covers {file}: the probe coupling it hosts \
              becomes invisible"
         );
-        let body =
-            production_body(&std::fs::read_to_string(repo_root().join(file)).unwrap())
-                .to_lowercase();
+        let body = production_body(&std::fs::read_to_string(repo_root().join(file)).unwrap())
+            .to_lowercase();
         let failures = check_body_against_pins(file, &body);
         assert!(
             failures.is_empty(),
@@ -807,8 +808,7 @@ fn scanner_reports_the_known_violation_in_a_provider_temp_copy() {
 fn pin_check_fails_both_directions() {
     let pins: &[(&str, &str, usize)] = &[("probe.rs", "noctalia", 2)];
     let pin = |token: &str| {
-        pins
-            .iter()
+        pins.iter()
             .find(|(f, t, _)| *f == "probe.rs" && *t == token)
             .map(|(_, _, n)| *n)
             .unwrap_or(0)
@@ -903,7 +903,11 @@ fn shell_guard_catches_a_leak_in_a_core_file_the_token_scanner_ignores() {
 fn shell_guard_covers_every_shell_ui_module() {
     let root = repo_root();
     for path in rs_files_under(&root.join("src/shell")) {
-        let rel = path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
+        let rel = path
+            .strip_prefix(&root)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
         if rel.ends_with("_tests.rs") {
             continue;
         }

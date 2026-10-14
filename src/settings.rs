@@ -215,9 +215,8 @@ pub(crate) fn marker_block_needs_update(
     marker_end: &str,
     desired: &str,
 ) -> bool {
-    extract_marker_block(content, marker_start, marker_end).is_none_or(|current| {
-        current.trim() != desired.trim()
-    })
+    extract_marker_block(content, marker_start, marker_end)
+        .is_none_or(|current| current.trim() != desired.trim())
 }
 
 /// Extract the full block including both marker lines, if both markers
@@ -343,10 +342,7 @@ hl.bind(\"SUPER + H\", hl.dsp.exec_cmd(\"hve-ipc toggle-tray\"))\n\
 
     match std::fs::write(&path, new_content) {
         Ok(_) => {
-            tracing::info!(
-                "[keybinds] {}",
-                if enabled { "WRITTEN" } else { "REMOVED" }
-            );
+            tracing::info!("[keybinds] {}", if enabled { "WRITTEN" } else { "REMOVED" });
             reload_hyprland();
         }
         Err(e) => {
@@ -582,8 +578,14 @@ mod tests {
             "should NOT have pause-restart after slim-down"
         );
         assert!(!content.contains("next-anim"), "should NOT have next-anim");
-        assert!(!content.contains("next-border"), "should NOT have next-border");
-        assert!(!content.contains("next-shader"), "should NOT have next-shader");
+        assert!(
+            !content.contains("next-border"),
+            "should NOT have next-border"
+        );
+        assert!(
+            !content.contains("next-shader"),
+            "should NOT have next-shader"
+        );
 
         // Disable keybinds
         set_keybinds(false);
@@ -621,7 +623,10 @@ mod tests {
         // Disable when no markers exist → should be no-op
         set_keybinds(false);
         let after = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(before, after, "disabling when markers absent should be no-op");
+        assert_eq!(
+            before, after,
+            "disabling when markers absent should be no-op"
+        );
     }
 
     // ── Auto-generated header ─────────────────────────────────────────
@@ -689,7 +694,10 @@ mod tests {
             content.contains("Composer trait"),
             "HVE Composer comment present in window rules"
         );
-        assert!(!content.contains("tile = true"), "no tiling rule in floating mode");
+        assert!(
+            !content.contains("tile = true"),
+            "no tiling rule in floating mode"
+        );
     }
 
     fn assert_tiling_content(content: &str) {
@@ -856,8 +864,7 @@ mod tests {
         // Simulate a pre-migration system: a stale .conf file exists.
         let stale = hve_cache_dir().join("hve-settings.conf");
         std::fs::create_dir_all(stale.parent().unwrap()).unwrap();
-        std::fs::write(&stale, "# >>> HVE WINDOW RULES <<<\nwindowrulev2 = float\n")
-            .unwrap();
+        std::fs::write(&stale, "# >>> HVE WINDOW RULES <<<\nwindowrulev2 = float\n").unwrap();
 
         ensure_settings_file();
 
@@ -1015,7 +1022,10 @@ mod tests {
     /// Body of one `fn <sig>`: signature to matching closing brace.
     fn fn_body(src: &str, sig: &str) -> String {
         let start = src.find(sig).unwrap_or_else(|| panic!("{sig} must exist"));
-        let open = src[start..].find('{').expect("the function must have a body") + start;
+        let open = src[start..]
+            .find('{')
+            .expect("the function must have a body")
+            + start;
         let mut depth = 0usize;
         for (i, ch) in src[open..].char_indices() {
             match ch {

@@ -162,8 +162,13 @@ fn watcher_command(proj: &std::path::Path, stderr: std::process::Stdio) -> std::
         // only async-signal-safe work is allowed, and prctl is exactly that.
         unsafe {
             cmd.pre_exec(|| {
-                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong, 0, 0, 0)
-                    != 0
+                if libc::prctl(
+                    libc::PR_SET_PDEATHSIG,
+                    libc::SIGKILL as libc::c_ulong,
+                    0,
+                    0,
+                    0,
+                ) != 0
                 {
                     return Err(std::io::Error::last_os_error());
                 }
@@ -208,18 +213,16 @@ pub fn spawn_color_watcher(proj: &std::path::Path) -> Option<ColorWatcher> {
             .and_then(|f| f.try_clone().ok())
             .map(std::process::Stdio::from)
             .unwrap_or(std::process::Stdio::null());
-        watcher_command(proj, stderr)
-            .spawn()
-            .map(|child| {
-                #[cfg(target_os = "linux")]
-                let pgid = Some(child.id() as i32);
-                // The group kill must never be claimed where process_group(0)
-                // was not set: kill(-pid) on a non-leader could signal an
-                // unrelated group.
-                #[cfg(not(target_os = "linux"))]
-                let pgid = None;
-                SpawnedWatcher { child, pgid }
-            })
+        watcher_command(proj, stderr).spawn().map(|child| {
+            #[cfg(target_os = "linux")]
+            let pgid = Some(child.id() as i32);
+            // The group kill must never be claimed where process_group(0)
+            // was not set: kill(-pid) on a non-leader could signal an
+            // unrelated group.
+            #[cfg(not(target_os = "linux"))]
+            let pgid = None;
+            SpawnedWatcher { child, pgid }
+        })
     };
 
     start_watcher_core(spawn, &watcher_log)
@@ -255,7 +258,10 @@ mod tests {
         // return None because the script file doesn't exist.
         let proj = PathBuf::from("/tmp/hve_nonexistent_test");
         let result = spawn_color_watcher(&proj);
-        assert!(result.is_none(), "should return None when script does not exist");
+        assert!(
+            result.is_none(),
+            "should return None when script does not exist"
+        );
     }
 
     #[test]
@@ -340,8 +346,11 @@ mod tests {
         let scripts = root.join("assets/scripts");
         std::fs::create_dir_all(&scripts).unwrap();
         let repo_scripts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/scripts");
-        std::fs::copy(repo_scripts.join("color_watcher.sh"), scripts.join("color_watcher.sh"))
-            .unwrap();
+        std::fs::copy(
+            repo_scripts.join("color_watcher.sh"),
+            scripts.join("color_watcher.sh"),
+        )
+        .unwrap();
         std::fs::copy(repo_scripts.join("utils.sh"), scripts.join("utils.sh")).unwrap();
         std::fs::copy(repo_scripts.join("colors.sh"), scripts.join("colors.sh")).unwrap();
         copy_color_sources_dir(&repo_scripts, &scripts);
@@ -381,8 +390,11 @@ mod tests {
             std::fs::set_permissions(&stubs.join(name), std::fs::Permissions::from_mode(0o755))
                 .unwrap();
         }
-        let path_with_stubs =
-            format!("{}:{}", stubs.display(), std::env::var("PATH").unwrap_or_default());
+        let path_with_stubs = format!(
+            "{}:{}",
+            stubs.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
 
         let script_path = scripts.join("color_watcher.sh");
         let spawn_instance = || {
@@ -517,7 +529,10 @@ mod tests {
         let marker = tmp.path().join("grandchild_pid");
         let mut cmd = Command::new("bash");
         cmd.arg("-c")
-            .arg(format!("sleep 86400 & echo $! > {}; wait", marker.display()))
+            .arg(format!(
+                "sleep 86400 & echo $! > {}; wait",
+                marker.display()
+            ))
             .process_group(0)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
@@ -572,8 +587,7 @@ mod tests {
         // would kill the child — the kernel must do it instead), and exits.
         if std::env::var("HVE_WATCHER_PDEATH_HELPER").is_ok() {
             let proj = std::path::PathBuf::from(std::env::var("HVE_HELPER_ROOT").unwrap());
-            let pid_file =
-                std::path::PathBuf::from(std::env::var("HVE_PDEATH_PID_FILE").unwrap());
+            let pid_file = std::path::PathBuf::from(std::env::var("HVE_PDEATH_PID_FILE").unwrap());
             match spawn_color_watcher(&proj) {
                 Some(guard) => {
                     let pid = guard.child.id();
@@ -607,8 +621,11 @@ mod tests {
         let scripts = root.join("assets/scripts");
         std::fs::create_dir_all(&scripts).unwrap();
         let repo_scripts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/scripts");
-        std::fs::copy(repo_scripts.join("color_watcher.sh"), scripts.join("color_watcher.sh"))
-            .unwrap();
+        std::fs::copy(
+            repo_scripts.join("color_watcher.sh"),
+            scripts.join("color_watcher.sh"),
+        )
+        .unwrap();
         std::fs::copy(repo_scripts.join("utils.sh"), scripts.join("utils.sh")).unwrap();
         std::fs::copy(repo_scripts.join("colors.sh"), scripts.join("colors.sh")).unwrap();
         copy_color_sources_dir(&repo_scripts, &scripts);
@@ -635,8 +652,11 @@ mod tests {
             std::fs::set_permissions(&stubs.join(name), std::fs::Permissions::from_mode(0o755))
                 .unwrap();
         }
-        let path_with_stubs =
-            format!("{}:{}", stubs.display(), std::env::var("PATH").unwrap_or_default());
+        let path_with_stubs = format!(
+            "{}:{}",
+            stubs.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
 
         let pid_file = root.join("watcher_pid");
         let helper = Command::new(std::env::current_exe().unwrap())
@@ -749,7 +769,10 @@ mod tests {
                 &PathBuf::from("/tmp/hve/no-such-log.log"),
             )
         });
-        assert!(result.is_none(), "every attempt exited — the core must give up");
+        assert!(
+            result.is_none(),
+            "every attempt exited — the core must give up"
+        );
         assert_eq!(
             spawn_count, MAX_START_ATTEMPTS,
             "an immediately-exiting child must be retried exactly \
@@ -787,8 +810,7 @@ mod tests {
             },
             &PathBuf::from("/tmp/hve/no-such-log.log"),
         );
-        let mut guard =
-            result.expect("the k+1th attempt (a live child) must succeed");
+        let mut guard = result.expect("the k+1th attempt (a live child) must succeed");
         assert_eq!(spawn_count, 3, "died 2 times, then success on attempt 3");
         assert!(
             matches!(guard.child.try_wait().unwrap(), None),
@@ -816,8 +838,7 @@ mod tests {
             },
             &PathBuf::from("/tmp/hve/no-such-log.log"),
         );
-        let mut guard =
-            result.expect("a child alive at the grace end is a real start");
+        let mut guard = result.expect("a child alive at the grace end is a real start");
         assert_eq!(spawn_count, 1, "success must land on the first attempt");
         assert!(
             matches!(guard.child.try_wait().unwrap(), None),
@@ -854,8 +875,11 @@ mod tests {
         let scripts = root.join("assets/scripts");
         std::fs::create_dir_all(&scripts).unwrap();
         let repo_scripts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/scripts");
-        std::fs::copy(repo_scripts.join("color_watcher.sh"), scripts.join("color_watcher.sh"))
-            .unwrap();
+        std::fs::copy(
+            repo_scripts.join("color_watcher.sh"),
+            scripts.join("color_watcher.sh"),
+        )
+        .unwrap();
         std::fs::copy(repo_scripts.join("utils.sh"), scripts.join("utils.sh")).unwrap();
         std::fs::copy(repo_scripts.join("colors.sh"), scripts.join("colors.sh")).unwrap();
         copy_color_sources_dir(&repo_scripts, &scripts);
@@ -886,8 +910,11 @@ mod tests {
             std::fs::set_permissions(&stubs.join(name), std::fs::Permissions::from_mode(0o755))
                 .unwrap();
         }
-        let path_with_stubs =
-            format!("{}:{}", stubs.display(), std::env::var("PATH").unwrap_or_default());
+        let path_with_stubs = format!(
+            "{}:{}",
+            stubs.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
 
         let script_path = scripts.join("color_watcher.sh");
         let spawn_instance = || {
@@ -990,7 +1017,9 @@ mod tests {
             if dir.is_empty() {
                 continue;
             }
-            let Ok(entries) = std::fs::read_dir(dir) else { continue; };
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                continue;
+            };
             for entry in entries.flatten() {
                 let name = entry.file_name();
                 if name.to_string_lossy() == "flock" {
@@ -1029,8 +1058,11 @@ mod tests {
         let scripts = root.join("assets/scripts");
         std::fs::create_dir_all(&scripts).unwrap();
         let repo_scripts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/scripts");
-        std::fs::copy(repo_scripts.join("color_watcher.sh"), scripts.join("color_watcher.sh"))
-            .unwrap();
+        std::fs::copy(
+            repo_scripts.join("color_watcher.sh"),
+            scripts.join("color_watcher.sh"),
+        )
+        .unwrap();
         std::fs::copy(repo_scripts.join("utils.sh"), scripts.join("utils.sh")).unwrap();
         std::fs::copy(repo_scripts.join("colors.sh"), scripts.join("colors.sh")).unwrap();
         copy_color_sources_dir(&repo_scripts, &scripts);
@@ -1142,8 +1174,11 @@ mod tests {
         let scripts = root.join("assets/scripts");
         std::fs::create_dir_all(&scripts).unwrap();
         let repo_scripts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/scripts");
-        std::fs::copy(repo_scripts.join("color_watcher.sh"), scripts.join("color_watcher.sh"))
-            .unwrap();
+        std::fs::copy(
+            repo_scripts.join("color_watcher.sh"),
+            scripts.join("color_watcher.sh"),
+        )
+        .unwrap();
         std::fs::copy(repo_scripts.join("utils.sh"), scripts.join("utils.sh")).unwrap();
         std::fs::copy(repo_scripts.join("colors.sh"), scripts.join("colors.sh")).unwrap();
         copy_color_sources_dir(&repo_scripts, &scripts);
@@ -1220,8 +1255,11 @@ mod tests {
             ),
         )
         .unwrap();
-        std::fs::set_permissions(&stubs.join("noctalia"), std::fs::Permissions::from_mode(0o755))
-            .unwrap();
+        std::fs::set_permissions(
+            &stubs.join("noctalia"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
     }
 
     /// Sandbox scripts for the theme-authority tests: the real watcher plus
@@ -1248,8 +1286,11 @@ mod tests {
     ) {
         use std::os::unix::fs::PermissionsExt;
         let repo_scripts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/scripts");
-        std::fs::copy(repo_scripts.join("color_watcher.sh"), scripts.join("color_watcher.sh"))
-            .unwrap();
+        std::fs::copy(
+            repo_scripts.join("color_watcher.sh"),
+            scripts.join("color_watcher.sh"),
+        )
+        .unwrap();
         std::fs::copy(repo_scripts.join("utils.sh"), scripts.join("utils.sh")).unwrap();
         std::fs::copy(repo_scripts.join("colors.sh"), scripts.join("colors.sh")).unwrap();
         copy_color_sources_dir(&repo_scripts, &scripts);
@@ -1312,8 +1353,11 @@ mod tests {
         // whose source.txt is `custom theme-blue` with NO trailing newline.
         let theme_dir = home.join(".config/hve/themes/Animation/providers/noctalia-v5");
         std::fs::create_dir_all(&theme_dir).unwrap();
-        std::fs::write(home.join(".config/hve/config.json"), r#"{"last_applied_theme":"Animation"}"#)
-            .unwrap();
+        std::fs::write(
+            home.join(".config/hve/config.json"),
+            r#"{"last_applied_theme":"Animation"}"#,
+        )
+        .unwrap();
         std::fs::write(theme_dir.join("palette.json"), BLUE_SNAPSHOT).unwrap();
         std::fs::write(theme_dir.join("source.txt"), "custom theme-blue").unwrap();
 
@@ -1331,11 +1375,17 @@ mod tests {
         let stubs = root.join("stubs");
         std::fs::create_dir_all(&stubs).unwrap();
         std::fs::write(stubs.join("inotifywait"), "#!/bin/bash\nexec sleep 2\n").unwrap();
-        std::fs::set_permissions(&stubs.join("inotifywait"), std::fs::Permissions::from_mode(0o755))
-            .unwrap();
+        std::fs::set_permissions(
+            &stubs.join("inotifywait"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
         write_stateful_noctalia_stub(&stubs, &cache);
-        let path_with_stubs =
-            format!("{}:{}", stubs.display(), std::env::var("PATH").unwrap_or_default());
+        let path_with_stubs = format!(
+            "{}:{}",
+            stubs.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
 
         let script_path = scripts.join("color_watcher.sh");
         let _watcher = KillOnDrop::new(
@@ -1366,10 +1416,7 @@ mod tests {
             if armed {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "watcher never armed within 30s"
-            );
+            assert!(Instant::now() < deadline, "watcher never armed within 30s");
             std::thread::sleep(Duration::from_millis(50));
         }
 
@@ -1459,11 +1506,17 @@ mod tests {
         let stubs = root.join("stubs");
         std::fs::create_dir_all(&stubs).unwrap();
         std::fs::write(stubs.join("inotifywait"), "#!/bin/bash\nexec sleep 2\n").unwrap();
-        std::fs::set_permissions(&stubs.join("inotifywait"), std::fs::Permissions::from_mode(0o755))
-            .unwrap();
+        std::fs::set_permissions(
+            &stubs.join("inotifywait"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
         write_stateful_noctalia_stub(&stubs, &cache);
-        let path_with_stubs =
-            format!("{}:{}", stubs.display(), std::env::var("PATH").unwrap_or_default());
+        let path_with_stubs = format!(
+            "{}:{}",
+            stubs.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
 
         let script_path = scripts.join("color_watcher.sh");
         let _watcher = KillOnDrop::new(
@@ -1493,10 +1546,7 @@ mod tests {
             if armed {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "watcher never armed within 30s"
-            );
+            assert!(Instant::now() < deadline, "watcher never armed within 30s");
             std::thread::sleep(Duration::from_millis(50));
         }
 
@@ -1521,8 +1571,7 @@ mod tests {
             !calls.contains("color-scheme-set"),
             "with no theme applied no `color-scheme-set` may be issued, got:\n{calls}"
         );
-        let ipc_calls =
-            std::fs::read_to_string(cache.join("hve_ipc_calls")).unwrap_or_default();
+        let ipc_calls = std::fs::read_to_string(cache.join("hve_ipc_calls")).unwrap_or_default();
         assert!(
             !ipc_calls.contains("assert-color-authority"),
             "with no theme applied the watcher must never ask the app to re-assert, got:\n{ipc_calls}"
@@ -1548,8 +1597,11 @@ mod tests {
         // deliberately NO palette.json.
         let theme_dir = home.join(".config/hve/themes/Animation/providers/noctalia-v5");
         std::fs::create_dir_all(&theme_dir).unwrap();
-        std::fs::write(home.join(".config/hve/config.json"), r#"{"last_applied_theme":"Animation"}"#)
-            .unwrap();
+        std::fs::write(
+            home.join(".config/hve/config.json"),
+            r#"{"last_applied_theme":"Animation"}"#,
+        )
+        .unwrap();
         std::fs::write(theme_dir.join("source.txt"), "wallpaper\n").unwrap();
 
         let palettes = home.join(".config/noctalia/palettes");
@@ -1563,11 +1615,17 @@ mod tests {
         let stubs = root.join("stubs");
         std::fs::create_dir_all(&stubs).unwrap();
         std::fs::write(stubs.join("inotifywait"), "#!/bin/bash\nexec sleep 2\n").unwrap();
-        std::fs::set_permissions(&stubs.join("inotifywait"), std::fs::Permissions::from_mode(0o755))
-            .unwrap();
+        std::fs::set_permissions(
+            &stubs.join("inotifywait"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
         write_stateful_noctalia_stub(&stubs, &cache);
-        let path_with_stubs =
-            format!("{}:{}", stubs.display(), std::env::var("PATH").unwrap_or_default());
+        let path_with_stubs = format!(
+            "{}:{}",
+            stubs.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
 
         let script_path = scripts.join("color_watcher.sh");
         let _watcher = KillOnDrop::new(
@@ -1597,10 +1655,7 @@ mod tests {
             if armed {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "watcher never armed within 30s"
-            );
+            assert!(Instant::now() < deadline, "watcher never armed within 30s");
             std::thread::sleep(Duration::from_millis(50));
         }
 
@@ -1625,8 +1680,7 @@ mod tests {
             !calls.contains("color-scheme-set"),
             "with a wallpaper-source theme no `color-scheme-set` may be issued, got:\n{calls}"
         );
-        let ipc_calls =
-            std::fs::read_to_string(cache.join("hve_ipc_calls")).unwrap_or_default();
+        let ipc_calls = std::fs::read_to_string(cache.join("hve_ipc_calls")).unwrap_or_default();
         assert!(
             !ipc_calls.contains("assert-color-authority"),
             "with a wallpaper-source theme the watcher must never ask the app to re-assert, got:\n{ipc_calls}"
@@ -1660,14 +1714,20 @@ mod tests {
         let stubs = root.join("stubs");
         std::fs::create_dir_all(&stubs).unwrap();
         std::fs::write(stubs.join("noctalia"), "#!/bin/bash\nexit 0\n").unwrap();
-        std::fs::set_permissions(&stubs.join("noctalia"), std::fs::Permissions::from_mode(0o755))
-            .unwrap();
+        std::fs::set_permissions(
+            &stubs.join("noctalia"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
         let state_dir = home.join(".local/state/noctalia");
         std::fs::create_dir_all(&state_dir).unwrap();
         let settings = state_dir.join("settings.toml");
         std::fs::write(&settings, "[general]\n").unwrap();
-        let path_with_stubs =
-            format!("{}:{}", stubs.display(), std::env::var("PATH").unwrap_or_default());
+        let path_with_stubs = format!(
+            "{}:{}",
+            stubs.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
 
         let run_probe = |bash_body: &str| {
             Command::new("bash")
@@ -1785,8 +1845,11 @@ mod tests {
             std::fs::set_permissions(&stubs.join(name), std::fs::Permissions::from_mode(0o755))
                 .unwrap();
         }
-        let path_with_stubs =
-            format!("{}:{}", stubs.display(), std::env::var("PATH").unwrap_or_default());
+        let path_with_stubs = format!(
+            "{}:{}",
+            stubs.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
 
         let script_path = scripts.join("color_watcher.sh");
         let _watcher = KillOnDrop::new(

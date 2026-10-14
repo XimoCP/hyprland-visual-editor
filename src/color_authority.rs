@@ -10,7 +10,6 @@
 /// Write-only for now: providers create, update and remove the descriptor;
 /// NOTHING reads it yet (no behaviour change), until the central colour
 /// scripts learn to consult it as a declaration they only read.
-
 use crate::config::hve_cache_dir;
 use std::fs;
 use std::path::PathBuf;
@@ -257,7 +256,11 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let _env = TempEnv::new();
         write_descriptor(&sample()).expect("write must succeed");
-        let mode = fs::metadata(descriptor_path()).unwrap().permissions().mode() & 0o777;
+        let mode = fs::metadata(descriptor_path())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
         assert_eq!(mode, 0o600, "descriptor must be owner-only");
     }
 

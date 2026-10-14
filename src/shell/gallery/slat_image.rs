@@ -14,7 +14,7 @@
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
-use image::{RgbaImage, imageops};
+use image::{imageops, RgbaImage};
 
 /// Bake the parallelogram shape into the image alpha (pure, deterministic).
 ///
@@ -92,10 +92,14 @@ pub const SLAT_BBOX_EXPANDED_W: u32 = 959; // (924 + 35)
 pub const SLAT_BBOX_H: u32 = 520;
 // Compile-time guard that the literal matches the formula (gap + slice constants).
 const _: () = assert!(
-    SLAT_BBOX_COLLAPSED_W == (crate::shell::gallery::views::slice::SLICE_COLLAPSED_WIDTH - SLAT_GAP_PX + crate::shell::gallery::views::slice::SLICE_SKEW_PX) as u32
+    SLAT_BBOX_COLLAPSED_W
+        == (crate::shell::gallery::views::slice::SLICE_COLLAPSED_WIDTH - SLAT_GAP_PX
+            + crate::shell::gallery::views::slice::SLICE_SKEW_PX) as u32
 );
 const _: () = assert!(
-    SLAT_BBOX_EXPANDED_W == (crate::shell::gallery::views::slice::SLICE_EXPANDED_WIDTH + crate::shell::gallery::views::slice::SLICE_SKEW_PX) as u32
+    SLAT_BBOX_EXPANDED_W
+        == (crate::shell::gallery::views::slice::SLICE_EXPANDED_WIDTH
+            + crate::shell::gallery::views::slice::SLICE_SKEW_PX) as u32
 );
 const _: () = assert!(SLAT_BBOX_H == crate::shell::gallery::views::slice::SLICE_HEIGHT as u32);
 
@@ -111,7 +115,11 @@ fn expanded_bbox() -> (u32, u32) {
 /// Pure helper: bake a slat Rgba to the collapsed/expanded bbox.
 pub fn baked_slat_rgba(src: RgbaImage, expanded: bool) -> RgbaImage {
     use crate::shell::gallery::views::slice::SLICE_SKEW_PX;
-    let (tw, th) = if expanded { expanded_bbox() } else { collapsed_bbox() };
+    let (tw, th) = if expanded {
+        expanded_bbox()
+    } else {
+        collapsed_bbox()
+    };
     bake_parallelogram(src, tw, th, SLICE_SKEW_PX)
 }
 
@@ -136,9 +144,17 @@ mod tests {
         let out = bake_parallelogram(src, 40, 20, 10.0);
         assert_eq!(out.dimensions(), (40, 20));
         // Top-left wedge outside → alpha 0
-        assert_eq!(out.get_pixel(0, 0)[3], 0, "top-left (0,0) must be transparent (left wedge)");
+        assert_eq!(
+            out.get_pixel(0, 0)[3],
+            0,
+            "top-left (0,0) must be transparent (left wedge)"
+        );
         // Bottom-right wedge outside → alpha 0
-        assert_eq!(out.get_pixel(39, 19)[3], 0, "bottom-right (w-1,h-1) must be transparent (right wedge)");
+        assert_eq!(
+            out.get_pixel(39, 19)[3],
+            0,
+            "bottom-right (w-1,h-1) must be transparent (right wedge)"
+        );
     }
 
     #[test]
@@ -149,7 +165,11 @@ mod tests {
         // Another point strictly inside top-left wedge
         assert_eq!(out.get_pixel(1, 1)[3], 0, "near top-left inside wedge");
         // Bottom-right wedge second sample
-        assert_eq!(out.get_pixel(38, 18)[3], 0, "near bottom-right inside wedge");
+        assert_eq!(
+            out.get_pixel(38, 18)[3],
+            0,
+            "near bottom-right inside wedge"
+        );
         // Sanity: opposite corners must stay opaque
         assert_eq!(out.get_pixel(39, 0)[3], 255, "top-right inside");
         assert_eq!(out.get_pixel(0, 19)[3], 255, "bottom-left inside");
@@ -179,23 +199,39 @@ mod tests {
         let skew = 10.0;
         let out = bake_parallelogram(src, 40, 20, skew);
         let y = 10; // mid-height
-        // left = skew*(1 - (y+0.5)/h) ≈ 10*(1 -10.5/20)=4.75
-        // Pixels with center < left → outside, >= left → inside
-        // Sample ±2px away from edge to avoid exact boundary.
-        // Expected inside at x well right of edge, outside well left.
+                    // left = skew*(1 - (y+0.5)/h) ≈ 10*(1 -10.5/20)=4.75
+                    // Pixels with center < left → outside, >= left → inside
+                    // Sample ±2px away from edge to avoid exact boundary.
+                    // Expected inside at x well right of edge, outside well left.
         let left = skew * (1.0 - (y as f32 + 0.5) / 20.0);
         let x_outside = (left as i32 - 2).max(0) as u32;
         let x_inside = (left as i32 + 2) as u32;
-        assert_eq!(out.get_pixel(x_outside, y)[3], 0, "just-outside slant edge at mid-height x={x_outside} left~{left}");
-        assert_eq!(out.get_pixel(x_inside, y)[3], 255, "just-inside slant edge at mid-height x={x_inside} left~{left}");
+        assert_eq!(
+            out.get_pixel(x_outside, y)[3],
+            0,
+            "just-outside slant edge at mid-height x={x_outside} left~{left}"
+        );
+        assert_eq!(
+            out.get_pixel(x_inside, y)[3],
+            255,
+            "just-inside slant edge at mid-height x={x_inside} left~{left}"
+        );
         // Right edge: right = left + (w - skew) = left +30
         let right = left + (40.0 - skew);
         let x_inside_r = (right as i32 - 3).max(0) as u32;
         let x_outside_r = (right as i32 + 2) as u32;
         if x_outside_r < 40 {
-            assert_eq!(out.get_pixel(x_outside_r, y)[3], 0, "just-outside right edge x={x_outside_r} right~{right}");
+            assert_eq!(
+                out.get_pixel(x_outside_r, y)[3],
+                0,
+                "just-outside right edge x={x_outside_r} right~{right}"
+            );
         }
-        assert_eq!(out.get_pixel(x_inside_r, y)[3], 255, "just-inside right edge x={x_inside_r} right~{right}");
+        assert_eq!(
+            out.get_pixel(x_inside_r, y)[3],
+            255,
+            "just-inside right edge x={x_inside_r} right~{right}"
+        );
     }
 
     #[test]
@@ -211,9 +247,16 @@ mod tests {
         // Center of source at (10,5)
         let src_center = *src.get_pixel(10, 5);
         let out = bake_parallelogram(src, 10, 10, 0.0);
-        assert_eq!(out.dimensions(), (10, 10), "output dims must equal target dims");
+        assert_eq!(
+            out.dimensions(),
+            (10, 10),
+            "output dims must equal target dims"
+        );
         let out_center = *out.get_pixel(5, 5);
-        assert_eq!(out_center, src_center, "center pixel must match source center after cover-crop (scale max + center-crop)");
+        assert_eq!(
+            out_center, src_center,
+            "center pixel must match source center after cover-crop (scale max + center-crop)"
+        );
     }
 
     #[test]
@@ -222,7 +265,11 @@ mod tests {
         let out = bake_parallelogram(src, 8, 8, 0.0);
         for y in 0..8 {
             for x in 0..8 {
-                assert_eq!(out.get_pixel(x, y)[3], 255, "skew 0 → full rectangle opaque at {x},{y}");
+                assert_eq!(
+                    out.get_pixel(x, y)[3],
+                    255,
+                    "skew 0 → full rectangle opaque at {x},{y}"
+                );
             }
         }
     }
@@ -241,7 +288,11 @@ mod tests {
         let out2 = bake_parallelogram(src2, 4, 4, 0.0);
         for y in 0..4 {
             for x in 0..4 {
-                assert_eq!(out2.get_pixel(x, y)[3], 255, "skew 0 with 1×1 source → all opaque at {x},{y}");
+                assert_eq!(
+                    out2.get_pixel(x, y)[3],
+                    255,
+                    "skew 0 with 1×1 source → all opaque at {x},{y}"
+                );
             }
         }
     }
@@ -263,7 +314,11 @@ mod tests {
         let a = bake_parallelogram(src.clone(), 10, 10, 3.0);
         let b = bake_parallelogram(src, 10, 10, 3.0);
         assert_eq!(a.dimensions(), b.dimensions());
-        assert_eq!(a.as_raw(), b.as_raw(), "pure deterministic: same input → same output");
+        assert_eq!(
+            a.as_raw(),
+            b.as_raw(),
+            "pure deterministic: same input → same output"
+        );
     }
 
     // ── S4b RED: baked slat image feed contracts (collapsed/expanded bbox) ──
@@ -272,11 +327,23 @@ mod tests {
 
     #[test]
     fn slat_bbox_constants_match_drawn_geometry() {
-        use crate::shell::gallery::slat_image::{SLAT_BBOX_COLLAPSED_W, SLAT_BBOX_EXPANDED_W, SLAT_BBOX_H};
-        use crate::shell::gallery::views::slice::{SLICE_COLLAPSED_WIDTH, SLICE_EXPANDED_WIDTH, SLICE_HEIGHT, SLICE_SKEW_PX};
+        use crate::shell::gallery::slat_image::{
+            SLAT_BBOX_COLLAPSED_W, SLAT_BBOX_EXPANDED_W, SLAT_BBOX_H,
+        };
+        use crate::shell::gallery::views::slice::{
+            SLICE_COLLAPSED_WIDTH, SLICE_EXPANDED_WIDTH, SLICE_HEIGHT, SLICE_SKEW_PX,
+        };
         let gap = 24.0; // must stay in sync with SkwdTokens.gallery-slat-gap (24px) and SLAT_GAP_PX
-        assert_eq!(SLAT_BBOX_COLLAPSED_W, (SLICE_COLLAPSED_WIDTH - gap + SLICE_SKEW_PX) as u32, "collapsed bbox must be (135-24)+35=146 (face+skew)");
-        assert_eq!(SLAT_BBOX_EXPANDED_W, (SLICE_EXPANDED_WIDTH + SLICE_SKEW_PX) as u32, "expanded bbox must be 924+35=959");
+        assert_eq!(
+            SLAT_BBOX_COLLAPSED_W,
+            (SLICE_COLLAPSED_WIDTH - gap + SLICE_SKEW_PX) as u32,
+            "collapsed bbox must be (135-24)+35=146 (face+skew)"
+        );
+        assert_eq!(
+            SLAT_BBOX_EXPANDED_W,
+            (SLICE_EXPANDED_WIDTH + SLICE_SKEW_PX) as u32,
+            "expanded bbox must be 924+35=959"
+        );
         assert_eq!(SLAT_BBOX_H, SLICE_HEIGHT as u32, "bbox height must be 520");
         assert_eq!(SLAT_BBOX_COLLAPSED_W, 146);
         assert_eq!(SLAT_BBOX_EXPANDED_W, 959);
@@ -290,18 +357,32 @@ mod tests {
     fn baked_slat_rgba_collapsed_matches_drawn_bbox() {
         let src = solid_rgba(80, 60, Rgba([10, 20, 30, 255]));
         let rgba = crate::shell::gallery::slat_image::baked_slat_rgba(src, false);
-        assert_eq!(rgba.width(), 146, "baked_slat_rgba collapsed width must be 146");
+        assert_eq!(
+            rgba.width(),
+            146,
+            "baked_slat_rgba collapsed width must be 146"
+        );
         assert_eq!(rgba.height(), 520);
-        assert_eq!(rgba.width(), crate::shell::gallery::slat_image::SLAT_BBOX_COLLAPSED_W);
+        assert_eq!(
+            rgba.width(),
+            crate::shell::gallery::slat_image::SLAT_BBOX_COLLAPSED_W
+        );
     }
 
     #[test]
     fn baked_slat_rgba_expanded_matches_drawn_bbox() {
         let src = solid_rgba(80, 60, Rgba([10, 20, 30, 255]));
         let rgba = crate::shell::gallery::slat_image::baked_slat_rgba(src, true);
-        assert_eq!(rgba.width(), 959, "baked_slat_rgba expanded width must be 959");
+        assert_eq!(
+            rgba.width(),
+            959,
+            "baked_slat_rgba expanded width must be 959"
+        );
         assert_eq!(rgba.height(), 520);
-        assert_eq!(rgba.width(), crate::shell::gallery::slat_image::SLAT_BBOX_EXPANDED_W);
+        assert_eq!(
+            rgba.width(),
+            crate::shell::gallery::slat_image::SLAT_BBOX_EXPANDED_W
+        );
     }
 
     #[test]

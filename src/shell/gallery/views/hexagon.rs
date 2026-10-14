@@ -6,7 +6,7 @@
 //
 // Pure Rust — no Slint types. Slint side is HexDelegate.slint.
 
-use super::{GalleryStyle, GalleryView, GalleryKey};
+use super::{GalleryKey, GalleryStyle, GalleryView};
 
 /// Hexagon radius (center to vertex) ~140px (spec R2.2).
 pub const HEX_RADIUS: f32 = 140.0;
@@ -142,19 +142,40 @@ impl HexagonView {
         v
     }
 
-    pub fn count(&self) -> usize { self.count }
-    pub fn focused_index(&self) -> usize { self.focused_index }
-    pub fn is_pulled_out(&self) -> bool { self.pulled_out }
-    pub fn parallax(&self) -> (f32, f32) { (self.parallax_x, self.parallax_y) }
-    pub fn video_state(&self) -> HexVideoState { self.video_state }
-    pub fn is_video_playing(&self) -> bool { self.video_state == HexVideoState::Playing }
-    pub fn dash_visible(&self) -> bool { self.dash_visible }
-    pub fn video_delay_ms(&self) -> u64 { self.video_delay_ms }
-    pub fn cols(&self) -> usize { self.cols }
+    pub fn count(&self) -> usize {
+        self.count
+    }
+    pub fn focused_index(&self) -> usize {
+        self.focused_index
+    }
+    pub fn is_pulled_out(&self) -> bool {
+        self.pulled_out
+    }
+    pub fn parallax(&self) -> (f32, f32) {
+        (self.parallax_x, self.parallax_y)
+    }
+    pub fn video_state(&self) -> HexVideoState {
+        self.video_state
+    }
+    pub fn is_video_playing(&self) -> bool {
+        self.video_state == HexVideoState::Playing
+    }
+    pub fn dash_visible(&self) -> bool {
+        self.dash_visible
+    }
+    pub fn video_delay_ms(&self) -> u64 {
+        self.video_delay_ms
+    }
+    pub fn cols(&self) -> usize {
+        self.cols
+    }
 
     /// Focus setter clamped 0..count-1, resets pull-out/parallax on blur
     pub fn set_focused_index(&mut self, idx: usize) -> usize {
-        if self.count == 0 { self.focused_index = 0; return 0; }
+        if self.count == 0 {
+            self.focused_index = 0;
+            return 0;
+        }
         let clamped = idx.min(self.count - 1);
         if clamped != self.focused_index {
             self.release_video();
@@ -168,7 +189,9 @@ impl HexagonView {
     }
 
     pub fn move_focus(&mut self, delta: isize) -> usize {
-        if self.count == 0 { return 0; }
+        if self.count == 0 {
+            return 0;
+        }
         let max = self.count as isize - 1;
         let next = self.focused_index as isize + delta;
         let clamped = next.clamp(0, max) as usize;
@@ -177,14 +200,22 @@ impl HexagonView {
 
     pub fn handle_key(&mut self, key: GalleryKey) -> bool {
         match key {
-            GalleryKey::Left => { self.move_focus(-1); true }
-            GalleryKey::Right => { self.move_focus(1); true }
+            GalleryKey::Left => {
+                self.move_focus(-1);
+                true
+            }
+            GalleryKey::Right => {
+                self.move_focus(1);
+                true
+            }
             GalleryKey::Up => {
                 // move up one row = -cols
-                self.move_focus(-(self.cols as isize)); true
+                self.move_focus(-(self.cols as isize));
+                true
             }
             GalleryKey::Down => {
-                self.move_focus(self.cols as isize); true
+                self.move_focus(self.cols as isize);
+                true
             }
             _ => false,
         }
@@ -192,7 +223,9 @@ impl HexagonView {
 
     /// Select / pull-out the focused hex (click). Toggles dashed border.
     pub fn select_focused(&mut self) {
-        if self.count == 0 { return; }
+        if self.count == 0 {
+            return;
+        }
         self.pulled_out = true;
         self.dash_visible = true;
         if self.has_video_for_selected {
@@ -260,18 +293,27 @@ impl HexagonView {
     }
 
     pub fn release_video(&mut self) {
-        if self.video_state == HexVideoState::Playing || self.video_state == HexVideoState::Pending {
+        if self.video_state == HexVideoState::Playing || self.video_state == HexVideoState::Pending
+        {
             self.video_state = HexVideoState::Released;
         }
     }
 
-    pub fn on_blur(&mut self) { self.release_video(); }
-    pub fn reset_video(&mut self) { self.video_state = HexVideoState::Idle; }
+    pub fn on_blur(&mut self) {
+        self.release_video();
+    }
+    pub fn reset_video(&mut self) {
+        self.video_state = HexVideoState::Idle;
+    }
 
     pub fn set_count(&mut self, count: usize) {
         self.count = count;
-        if self.count == 0 { self.focused_index = 0; self.pulled_out = false; }
-        else if self.focused_index >= self.count { self.focused_index = self.count - 1; }
+        if self.count == 0 {
+            self.focused_index = 0;
+            self.pulled_out = false;
+        } else if self.focused_index >= self.count {
+            self.focused_index = self.count - 1;
+        }
     }
 
     /// Position for index (public for tests).
@@ -281,13 +323,21 @@ impl HexagonView {
 
     /// Scale for index: pull-out scale if focused+pulled, else 1.0.
     pub fn scale_for(&self, index: usize) -> f32 {
-        if index == self.focused_index && self.pulled_out { HEX_PULL_OUT_SCALE } else { 1.0 }
+        if index == self.focused_index && self.pulled_out {
+            HEX_PULL_OUT_SCALE
+        } else {
+            1.0
+        }
     }
 }
 
 impl GalleryView for HexagonView {
-    fn style(&self) -> GalleryStyle { GalleryStyle::Hexagon }
-    fn handle_key(&mut self, key: GalleryKey) -> bool { HexagonView::handle_key(self, key) }
+    fn style(&self) -> GalleryStyle {
+        GalleryStyle::Hexagon
+    }
+    fn handle_key(&mut self, key: GalleryKey) -> bool {
+        HexagonView::handle_key(self, key)
+    }
 }
 
 #[cfg(test)]
@@ -298,19 +348,27 @@ mod tests {
     #[test]
     fn hex_pos_honeycomb_r140_layout() {
         assert_eq!(HEX_RADIUS, 140.0, "radius must be 140");
-        assert!((HEX_H_SPACING - 242.48712).abs() < 0.01, "H spacing = sqrt3*r");
+        assert!(
+            (HEX_H_SPACING - 242.48712).abs() < 0.01,
+            "H spacing = sqrt3*r"
+        );
         assert_eq!(HEX_V_SPACING, 210.0, "V spacing = 1.5*r");
         // cols=3 layout
-        let (x0,y0) = hex_center(0,3);
-        assert_eq!(x0, 0.0); assert_eq!(y0, 0.0);
-        let (x1,y1) = hex_center(1,3);
-        assert!((x1 - HEX_H_SPACING).abs() < 0.01); assert_eq!(y1, 0.0);
-        let (x3,_y3) = hex_center(3,3); // next row, col0 with odd offset
-        assert!((x3 - HEX_H_SPACING*0.5).abs() < 0.01, "odd row offset H/2");
-        let (_x3b,y3) = hex_center(3,3);
+        let (x0, y0) = hex_center(0, 3);
+        assert_eq!(x0, 0.0);
+        assert_eq!(y0, 0.0);
+        let (x1, y1) = hex_center(1, 3);
+        assert!((x1 - HEX_H_SPACING).abs() < 0.01);
+        assert_eq!(y1, 0.0);
+        let (x3, _y3) = hex_center(3, 3); // next row, col0 with odd offset
+        assert!(
+            (x3 - HEX_H_SPACING * 0.5).abs() < 0.01,
+            "odd row offset H/2"
+        );
+        let (_x3b, y3) = hex_center(3, 3);
         assert_eq!(y3, HEX_V_SPACING);
-        let (x4,y4) = hex_center(4,3);
-        assert!((x4 - (HEX_H_SPACING*1.5)).abs() < 0.01);
+        let (x4, y4) = hex_center(4, 3);
+        assert!((x4 - (HEX_H_SPACING * 1.5)).abs() < 0.01);
         assert_eq!(y4, HEX_V_SPACING);
     }
 
@@ -321,7 +379,7 @@ mod tests {
         assert_eq!(view.cols(), 3);
         // initial pos for index 2 (row0 col2)
         let (x2, y2) = view.pos_for(2);
-        assert!((x2 - HEX_H_SPACING*2.0).abs() < 0.01);
+        assert!((x2 - HEX_H_SPACING * 2.0).abs() < 0.01);
         assert_eq!(y2, 0.0);
         // move focus
         view.set_focused_index(4);
@@ -351,16 +409,22 @@ mod tests {
     fn hex_point_in_hex_hit_test_and_pull_out() {
         // hexagon at origin r140
         assert!(point_in_hex(0.0, 0.0, 0.0, 0.0, 140.0), "center inside");
-        assert!(point_in_hex(50.0, 30.0, 0.0, 0.0, 140.0), "near center inside");
-        assert!(!point_in_hex(140.0, 140.0, 0.0, 0.0, 140.0), "corner outside");
+        assert!(
+            point_in_hex(50.0, 30.0, 0.0, 0.0, 140.0),
+            "near center inside"
+        );
+        assert!(
+            !point_in_hex(140.0, 140.0, 0.0, 0.0, 140.0),
+            "corner outside"
+        );
         assert!(!point_in_hex(200.0, 0.0, 0.0, 0.0, 140.0), "far outside");
         // on the edge slightly inside
         assert!(point_in_hex(120.0, 0.0, 0.0, 0.0, 140.0));
         // contains_point via view
         let view = HexagonView::new(3);
-        let (cx,cy) = hex_center(0,3);
+        let (cx, cy) = hex_center(0, 3);
         assert!(view.contains_point(cx, cy, 0));
-        assert!(!view.contains_point(cx+300.0, cy, 0));
+        assert!(!view.contains_point(cx + 300.0, cy, 0));
         // pull-out dashed
         let mut v = HexagonView::new(2);
         assert!(!v.is_pulled_out());
@@ -377,9 +441,10 @@ mod tests {
     #[test]
     fn hex_point_vertices_have_radius_distance() {
         let verts = hex_vertices(10.0, 20.0, 140.0);
-        for (x,y) in verts.iter() {
-            let dx = x - 10.0; let dy = y - 20.0;
-            let dist = (dx*dx+dy*dy).sqrt();
+        for (x, y) in verts.iter() {
+            let dx = x - 10.0;
+            let dy = y - 20.0;
+            let dist = (dx * dx + dy * dy).sqrt();
             assert!((dist - 140.0).abs() < 0.01, "vertex on radius");
         }
     }
@@ -393,27 +458,31 @@ mod tests {
         assert_eq!(view.video_state(), HexVideoState::Idle);
         view.request_video();
         // request before pull-out stays Idle (requires selected)
-        assert_eq!(view.video_state(), HexVideoState::Idle, "video only on selected hex");
+        assert_eq!(
+            view.video_state(),
+            HexVideoState::Idle,
+            "video only on selected hex"
+        );
         view.select_focused();
         assert_eq!(view.video_state(), HexVideoState::Pending);
         view.activate_video();
         assert_eq!(view.video_state(), HexVideoState::Playing);
         assert!(view.is_video_playing());
         // parallax subtle
-        let (cx,cy) = hex_center(view.focused_index(), view.cols());
+        let (cx, cy) = hex_center(view.focused_index(), view.cols());
         // mouse 100px to the right → parallax 100*0.08=8
-        let (dx,dy) = view.update_parallax(cx+100.0, cy+50.0);
+        let (dx, dy) = view.update_parallax(cx + 100.0, cy + 50.0);
         assert!((dx - 8.0).abs() < 0.01);
         assert!((dy - 4.0).abs() < 0.01);
         assert_eq!(HEX_PARALLAX_FACTOR, 0.08);
         assert_eq!(HEX_PARALLAX_MAX, 12.0);
         // clamp
-        let (dx2,_) = view.update_parallax(cx+1000.0, cy);
+        let (dx2, _) = view.update_parallax(cx + 1000.0, cy);
         assert_eq!(dx2, HEX_PARALLAX_MAX, "clamped to max");
         // release on blur/focus change
         view.set_focused_index(1);
         assert_eq!(view.video_state(), HexVideoState::Released);
-        assert_eq!(view.parallax(), (0.0,0.0), "parallax reset on blur");
+        assert_eq!(view.parallax(), (0.0, 0.0), "parallax reset on blur");
     }
 
     #[test]

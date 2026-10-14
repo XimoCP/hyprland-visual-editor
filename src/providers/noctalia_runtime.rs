@@ -152,7 +152,12 @@ pub(crate) fn noctalia_config_dir() -> Option<PathBuf> {
 /// NOT in `~/.config/noctalia/settings.json` (which is a v4 artifact).
 pub(crate) fn noctalia_state_dir() -> Option<PathBuf> {
     let home = std::env::var("HOME").ok()?;
-    Some(PathBuf::from(home).join(".local").join("state").join("noctalia"))
+    Some(
+        PathBuf::from(home)
+            .join(".local")
+            .join("state")
+            .join("noctalia"),
+    )
 }
 
 // ── Plugin supervision ─────────────────────────────────────────────────

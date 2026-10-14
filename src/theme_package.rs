@@ -171,9 +171,9 @@ fn resolve_background_sources(
     // 1. Painter-identified video record (video.txt): wins, like the authority
     //    capture did at save time. W10: bounded — the record is untrusted
     //    theme input, and an oversized one is refused like a missing one.
-    if let Some(path) = read_theme_text(&provider_dir.join(
-        crate::providers::wallpaper_authority::PAINTER_VIDEO_FILE,
-    ))
+    if let Some(path) = read_theme_text(
+        &provider_dir.join(crate::providers::wallpaper_authority::PAINTER_VIDEO_FILE),
+    )
     .ok()
     .and_then(|text| crate::providers::wallpaper_authority::parse_painter_video_record(&text))
     {
@@ -324,8 +324,7 @@ pub fn package_theme_dir(
                 link.display()
             );
             return PackageStatus::Skipped(
-                "symlinked directory in the theme tree (refused, nothing read or written)"
-                    .into(),
+                "symlinked directory in the theme tree (refused, nothing read or written)".into(),
             );
         }
         TreeCheck::Unverifiable(detail) => {
@@ -334,8 +333,7 @@ pub fn package_theme_dir(
                 theme_dir.display()
             );
             return PackageStatus::Skipped(
-                "theme tree could not be fully inspected (refused, nothing read or written)"
-                    .into(),
+                "theme tree could not be fully inspected (refused, nothing read or written)".into(),
             );
         }
     }
@@ -425,7 +423,12 @@ pub fn package_theme_dir(
     }
 
     // T4: bundle the theme's custom presets. Best-effort, like a save.
-    let active = read_active_presets(&theme_dir.join("providers").join("hve-presets").join("state.json"));
+    let active = read_active_presets(
+        &theme_dir
+            .join("providers")
+            .join("hve-presets")
+            .join("state.json"),
+    );
     let presets = match crate::theme_presets::ShippedPresets::load(assets_dir) {
         Some(shipped) => crate::theme_presets::bundle_theme_presets(
             theme_dir,
@@ -561,7 +564,10 @@ fn check_theme_tree(theme_dir: &Path) -> TreeCheck {
             if file_type.is_symlink() {
                 // The ONE stat that follows a link: it classifies the link
                 // (directory → refuse) and nothing is ever descended into.
-                if std::fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false) {
+                if std::fs::metadata(&path)
+                    .map(|m| m.is_dir())
+                    .unwrap_or(false)
+                {
                     return TreeCheck::SymlinkedDir(path);
                 }
                 continue;
@@ -933,7 +939,9 @@ fn scan_theme_dir(
         // reader's own guard follows the link, so a symlink to a FIFO is
         // refused there).
         if path.is_symlink()
-            && std::fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false)
+            && std::fs::metadata(&path)
+                .map(|m| m.is_dir())
+                .unwrap_or(false)
         {
             if !budget.warned_symlink_dir {
                 budget.warned_symlink_dir = true;
@@ -1034,7 +1042,20 @@ fn is_token_delimiter(byte: u8) -> bool {
     byte.is_ascii_whitespace()
         || matches!(
             byte,
-            b'"' | b'\'' | b'(' | b')' | b'[' | b']' | b'{' | b'}' | b',' | b'=' | b':' | b';' | b'|' | b'<' | b'>'
+            b'"' | b'\''
+                | b'('
+                | b')'
+                | b'['
+                | b']'
+                | b'{'
+                | b'}'
+                | b','
+                | b'='
+                | b':'
+                | b';'
+                | b'|'
+                | b'<'
+                | b'>'
         )
 }
 
@@ -1126,7 +1147,8 @@ pub fn run_maintenance(
                 );
                 return 1;
             }
-            let status = package_theme_dir(&theme_dir, assets_dir, user_presets_root, max_video_bytes);
+            let status =
+                package_theme_dir(&theme_dir, assets_dir, user_presets_root, max_video_bytes);
             let _ = writeln!(out, "{name}: {}", status.describe());
             0
         }
@@ -1205,7 +1227,10 @@ mod tests {
 
     #[test]
     fn parse_maintenance_leaves_the_gui_path_untouched() {
-        assert_eq!(parse_maintenance(&args(&[])), MaintenanceParse::NotMaintenance);
+        assert_eq!(
+            parse_maintenance(&args(&[])),
+            MaintenanceParse::NotMaintenance
+        );
         assert_eq!(
             parse_maintenance(&args(&["--tray"])),
             MaintenanceParse::NotMaintenance
@@ -1424,7 +1449,10 @@ mod tests {
             "an over-bound video must never be copied"
         );
         let record = fs::read_to_string(provider.join("video-media.txt")).unwrap();
-        assert!(record.contains("url=https://example.com/big.mp4"), "{record}");
+        assert!(
+            record.contains("url=https://example.com/big.mp4"),
+            "{record}"
+        );
     }
 
     #[test]
@@ -1524,7 +1552,10 @@ mod tests {
             1024,
         );
 
-        assert!(matches!(status, PackageStatus::Packaged(_)), "got {status:?}");
+        assert!(
+            matches!(status, PackageStatus::Packaged(_)),
+            "got {status:?}"
+        );
         assert!(
             !provider.join("video.txt").exists(),
             "the absolute video record must not survive packaging"
@@ -1645,7 +1676,10 @@ mod tests {
             1024,
         );
 
-        assert!(matches!(status, PackageStatus::Skipped(_)), "got {status:?}");
+        assert!(
+            matches!(status, PackageStatus::Skipped(_)),
+            "got {status:?}"
+        );
         assert_eq!(
             fs::read_to_string(&settings).unwrap(),
             "[shell.screenshot]\nconfirm_region = true\n"
@@ -1669,7 +1703,11 @@ mod tests {
         .unwrap();
         let media = theme.join("media");
         fs::create_dir_all(&media).unwrap();
-        fs::write(media.join("poster.jpg"), b"\xff\xd8\xff /home/someone/secret.png").unwrap();
+        fs::write(
+            media.join("poster.jpg"),
+            b"\xff\xd8\xff /home/someone/secret.png",
+        )
+        .unwrap();
 
         let hits = scan_theme_for_absolute_paths(&theme);
 
@@ -1787,7 +1825,10 @@ mod tests {
             &mut out,
         );
 
-        assert_eq!(code, 1, "a missing theme must be a clear error, not a panic");
+        assert_eq!(
+            code, 1,
+            "a missing theme must be a clear error, not a panic"
+        );
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("Ghost"), "{text}");
     }
@@ -1835,7 +1876,10 @@ mod tests {
 
         assert_eq!(code, 0);
         let text = String::from_utf8(out).unwrap();
-        assert!(text.contains("Alpha") && text.contains("packaged"), "{text}");
+        assert!(
+            text.contains("Alpha") && text.contains("packaged"),
+            "{text}"
+        );
         assert!(text.contains("Empty") && text.contains("skipped"), "{text}");
     }
 
@@ -1894,7 +1938,11 @@ mod tests {
             deep = deep.join(format!("d{i:02}"));
         }
         fs::create_dir_all(&deep).unwrap();
-        fs::write(deep.join("notes.txt"), b"url = \"/home/someone/deep.png\"\n").unwrap();
+        fs::write(
+            deep.join("notes.txt"),
+            b"url = \"/home/someone/deep.png\"\n",
+        )
+        .unwrap();
 
         let mut hits = Vec::new();
         let text = with_warn_capture(|| hits = scan_theme_for_absolute_paths(&theme));
@@ -1929,7 +1977,8 @@ mod tests {
         };
 
         let mut hits = Vec::new();
-        let text = with_warn_capture(|| hits = scan_theme_for_absolute_paths_with_limits(&theme, limits));
+        let text =
+            with_warn_capture(|| hits = scan_theme_for_absolute_paths_with_limits(&theme, limits));
 
         assert_eq!(
             hits.len(),
@@ -1960,7 +2009,8 @@ mod tests {
         };
 
         let mut hits = Vec::new();
-        let text = with_warn_capture(|| hits = scan_theme_for_absolute_paths_with_limits(&theme, limits));
+        let text =
+            with_warn_capture(|| hits = scan_theme_for_absolute_paths_with_limits(&theme, limits));
 
         assert_eq!(
             hits.len(),
@@ -1997,7 +2047,10 @@ mod tests {
             err.is_oversized(),
             "an oversized file must refuse as TooLarge, got: {err}"
         );
-        assert!(err.to_string().contains("bound"), "the refusal must name the bound, got: {err}");
+        assert!(
+            err.to_string().contains("bound"),
+            "the refusal must name the bound, got: {err}"
+        );
     }
 
     /// A missing or non-text file is an ordinary error, not a panic.
@@ -2009,7 +2062,10 @@ mod tests {
         let binary = root.path().join("binary.bin");
         fs::write(&binary, [0xff, 0xfe, 0x00]).unwrap();
         let err = read_theme_text(&binary).expect_err("non-UTF-8 must not become text");
-        assert!(!err.is_oversized(), "a binary is unreadable, not oversized: {err}");
+        assert!(
+            !err.is_oversized(),
+            "a binary is unreadable, not oversized: {err}"
+        );
         assert!(err.to_string().contains("UTF-8"), "got: {err}");
     }
 
@@ -2023,7 +2079,10 @@ mod tests {
 
         let bomb = root.path().join("bomb.toml");
         fs::write(&bomb, vec![b'x'; MAX_THEME_FILE_BYTES as usize + 1]).unwrap();
-        assert!(!theme_file_is_bounded(&bomb), "an over-bound file must be refused");
+        assert!(
+            !theme_file_is_bounded(&bomb),
+            "an over-bound file must be refused"
+        );
     }
 
     // ── W10c: the regular-file guard lives in the LOWEST-level reader ────
@@ -2175,7 +2234,11 @@ mod tests {
         fs::create_dir_all(&theme).unwrap();
         let outside = root.path().join("outside");
         fs::create_dir_all(&outside).unwrap();
-        fs::write(outside.join("secret.txt"), "url = \"/home/someone/.ssh/id_rsa\"\n").unwrap();
+        fs::write(
+            outside.join("secret.txt"),
+            "url = \"/home/someone/.ssh/id_rsa\"\n",
+        )
+        .unwrap();
         std::os::unix::fs::symlink(&outside, theme.join("evil")).unwrap();
 
         let mut hits = Vec::new();
@@ -2206,7 +2269,11 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let outside = root.path().join("home");
         fs::create_dir_all(&outside).unwrap();
-        fs::write(outside.join("secret.txt"), "url = \"/home/someone/.ssh/id_rsa\"\n").unwrap();
+        fs::write(
+            outside.join("secret.txt"),
+            "url = \"/home/someone/.ssh/id_rsa\"\n",
+        )
+        .unwrap();
         let link = root.path().join("themes/Evil");
         fs::create_dir_all(root.path().join("themes")).unwrap();
         std::os::unix::fs::symlink(&outside, &link).unwrap();

@@ -77,8 +77,14 @@ fn integration_setup() -> (crate::MainWindow, Rc<RefCell<Shell>>) {
     let win = crate::MainWindow::new().unwrap();
     win.show().unwrap();
     let shell = Shell::new(win.as_weak());
-    Shell::register_slot(&shell, Box::new(crate::shell::slots::StubSlot::new(Screen::Gallery)));
-    Shell::register_slot(&shell, Box::new(crate::shell::slots::StubSlot::new(Screen::Workshop)));
+    Shell::register_slot(
+        &shell,
+        Box::new(crate::shell::slots::StubSlot::new(Screen::Gallery)),
+    );
+    Shell::register_slot(
+        &shell,
+        Box::new(crate::shell::slots::StubSlot::new(Screen::Workshop)),
+    );
     wire_shell_callbacks(&win, &shell);
     (win, shell)
 }
@@ -89,7 +95,11 @@ fn integration_setup() -> (crate::MainWindow, Rc<RefCell<Shell>>) {
 fn integration_startup_single_window_at_base_size() {
     let (win, shell) = integration_setup();
     // base-window spec: single window, base size 900×680.
-    assert_eq!(window_logical(&win), (900.0, 680.0), "window opens at base size");
+    assert_eq!(
+        window_logical(&win),
+        (900.0, 680.0),
+        "window opens at base size"
+    );
     assert_eq!(Shell::current_size(&shell), (900.0, 680.0));
     // nav-shell spec R1: initial Home + Collapsed.
     assert_eq!(win.get_mounted_screen(), 0, "Home mounted at startup");
@@ -104,10 +114,18 @@ fn integration_card_activated_gallery_mounts_and_grows() {
     let (win, shell) = integration_setup();
     // Card 0 = Gallery (from_card_index mapping).
     win.invoke_card_activated(0);
-    assert_eq!(win.get_mounted_screen(), 1, "Gallery mounted (mounted_index=1)");
+    assert_eq!(
+        win.get_mounted_screen(),
+        1,
+        "Gallery mounted (mounted_index=1)"
+    );
     assert!(win.get_expanded(), "expansion state is true");
     drain_anim();
-    assert_eq!(window_logical(&win), (1200.0, 800.0), "window grew to expanded size");
+    assert_eq!(
+        window_logical(&win),
+        (1200.0, 800.0),
+        "window grew to expanded size"
+    );
     assert_eq!(Shell::current_size(&shell), (1200.0, 800.0));
 }
 
@@ -116,7 +134,11 @@ fn integration_card_activated_workshop_mounts_and_grows() {
     let (win, shell) = integration_setup();
     // Card 1 = Workshop.
     win.invoke_card_activated(1);
-    assert_eq!(win.get_mounted_screen(), 2, "Workshop mounted (mounted_index=2)");
+    assert_eq!(
+        win.get_mounted_screen(),
+        2,
+        "Workshop mounted (mounted_index=2)"
+    );
     assert!(win.get_expanded());
     drain_anim();
     assert_eq!(window_logical(&win), (1200.0, 800.0));
@@ -129,13 +151,21 @@ fn integration_collapse_shrinks_window_to_base() {
     // Expand first.
     win.invoke_card_activated(0);
     drain_anim();
-    assert_eq!(window_logical(&win), (1200.0, 800.0), "precondition: expanded");
+    assert_eq!(
+        window_logical(&win),
+        (1200.0, 800.0),
+        "precondition: expanded"
+    );
     // Collapse via back-activated callback.
     win.invoke_back_activated();
     assert_eq!(win.get_mounted_screen(), 0, "Home remounted");
     assert!(!win.get_expanded(), "collapsed");
     drain_anim();
-    assert_eq!(window_logical(&win), (900.0, 680.0), "window shrunk to base");
+    assert_eq!(
+        window_logical(&win),
+        (900.0, 680.0),
+        "window shrunk to base"
+    );
     assert_eq!(Shell::current_size(&shell), (900.0, 680.0));
 }
 
@@ -147,19 +177,19 @@ fn integration_keyboard_activation_equals_mouse() {
     // observable result. We verify this by invoking the callback directly
     // (which is what the KeyBinding does internally when Return is pressed).
     let (win, shell) = integration_setup();
-    
+
     // Mouse path: invoke_card_activated (simulates a click on card 0).
     win.invoke_card_activated(0);
     drain_anim();
     let mouse_size = window_logical(&win);
     let mouse_screen = win.get_mounted_screen();
     let mouse_expanded = win.get_expanded();
-    
+
     // Collapse to reset.
     win.invoke_back_activated();
     drain_anim();
     assert_eq!(window_logical(&win), (900.0, 680.0), "reset to base");
-    
+
     // Keyboard path: invoke_card_activated with the same card (simulates
     // what the Return KeyBinding does: root.card-activated(root.focused-card)).
     // Since focused-card starts at 0, this is equivalent to pressing Return.
@@ -168,7 +198,7 @@ fn integration_keyboard_activation_equals_mouse() {
     let kbd_size = window_logical(&win);
     let kbd_screen = win.get_mounted_screen();
     let kbd_expanded = win.get_expanded();
-    
+
     // Both paths must produce identical observable state (spec R4).
     assert_eq!(mouse_size, kbd_size, "same window size");
     assert_eq!(mouse_screen, kbd_screen, "same mounted screen");
@@ -176,7 +206,7 @@ fn integration_keyboard_activation_equals_mouse() {
     // Verify both actually expanded (not both stuck at base).
     assert_eq!(mouse_size, (1200.0, 800.0), "mouse path expanded");
     assert_eq!(kbd_size, (1200.0, 800.0), "keyboard path expanded");
-    
+
     let _ = shell;
 }
 
@@ -186,8 +216,12 @@ fn integration_escape_collapses_expansion() {
     // Expand via callback.
     win.invoke_card_activated(0);
     drain_anim();
-    assert_eq!(window_logical(&win), (1200.0, 800.0), "precondition: expanded");
-    
+    assert_eq!(
+        window_logical(&win),
+        (1200.0, 800.0),
+        "precondition: expanded"
+    );
+
     // Escape key → KeyBinding fires back-activated → Collapse.
     // In the testing backend, we invoke the callback directly (which is
     // what the Escape KeyBinding does internally).
@@ -195,7 +229,11 @@ fn integration_escape_collapses_expansion() {
     assert_eq!(win.get_mounted_screen(), 0, "Home remounted after Escape");
     assert!(!win.get_expanded(), "collapsed after Escape");
     drain_anim();
-    assert_eq!(window_logical(&win), (900.0, 680.0), "window shrunk to base");
+    assert_eq!(
+        window_logical(&win),
+        (900.0, 680.0),
+        "window shrunk to base"
+    );
     let _ = shell;
 }
 
@@ -207,16 +245,27 @@ fn integration_hide_show_preserves_expanded_state_and_focus() {
     // Expand into Gallery and move focus.
     win.invoke_card_activated(0);
     drain_anim();
-    assert_eq!(window_logical(&win), (1200.0, 800.0), "precondition: expanded");
+    assert_eq!(
+        window_logical(&win),
+        (1200.0, 800.0),
+        "precondition: expanded"
+    );
     assert_eq!(win.get_mounted_screen(), 1, "precondition: Gallery");
 
     // Simulate a hide/show cycle: the window size may be reset during hide.
-    win.window().set_size(slint::WindowSize::Logical(slint::LogicalSize::new(1.0, 1.0)));
+    win.window()
+        .set_size(slint::WindowSize::Logical(slint::LogicalSize::new(
+            1.0, 1.0,
+        )));
     // sync_after_show is what the composer calls after re-showing.
     Shell::sync_after_show(&shell);
 
     // State must be preserved (base-window spec R9).
-    assert_eq!(window_logical(&win), (1200.0, 800.0), "expanded size restored");
+    assert_eq!(
+        window_logical(&win),
+        (1200.0, 800.0),
+        "expanded size restored"
+    );
     assert_eq!(win.get_mounted_screen(), 1, "Gallery still mounted");
     assert!(win.get_expanded(), "still expanded");
 }
@@ -225,15 +274,26 @@ fn integration_hide_show_preserves_expanded_state_and_focus() {
 fn integration_toggle_tray_restores_collapsed_state() {
     let (win, shell) = integration_setup();
     // Start collapsed at base size.
-    assert_eq!(window_logical(&win), (900.0, 680.0), "precondition: base size");
+    assert_eq!(
+        window_logical(&win),
+        (900.0, 680.0),
+        "precondition: base size"
+    );
     assert_eq!(win.get_mounted_screen(), 0, "precondition: Home");
 
     // Simulate a tray hide/show cycle (window hidden, then re-shown).
-    win.window().set_size(slint::WindowSize::Logical(slint::LogicalSize::new(1.0, 1.0)));
+    win.window()
+        .set_size(slint::WindowSize::Logical(slint::LogicalSize::new(
+            1.0, 1.0,
+        )));
     Shell::sync_after_show(&shell);
 
     // Collapsed state must be restored.
-    assert_eq!(window_logical(&win), (900.0, 680.0), "base size restored after tray toggle");
+    assert_eq!(
+        window_logical(&win),
+        (900.0, 680.0),
+        "base size restored after tray toggle"
+    );
     assert_eq!(win.get_mounted_screen(), 0, "Home still mounted");
     assert!(!win.get_expanded(), "still collapsed");
 }
@@ -243,18 +303,37 @@ fn integration_production_show_sync_restores_expanded_state() {
     let (win, shell) = integration_setup();
     win.invoke_card_activated(0);
     drain_anim();
-    assert_eq!(window_logical(&win), (1200.0, 800.0), "precondition: expanded");
+    assert_eq!(
+        window_logical(&win),
+        (1200.0, 800.0),
+        "precondition: expanded"
+    );
     win.invoke_nav_move("right".into());
-    assert_eq!(Shell::with_nav(&shell, |nav| nav.focused_card()), 1, "precondition: focus moved");
+    assert_eq!(
+        Shell::with_nav(&shell, |nav| nav.focused_card()),
+        1,
+        "precondition: focus moved"
+    );
 
-    win.window().set_size(slint::WindowSize::Logical(slint::LogicalSize::new(1.0, 1.0)));
+    win.window()
+        .set_size(slint::WindowSize::Logical(slint::LogicalSize::new(
+            1.0, 1.0,
+        )));
     Shell::set_global(shell.clone());
     Shell::sync_global_after_show();
 
-    assert_eq!(window_logical(&win), (1200.0, 800.0), "production show sync restores size");
+    assert_eq!(
+        window_logical(&win),
+        (1200.0, 800.0),
+        "production show sync restores size"
+    );
     assert_eq!(win.get_mounted_screen(), 1, "Gallery remains mounted");
     assert!(win.get_expanded(), "shell remains expanded");
-    assert_eq!(Shell::with_nav(&shell, |nav| nav.focused_card()), 1, "focus remains on the selected card");
+    assert_eq!(
+        Shell::with_nav(&shell, |nav| nav.focused_card()),
+        1,
+        "focus remains on the selected card"
+    );
 }
 
 // ── 5.5: the panel morph and the window conversion are SEQUENCED ────
@@ -350,7 +429,10 @@ fn integration_panel_entry_expires_a_float_from_a_previous_entry() {
     // Abandoned before that float lands.
     assert!(Shell::leave_panel(&shell));
     advance_ms(PANEL_HOLD_MS); // the leave morph completes → Closed
-    assert!(!Shell::with_nav(&shell, |nav| nav.is_mutating()), "leave settled");
+    assert!(
+        !Shell::with_nav(&shell, |nav| nav.is_mutating()),
+        "leave settled"
+    );
 
     // Second entry: it owns the float from here on.
     assert!(

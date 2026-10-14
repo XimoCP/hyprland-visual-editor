@@ -63,20 +63,34 @@ impl SizePolicy {
     /// The target window size: `BASE` when collapsed, `EXPANDED` when
     /// expanded (base-window spec R8 growth scenarios).
     pub fn target(&self, expanded: bool) -> (f32, f32) {
-        if expanded { EXPANDED } else { BASE }
+        if expanded {
+            EXPANDED
+        } else {
+            BASE
+        }
     }
 
     /// Settings panel target (S9): when Gallery card expands to settings
     /// the same window mutates to SETTINGS_EXPANDED (1300×900) via the
     /// same 22-step 350ms OutCubic animator (task 4.4).
     pub fn target_for_settings(&self, settings: bool) -> (f32, f32) {
-        if settings { SETTINGS_EXPANDED } else { EXPANDED }
+        if settings {
+            SETTINGS_EXPANDED
+        } else {
+            EXPANDED
+        }
     }
 
     /// Combined target helper: collapsed → BASE, expanded gallery → EXPANDED,
     /// expanded + settings → SETTINGS_EXPANDED.
     pub fn target_with_settings(&self, expanded: bool, settings_open: bool) -> (f32, f32) {
-        if !expanded { BASE } else if settings_open { SETTINGS_EXPANDED } else { EXPANDED }
+        if !expanded {
+            BASE
+        } else if settings_open {
+            SETTINGS_EXPANDED
+        } else {
+            EXPANDED
+        }
     }
 
     /// Floating Settings window size for a monitor whose logical size is
@@ -160,12 +174,36 @@ mod tests {
     #[test]
     fn apply_noop_settings_target_expands_beyond_gallery() {
         let policy = SizePolicy::new();
-        assert_eq!(policy.target_for_settings(false), (1200.0, 800.0), "gallery expanded");
-        assert_eq!(policy.target_for_settings(true), (1300.0, 900.0), "settings panel larger than gallery");
-        assert_eq!(policy.target_with_settings(false, false), (900.0, 680.0), "collapsed base");
-        assert_eq!(policy.target_with_settings(true, false), (1200.0, 800.0), "expanded gallery");
-        assert_eq!(policy.target_with_settings(true, true), (1300.0, 900.0), "expanded settings S9");
-        assert_eq!(policy.target_with_settings(false, true), (900.0, 680.0), "collapsed ignores settings flag");
+        assert_eq!(
+            policy.target_for_settings(false),
+            (1200.0, 800.0),
+            "gallery expanded"
+        );
+        assert_eq!(
+            policy.target_for_settings(true),
+            (1300.0, 900.0),
+            "settings panel larger than gallery"
+        );
+        assert_eq!(
+            policy.target_with_settings(false, false),
+            (900.0, 680.0),
+            "collapsed base"
+        );
+        assert_eq!(
+            policy.target_with_settings(true, false),
+            (1200.0, 800.0),
+            "expanded gallery"
+        );
+        assert_eq!(
+            policy.target_with_settings(true, true),
+            (1300.0, 900.0),
+            "expanded settings S9"
+        );
+        assert_eq!(
+            policy.target_with_settings(false, true),
+            (900.0, 680.0),
+            "collapsed ignores settings flag"
+        );
     }
 
     // ── Floating Settings size (self-preview border) ──────────────────
@@ -177,8 +215,14 @@ mod tests {
         // the keeper's 14" panel (1920x1200 @ scale 1.333 → 1440x900 logical),
         // the 32" 1440p (scale 1) and a 65" 4K TV.
         assert_eq!(policy.settings_float_size((1440.0, 900.0)), (1280.0, 800.0));
-        assert_eq!(policy.settings_float_size((2560.0, 1440.0)), (1280.0, 800.0));
-        assert_eq!(policy.settings_float_size((3840.0, 2160.0)), (1280.0, 800.0));
+        assert_eq!(
+            policy.settings_float_size((2560.0, 1440.0)),
+            (1280.0, 800.0)
+        );
+        assert_eq!(
+            policy.settings_float_size((3840.0, 2160.0)),
+            (1280.0, 800.0)
+        );
     }
 
     #[test]

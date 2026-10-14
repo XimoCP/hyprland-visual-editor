@@ -935,9 +935,7 @@ fn verify_and_repair_layout(saved_settings: &Path, live_settings: &Path, generat
     // U14 re-pinned it to measure THIS worker's settle, since U9 moved
     // the settle off the apply thread.
     if layout_sections(&theme).is_empty() {
-        tracing::debug!(
-            "[noctalia-v5] Theme declares no layout sections; nothing to verify"
-        );
+        tracing::debug!("[noctalia-v5] Theme declares no layout sections; nothing to verify");
         return;
     }
     // One bounded settle for Noctalia's own re-persist — see
@@ -1263,7 +1261,10 @@ fn palette_swatches(provider_dir: &Path) -> Vec<String> {
             continue;
         };
         // palette.json nests the scheme under `dark`/`light`; colors.json is flat.
-        let scheme = value.get("dark").or_else(|| value.get("light")).unwrap_or(&value);
+        let scheme = value
+            .get("dark")
+            .or_else(|| value.get("light"))
+            .unwrap_or(&value);
         let colors: Vec<String> = KEYS
             .iter()
             .filter_map(|k| scheme.get(*k).and_then(|c| c.as_str()).map(str::to_string))
@@ -1558,15 +1559,17 @@ fn reassert_custom_scheme_blocking(
                     );
                     return false;
                 }
-                if let Err(e) = noctalia_msg(&["msg", "color-scheme-set", "custom", palette_name])
-                {
+                if let Err(e) = noctalia_msg(&["msg", "color-scheme-set", "custom", palette_name]) {
                     tracing::warn!(
                         "[noctalia-v5] color re-assert: cannot set scheme '{}': {}",
                         palette_name,
                         e
                     );
                 } else if let Err(e) = noctalia_msg(&["msg", "templates-apply"]) {
-                    tracing::warn!("[noctalia-v5] color re-assert: cannot apply templates: {}", e);
+                    tracing::warn!(
+                        "[noctalia-v5] color re-assert: cannot apply templates: {}",
+                        e
+                    );
                 }
                 sets += 1;
                 // Never sleep past the deadline: the cap is a hard wall time.
@@ -1654,7 +1657,10 @@ fn spawn_custom_scheme_reassert(palette_name: String, previous_value: Option<Str
         // The closure (and its guard) was dropped above, so the count is
         // already back. Say it out loud: a silent failure here would look
         // exactly like "no worker was ever needed".
-        tracing::warn!("[noctalia-v5] could not spawn the colour re-assert worker: {}", e);
+        tracing::warn!(
+            "[noctalia-v5] could not spawn the colour re-assert worker: {}",
+            e
+        );
     }
 }
 
@@ -1852,9 +1858,9 @@ impl ThemeProvider for NoctaliaV5Provider {
 
         // W10 (theme-package trust): both records below live in the theme's
         // provider dir — untrusted, so bounded reads.
-        if let Ok(text) =
-            crate::theme_package::read_theme_text(&provider_dir.join(wallpaper_authority::PAINTER_VIDEO_FILE))
-        {
+        if let Ok(text) = crate::theme_package::read_theme_text(
+            &provider_dir.join(wallpaper_authority::PAINTER_VIDEO_FILE),
+        ) {
             if let Some(path) = wallpaper_authority::parse_painter_video_record(&text) {
                 out.push(PreviewSource {
                     role: PreviewRole::PainterVideo,
@@ -1864,7 +1870,8 @@ impl ThemeProvider for NoctaliaV5Provider {
             }
         }
 
-        if let Ok(text) = crate::theme_package::read_theme_text(&provider_dir.join("wallpaper.txt")) {
+        if let Ok(text) = crate::theme_package::read_theme_text(&provider_dir.join("wallpaper.txt"))
+        {
             if let Some(line) = text.lines().map(str::trim).find(|l| !l.is_empty()) {
                 out.push(PreviewSource {
                     role: PreviewRole::WallpaperText,
@@ -1937,8 +1944,7 @@ impl ThemeProvider for NoctaliaV5Provider {
                 let from = resolved_palette.as_deref().ok_or_else(|| {
                     "Cannot copy palette: the capture decision has no resolved file".to_string()
                 })?;
-                fs::copy(from, &palette_dest)
-                    .map_err(|e| format!("Cannot copy palette: {}", e))?;
+                fs::copy(from, &palette_dest).map_err(|e| format!("Cannot copy palette: {}", e))?;
                 tracing::info!("[noctalia-v5] Saved palette from {:?}", from);
             }
             PaletteCaptureAction::RemoveStale => {
@@ -1984,32 +1990,30 @@ impl ThemeProvider for NoctaliaV5Provider {
         // A video kind is exact only when the painter's path resolves:
         // without it there is nothing truthful to record, so veto honestly
         // (legacy capture) instead of inventing a path.
-        let video_bg: Option<wallpaper_authority::ActiveBackground> =
-            if matches!(plan, SavePlan::VideoOnly) {
-                match wallpaper_authority::snapshot_background(&authority) {
-                    Ok(bg)
-                        if bg.kind == WallpaperKind::Video && bg.video_path.is_some() =>
-                    {
-                        Some(bg)
-                    }
-                    Ok(other) => {
-                        tracing::warn!(
+        let video_bg: Option<wallpaper_authority::ActiveBackground> = if matches!(
+            plan,
+            SavePlan::VideoOnly
+        ) {
+            match wallpaper_authority::snapshot_background(&authority) {
+                Ok(bg) if bg.kind == WallpaperKind::Video && bg.video_path.is_some() => Some(bg),
+                Ok(other) => {
+                    tracing::warn!(
                             "[noctalia-v5] Video on top but painter identity unavailable ({:?}); capturing available backgrounds",
                             other.kind
                         );
-                        None
-                    }
-                    Err(reason) => {
-                        tracing::warn!(
+                    None
+                }
+                Err(reason) => {
+                    tracing::warn!(
                             "[noctalia-v5] Video on top but painter identity unavailable ({}); capturing available backgrounds",
                             reason
                         );
-                        None
-                    }
+                    None
                 }
-            } else {
-                None
-            };
+            }
+        } else {
+            None
+        };
         let exact_video = video_bg.is_some();
         let vetoed_video = matches!(plan, SavePlan::VideoOnly) && !exact_video;
         let capture_static =
@@ -2468,9 +2472,10 @@ impl ThemeProvider for NoctaliaV5Provider {
         // url. `None` for every old theme (no record, no media), so their
         // chain stays byte-for-byte as before. W10: the record is untrusted
         // theme input — bounded read, refusal reads as "no record".
-        let recorded_absolute: Option<PathBuf> = crate::theme_package::read_theme_text(&painter_record)
-            .ok()
-            .and_then(|text| wallpaper_authority::parse_painter_video_record(&text));
+        let recorded_absolute: Option<PathBuf> =
+            crate::theme_package::read_theme_text(&painter_record)
+                .ok()
+                .and_then(|text| wallpaper_authority::parse_painter_video_record(&text));
         let theme_video = crate::theme_media::resolve_theme_video(
             theme_dir,
             &provider_dir,
@@ -2880,7 +2885,9 @@ impl ThemeProvider for NoctaliaV5Provider {
             // `fs::metadata`, so the size-only check alone would have let
             // `fs::copy` block on the open for ever — the restore degrades
             // exactly like for a missing file.
-            if !name.is_empty() && !refused_name && palette_src.exists()
+            if !name.is_empty()
+                && !refused_name
+                && palette_src.exists()
                 && crate::theme_package::theme_file_is_bounded(&palette_src)
             {
                 // Custom or community palette — copy the saved palette file back
@@ -2920,7 +2927,8 @@ impl ThemeProvider for NoctaliaV5Provider {
                     }
                     custom_restored = Some(safe_name);
                 }
-            } else if !name.is_empty() && !refused_name && matches!(source, "builtin" | "community") {
+            } else if !name.is_empty() && !refused_name && matches!(source, "builtin" | "community")
+            {
                 // Builtin or community — no palette file to copy, restore directly.
                 noctalia_msg(&["msg", "color-scheme-set", source, name])
                     .map_err(|e| format!("Cannot set color scheme: {}", e))?;
@@ -3005,11 +3013,11 @@ impl ThemeProvider for NoctaliaV5Provider {
         // W10 (theme-package trust): the applied theme's snapshot and source
         // are untrusted input — bounded reads; an oversized one refuses
         // (warns inside) exactly like a missing one (nothing to re-assert).
-        let snapshot = match crate::theme_package::read_theme_bytes(&provider_dir.join("palette.json"))
-        {
-            Ok(bytes) if !bytes.is_empty() => bytes,
-            _ => return Ok(()),
-        };
+        let snapshot =
+            match crate::theme_package::read_theme_bytes(&provider_dir.join("palette.json")) {
+                Ok(bytes) if !bytes.is_empty() => bytes,
+                _ => return Ok(()),
+            };
         let source = match crate::theme_package::read_theme_text(&provider_dir.join("source.txt")) {
             Ok(text) => text,
             Err(_) => return Ok(()),
@@ -3053,9 +3061,7 @@ impl ThemeProvider for NoctaliaV5Provider {
             return Ok(());
         }
         let live_path = find_palette_path("custom", &safe_name);
-        let live_palette = live_path
-            .as_ref()
-            .and_then(|path| fs::read(path).ok());
+        let live_palette = live_path.as_ref().and_then(|path| fs::read(path).ok());
         let live_scheme = noctalia_msg(&["msg", "color-scheme-get"])
             .ok()
             .map(|out| out.trim().to_string());
@@ -3067,14 +3073,11 @@ impl ThemeProvider for NoctaliaV5Provider {
         ) {
             return Ok(());
         }
-        let live_path =
-            live_path.ok_or_else(|| "Cannot resolve live palette path".to_string())?;
+        let live_path = live_path.ok_or_else(|| "Cannot resolve live palette path".to_string())?;
         if let Some(parent) = live_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Cannot create palettes dir: {}", e))?;
+            fs::create_dir_all(parent).map_err(|e| format!("Cannot create palettes dir: {}", e))?;
         }
-        fs::write(&live_path, &snapshot)
-            .map_err(|e| format!("Cannot restore palette: {}", e))?;
+        fs::write(&live_path, &snapshot).map_err(|e| format!("Cannot restore palette: {}", e))?;
         noctalia_msg(&["msg", "color-scheme-set", "custom", &safe_name])
             .map_err(|e| format!("Cannot set color scheme: {}", e))?;
         noctalia_msg(&["msg", "templates-apply"])
@@ -3154,7 +3157,9 @@ impl ThemeProvider for NoctaliaV5Provider {
             return Vec::new();
         };
         vec![DeletableArtifact {
-            path: config_dir.join("palettes").join(format!("{safe_name}.json")),
+            path: config_dir
+                .join("palettes")
+                .join(format!("{safe_name}.json")),
             reference_key: safe_name,
         }]
     }
@@ -3179,19 +3184,18 @@ impl ThemeProvider for NoctaliaV5Provider {
         // the name is hostile would hide both the successful apply and
         // the attack. The message goes out WITHOUT the name, and the
         // refused name is named in the log instead.
-        let safe_name = if theme_name_is_plain(theme_name)
-            && !theme_name.chars().any(char::is_control)
-        {
-            Some(theme_name)
-        } else {
-            tracing::warn!(
-                "[noctalia-v5] refusing the theme name {:?} for the apply notification: \
+        let safe_name =
+            if theme_name_is_plain(theme_name) && !theme_name.chars().any(char::is_control) {
+                Some(theme_name)
+            } else {
+                tracing::warn!(
+                    "[noctalia-v5] refusing the theme name {:?} for the apply notification: \
                  it could rewrite the toast (control characters) or be read as an \
                  option; notifying without the name",
-                theme_name
-            );
-            None
-        };
+                    theme_name
+                );
+                None
+            };
         let (summary, body) = match safe_name {
             Some(name) => (
                 format!("🎨 Tema '{name}' aplicado"),
@@ -3331,8 +3335,7 @@ mod tests {
         );
         let logged_wallpaper =
             ["remove_stale_artifact", "(&provider_dir.join(\"wallpaper"].concat();
-        let logged_manifest =
-            ["remove_stale_artifact", "(&provider_dir.join(crate"].concat();
+        let logged_manifest = ["remove_stale_artifact", "(&provider_dir.join(crate"].concat();
         let warns = ["Could not remove ", "stale"].concat();
         assert!(
             code.contains(&logged_wallpaper) && code.contains(&logged_manifest),
@@ -3407,7 +3410,10 @@ mod tests {
             .map(|f| (f.label.clone(), f.value.clone()))
             .collect();
         let swatches: Vec<String> = facts.iter().flat_map(|f| f.swatches.clone()).collect();
-        assert!(swatches.is_empty(), "never invent colors for a wallpaper palette");
+        assert!(
+            swatches.is_empty(),
+            "never invent colors for a wallpaper palette"
+        );
         assert_eq!(
             rows,
             vec![
@@ -3633,7 +3639,11 @@ mod tests {
             code.contains(&gated),
             "apply must gate the painter-video success on the routed hand-off result"
         );
-        let unconditional = ["hand_off_path(&path);\n", "                        animated_applied = true"].concat();
+        let unconditional = [
+            "hand_off_path(&path);\n",
+            "                        animated_applied = true",
+        ]
+        .concat();
         assert!(
             !code.contains(&unconditional),
             "apply must not set animated_applied unconditionally after delegating"
@@ -3650,7 +3660,8 @@ mod tests {
         assert!(mpvpaper_enabled_in_settings(enabled));
         let disabled = "[plugins]\nenabled = [ \"yuuto/arch-updater\" ]\n";
         assert!(!mpvpaper_enabled_in_settings(disabled));
-        let multiline = "[plugins]\nenabled = [\n  \"kenn/keybind-cheatsheet\",\n  \"noctalia/mpvpaper\",\n]\n";
+        let multiline =
+            "[plugins]\nenabled = [\n  \"kenn/keybind-cheatsheet\",\n  \"noctalia/mpvpaper\",\n]\n";
         assert!(mpvpaper_enabled_in_settings(multiline));
         let commented = "[plugins]\n# enabled = [ \"noctalia/mpvpaper\" ]\nenabled = [ \"yuuto/arch-updater\" ]\n";
         assert!(!mpvpaper_enabled_in_settings(commented));
@@ -3672,7 +3683,8 @@ mod tests {
         assert_eq!(mpvpaper_state_in_settings(enabled), Some(true));
         let disabled = "[plugins]\nenabled = [ \"yuuto/arch-updater\" ]\n";
         assert_eq!(mpvpaper_state_in_settings(disabled), Some(false));
-        let multiline = "[plugins]\nenabled = [\n  \"kenn/keybind-cheatsheet\",\n  \"noctalia/mpvpaper\",\n]\n";
+        let multiline =
+            "[plugins]\nenabled = [\n  \"kenn/keybind-cheatsheet\",\n  \"noctalia/mpvpaper\",\n]\n";
         assert_eq!(mpvpaper_state_in_settings(multiline), Some(true));
         let commented = "[plugins]\n# enabled = [ \"noctalia/mpvpaper\" ]\nenabled = [ \"yuuto/arch-updater\" ]\n";
         assert_eq!(mpvpaper_state_in_settings(commented), Some(false));
@@ -3919,7 +3931,10 @@ mod tests {
 
         let (clean, report) = sanitize_settings_toml(&raw, &theme);
 
-        assert!(!clean.contains("/home/"), "no personal path may survive: {clean}");
+        assert!(
+            !clean.contains("/home/"),
+            "no personal path may survive: {clean}"
+        );
         assert!(
             clean.contains("path = \"media/poster.jpg\""),
             "the in-theme asset must stay reachable: {clean}"
@@ -3929,7 +3944,13 @@ mod tests {
         assert_eq!(report.rewritten, 1);
         assert_eq!(
             report.dropped_keys,
-            vec!["started", "video_directory", "directory", "directory", "path"]
+            vec![
+                "started",
+                "video_directory",
+                "directory",
+                "directory",
+                "path"
+            ]
         );
     }
 
@@ -3948,8 +3969,8 @@ mod tests {
                    \n\
                    [bar]\n\
                    enabled = true\n";
-        let edited = disable_wallpaper_automation(raw)
-            .expect("an armed rotation must be turned off");
+        let edited =
+            disable_wallpaper_automation(raw).expect("an armed rotation must be turned off");
         let expected = raw.replacen("enabled = true", "enabled = false", 1);
         assert_eq!(
             edited, expected,
@@ -4218,7 +4239,10 @@ mod tests {
             Some(false),
             "an explicit local disabled entry must read as provably disabled"
         );
-        assert!(stub.probes().is_empty(), "a parseable local state must not probe");
+        assert!(
+            stub.probes().is_empty(),
+            "a parseable local state must not probe"
+        );
         drop(stub);
 
         // Explicit local enabled: capture, and never ask the IPC.
@@ -4229,7 +4253,10 @@ mod tests {
             Some(true),
             "an explicit local enabled entry must read as enabled even when the IPC would fail"
         );
-        assert!(stub.probes().is_empty(), "a parseable local state must not probe");
+        assert!(
+            stub.probes().is_empty(),
+            "a parseable local state must not probe"
+        );
         drop(stub);
 
         // No explicit local state: the IPC decides, never an assumed disabled.
@@ -4540,10 +4567,8 @@ mod tests {
                 "XDG_RUNTIME_DIR",
                 "SKWD_WALL_V2_SOCK",
             ];
-            let saved: Vec<(&'static str, Option<String>)> = keys
-                .iter()
-                .map(|k| (*k, std::env::var(k).ok()))
-                .collect();
+            let saved: Vec<(&'static str, Option<String>)> =
+                keys.iter().map(|k| (*k, std::env::var(k).ok())).collect();
             let state_dir = tmp.path().join("state");
             let bin_dir = tmp.path().join("bin");
             std::fs::create_dir_all(&state_dir).unwrap();
@@ -4597,10 +4622,7 @@ exit 0
                     .unwrap();
             }
             let orig_path = std::env::var("PATH").unwrap_or_default();
-            std::env::set_var(
-                "PATH",
-                format!("{}:{}", bin_dir.display(), orig_path),
-            );
+            std::env::set_var("PATH", format!("{}:{}", bin_dir.display(), orig_path));
             std::env::set_var("NOCTALIA_STUB_STATE", &state_dir);
             std::env::set_var("NOCTALIA_YIELD_AFTER", yield_after.to_string());
             let skwd_cfg = tmp.path().join("skwd-config.json");
@@ -4837,7 +4859,10 @@ exit 0
         );
         assert!(held, "scheme must be held after one re-assert");
         assert_eq!(stub.sets(), 1, "exactly one re-assert set expected");
-        assert!(stub.gets() >= 2, "one check before and one verification after");
+        assert!(
+            stub.gets() >= 2,
+            "one check before and one verification after"
+        );
         assert_eq!(stub.templates(), 1, "each re-assert re-renders templates");
     }
 
@@ -4931,7 +4956,10 @@ exit 0
         // Single-shot: after the re-assert holds, nothing else may fire.
         std::thread::sleep(Duration::from_millis(300));
         assert_eq!(stub.sets(), 2, "no second re-assert: single-shot per apply");
-        assert!(stub.gets() >= 2, "one re-assert check plus its verification");
+        assert!(
+            stub.gets() >= 2,
+            "one re-assert check plus its verification"
+        );
     }
 
     #[test]
@@ -5010,7 +5038,11 @@ exit 0
         let stub = ColorStub::new("custom skwd-wall", 1, Some(OWNER_TRAP_JSON), false);
         let theme = stub.custom_theme("custom JokerTheme", true);
         std::fs::write(
-            theme.path().join("providers").join("noctalia-v5").join("wallpaper.txt"),
+            theme
+                .path()
+                .join("providers")
+                .join("noctalia-v5")
+                .join("wallpaper.txt"),
             "/tmp/joker3.png",
         )
         .unwrap();
@@ -5052,7 +5084,11 @@ exit 0
         let stub = ColorStub::new("custom skwd-wall", 1, Some(OWNER_TRAP_JSON), true);
         let first = stub.custom_theme("custom JokerTheme", true);
         std::fs::write(
-            first.path().join("providers").join("noctalia-v5").join("wallpaper.txt"),
+            first
+                .path()
+                .join("providers")
+                .join("noctalia-v5")
+                .join("wallpaper.txt"),
             "/tmp/joker3.png",
         )
         .unwrap();
@@ -5075,7 +5111,11 @@ exit 0
         // Second apply: a non-custom theme (no palette) claims no authority.
         let second = stub.custom_theme("wallpaper vibrant", false);
         std::fs::write(
-            second.path().join("providers").join("noctalia-v5").join("wallpaper.txt"),
+            second
+                .path()
+                .join("providers")
+                .join("noctalia-v5")
+                .join("wallpaper.txt"),
             "/tmp/joker4.png",
         )
         .unwrap();
@@ -5100,7 +5140,11 @@ exit 0
         let stub = ColorStub::new("custom skwd-wall", 99, Some(OWNER_JSON), true);
         let theme = stub.custom_theme("custom JokerTheme", true);
         std::fs::write(
-            theme.path().join("providers").join("noctalia-v5").join("wallpaper.txt"),
+            theme
+                .path()
+                .join("providers")
+                .join("noctalia-v5")
+                .join("wallpaper.txt"),
             "/tmp/joker3.png",
         )
         .unwrap();
@@ -5150,7 +5194,11 @@ exit 0
         let stub = ColorStub::new("wallpaper vibrant", 99, Some(OWNER_JSON), true);
         let theme = stub.custom_theme("wallpaper vibrant", false);
         std::fs::write(
-            theme.path().join("providers").join("noctalia-v5").join("wallpaper.txt"),
+            theme
+                .path()
+                .join("providers")
+                .join("noctalia-v5")
+                .join("wallpaper.txt"),
             "/tmp/joker3.png",
         )
         .unwrap();
@@ -5189,7 +5237,11 @@ exit 0
         let stub = ColorStub::new("custom skwd-wall", 99, None, true);
         let theme = stub.custom_theme("custom JokerTheme", true);
         std::fs::write(
-            theme.path().join("providers").join("noctalia-v5").join("wallpaper.txt"),
+            theme
+                .path()
+                .join("providers")
+                .join("noctalia-v5")
+                .join("wallpaper.txt"),
             "/tmp/joker3.png",
         )
         .unwrap();
@@ -5218,7 +5270,11 @@ exit 0
         let stub = ColorStub::new("custom skwd-wall", 99, Some(fixed), true);
         let theme = stub.custom_theme("custom JokerTheme", true);
         std::fs::write(
-            theme.path().join("providers").join("noctalia-v5").join("wallpaper.txt"),
+            theme
+                .path()
+                .join("providers")
+                .join("noctalia-v5")
+                .join("wallpaper.txt"),
             "/tmp/joker3.png",
         )
         .unwrap();
@@ -5358,9 +5414,8 @@ exit 0
             "the video apply must pin Noctalia to the poster `{expected}`, log was:\n{log}"
         );
         assert!(
-            !log.lines().any(|l| {
-                l.starts_with("msg wallpaper-set") && !l.ends_with("-frame.png")
-            }),
+            !log.lines()
+                .any(|l| { l.starts_with("msg wallpaper-set") && !l.ends_with("-frame.png") }),
             "the stale static wallpaper must not be set while a video plays, log was:\n{log}"
         );
         // Let the re-assert worker finish before the stub PATH goes away.
@@ -5377,7 +5432,11 @@ exit 0
         enable_delegation(&stub, "0");
         let theme = stub.custom_theme("custom JokerTheme", true);
         std::fs::write(
-            theme.path().join("providers").join("noctalia-v5").join("wallpaper.txt"),
+            theme
+                .path()
+                .join("providers")
+                .join("noctalia-v5")
+                .join("wallpaper.txt"),
             "/tmp/joker3.png",
         )
         .unwrap();
@@ -5385,7 +5444,8 @@ exit 0
         assert!(res.is_ok(), "apply must succeed: {:?}", res);
         let log = std::fs::read_to_string(stub.state_dir.join("log")).unwrap_or_default();
         assert!(
-            log.lines().any(|l| l == "msg wallpaper-set  /tmp/joker3.png"),
+            log.lines()
+                .any(|l| l == "msg wallpaper-set  /tmp/joker3.png"),
             "the static apply must set its own static wallpaper, log was:\n{log}"
         );
         assert!(
@@ -5410,7 +5470,8 @@ exit 0
         let stub = ColorStub::new("wallpaper vibrant", 99, Some(OWNER_JSON), true);
         let theme = stub.custom_theme("wallpaper vibrant", false);
         std::fs::write(
-            theme.path()
+            theme
+                .path()
                 .join("providers")
                 .join("noctalia-v5")
                 .join("wallpaper.txt"),
@@ -5503,7 +5564,8 @@ exit 0
         let stub = ColorStub::new("custom skwd-wall", 1, Some(OWNER_JSON), true);
         let theme = stub.custom_theme("custom JokerTheme", true);
         std::fs::write(
-            theme.path()
+            theme
+                .path()
                 .join("providers")
                 .join("noctalia-v5")
                 .join("wallpaper.txt"),
@@ -5516,14 +5578,16 @@ exit 0
 
         let log = stub_log(&stub);
         assert!(
-            log.lines().any(|l| l == "msg wallpaper-set  /tmp/legit wall.png"),
+            log.lines()
+                .any(|l| l == "msg wallpaper-set  /tmp/legit wall.png"),
             "a legitimate wallpaper value must reach the shell byte for byte, \
              log was:\n{log}"
         );
         let _ = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
         let log = stub_log(&stub);
         assert!(
-            log.lines().any(|l| l == "color-scheme-set custom JokerTheme"),
+            log.lines()
+                .any(|l| l == "color-scheme-set custom JokerTheme"),
             "a legitimate palette name must reach the shell byte for byte, \
              log was:\n{log}"
         );
@@ -5538,7 +5602,8 @@ exit 0
         let stub = ColorStub::new("custom skwd-wall", 99, Some(OWNER_JSON), true);
         let theme = stub.custom_theme("custom ", true);
         std::fs::write(
-            theme.path()
+            theme
+                .path()
                 .join("providers")
                 .join("noctalia-v5")
                 .join("wallpaper.txt"),
@@ -5621,7 +5686,8 @@ exit 0
         let engine_line = format!("skwd-wall-v2 apply {}", poster.display());
         let engine_line_alt = format!("skwd-helm apply {}", poster.display());
         assert!(
-            log.lines().any(|l| l == engine_line || l == engine_line_alt),
+            log.lines()
+                .any(|l| l == engine_line || l == engine_line_alt),
             "the theme's packaged poster must be handed to the engine too, log was:\n{log}"
         );
         let _ = stub.poll("color-scheme-set", 2, Duration::from_secs(10));
@@ -5786,7 +5852,8 @@ exit 0
 
         let log = stub_log(&stub);
         assert!(
-            log.lines().any(|l| l == "msg wallpaper-set  /tmp/fallback-absolute.png"),
+            log.lines()
+                .any(|l| l == "msg wallpaper-set  /tmp/fallback-absolute.png"),
             "a declared poster with no file must fall back to wallpaper.txt, log was:\n{log}"
         );
         assert!(
@@ -5814,7 +5881,8 @@ exit 0
 
         let log = stub_log(&stub);
         assert!(
-            log.lines().any(|l| l == "msg wallpaper-set  /tmp/real-wall.png"),
+            log.lines()
+                .any(|l| l == "msg wallpaper-set  /tmp/real-wall.png"),
             "the normal chain must still be used, log was:\n{log}"
         );
         assert!(
@@ -5844,7 +5912,8 @@ exit 0
 
         let log = stub_log(&stub);
         assert!(
-            log.lines().any(|l| l == "msg wallpaper-set  /tmp/safe-wall.png"),
+            log.lines()
+                .any(|l| l == "msg wallpaper-set  /tmp/safe-wall.png"),
             "a rejected record must fall back to wallpaper.txt, log was:\n{log}"
         );
         assert!(
@@ -5932,7 +6001,10 @@ exit 0
             None,
         )
         .unwrap();
-        assert!(!dir.join("video.txt").exists(), "url-only theme has no absolute record");
+        assert!(
+            !dir.join("video.txt").exists(),
+            "url-only theme has no absolute record"
+        );
         assert!(
             !dir.join(crate::providers::bg_info::MANIFEST_FILE).exists(),
             "url-only theme carries no manifest yet"
@@ -6083,7 +6155,11 @@ exit 0
         enable_delegation(&stub, "0");
         let theme = stub.custom_theme("custom JokerTheme", true);
         std::fs::write(
-            theme.path().join("providers").join("noctalia-v5").join("wallpaper.txt"),
+            theme
+                .path()
+                .join("providers")
+                .join("noctalia-v5")
+                .join("wallpaper.txt"),
             "/tmp/joker3.png",
         )
         .unwrap();
@@ -6167,7 +6243,8 @@ exit 0
         drop(_tracing);
         let text = String::from_utf8_lossy(&capture.buf.lock().unwrap()).to_string();
         assert_eq!(
-            text.matches("engine colour authority yielded for the apply").count(),
+            text.matches("engine colour authority yielded for the apply")
+                .count(),
             1,
             "exactly one yield per apply, got: {}",
             text
@@ -6376,7 +6453,11 @@ exit 0
         let stub = ColorStub::new("custom skwd-wall", 1, Some(OWNER_JSON), false);
         let theme = stub.custom_theme("custom JokerTheme", true);
         std::fs::write(
-            theme.path().join("providers").join("noctalia-v5").join("wallpaper.txt"),
+            theme
+                .path()
+                .join("providers")
+                .join("noctalia-v5")
+                .join("wallpaper.txt"),
             "/tmp/joker3.png",
         )
         .unwrap();
@@ -6442,10 +6523,8 @@ exit 0
                 "SKWD_WALL_V2_SOCK",
                 "SKWD_WALL_V2_CONFIG",
             ];
-            let saved: Vec<(&'static str, Option<String>)> = keys
-                .iter()
-                .map(|k| (*k, std::env::var(k).ok()))
-                .collect();
+            let saved: Vec<(&'static str, Option<String>)> =
+                keys.iter().map(|k| (*k, std::env::var(k).ok())).collect();
             let state_dir = tmp.path().join("state");
             let bin_dir = tmp.path().join("bin");
             std::fs::create_dir_all(&state_dir).unwrap();
@@ -6511,15 +6590,11 @@ exit 1
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
-                    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755))
-                        .unwrap();
+                    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
                 }
             }
             let orig_path = std::env::var("PATH").unwrap_or_default();
-            std::env::set_var(
-                "PATH",
-                format!("{}:{}", bin_dir.display(), orig_path),
-            );
+            std::env::set_var("PATH", format!("{}:{}", bin_dir.display(), orig_path));
             std::env::set_var("NOCTALIA_STUB_STATE", &state_dir);
             std::env::set_var("SKWD_STUB_MODE", daemon_mode);
             let noct_home = tmp.path().join("noct-home");
@@ -6602,7 +6677,11 @@ exit 1
             &save_layers_doc("skwd-paper", "skwd-paper"),
             None,
             "ok",
-            &save_daemon_doc("static", "/pictures/live/joker1.png", "/pictures/live/joker1.png"),
+            &save_daemon_doc(
+                "static",
+                "/pictures/live/joker1.png",
+                "/pictures/live/joker1.png",
+            ),
             "/pictures/stale/car3.jpg",
         );
         let theme = TempDir::new().unwrap();
@@ -6629,7 +6708,11 @@ exit 1
             &save_layers_doc("skwd-paper", "skwd-paper"),
             None,
             "ok",
-            &save_daemon_doc("static", "/pictures/live/joker1.png", "/pictures/live/joker1.png"),
+            &save_daemon_doc(
+                "static",
+                "/pictures/live/joker1.png",
+                "/pictures/live/joker1.png",
+            ),
             "/pictures/stale/car3.jpg",
         );
         let theme = TempDir::new().unwrap();
@@ -6665,7 +6748,11 @@ exit 1
             &save_layers_doc("skwd-paper", "skwd-paper"),
             None,
             "ok",
-            &save_daemon_doc("static", "/pictures/live/joker1.png", "/pictures/live/joker1.png"),
+            &save_daemon_doc(
+                "static",
+                "/pictures/live/joker1.png",
+                "/pictures/live/joker1.png",
+            ),
             "/pictures/stale/car3.jpg",
         )
         .with_scheme("community Catppuccin Mocha Sapphire\n");
@@ -6860,7 +6947,11 @@ exit 1
             &save_layers_doc("mystery-layer", "mystery-layer"),
             None,
             "ok",
-            &save_daemon_doc("static", "/pictures/live/joker1.png", "/pictures/live/joker1.png"),
+            &save_daemon_doc(
+                "static",
+                "/pictures/live/joker1.png",
+                "/pictures/live/joker1.png",
+            ),
             &stale,
         );
         let theme = TempDir::new().unwrap();
@@ -7073,7 +7164,10 @@ exit 1
         }
         let media = TempDir::new().unwrap();
         let video = media.path().join("slugcat.mp4");
-        assert!(synth_video(&video), "failed to synthesize the fixture video");
+        assert!(
+            synth_video(&video),
+            "failed to synthesize the fixture video"
+        );
         let video_str = video.to_string_lossy().to_string();
         let stub = SaveStub::new(
             &save_layers_doc("skwd-wall-vk", "skwd-wall-vk"),
@@ -7315,7 +7409,10 @@ exit 1
         }
         let media = TempDir::new().unwrap();
         let video = media.path().join("slugcat.mp4");
-        assert!(synth_video(&video), "failed to synthesize the fixture video");
+        assert!(
+            synth_video(&video),
+            "failed to synthesize the fixture video"
+        );
         let video_str = video.to_string_lossy().to_string();
         let stub = SaveStub::new(
             &save_layers_doc("skwd-wall-vk", "skwd-wall-vk"),
@@ -7329,14 +7426,19 @@ exit 1
             .save(theme.path())
             .expect("save must succeed");
 
-        let packaged = theme.path().join("media").join(crate::theme_media::VIDEO_FILE_NAME);
+        let packaged = theme
+            .path()
+            .join("media")
+            .join(crate::theme_media::VIDEO_FILE_NAME);
         assert!(
             packaged.exists(),
             "an under-bound video must be copied into the theme"
         );
-        let record =
-            std::fs::read_to_string(stub.provider_dir(&theme).join(crate::theme_media::VIDEO_RECORD_FILE))
-                .expect("save must write the theme-relative video record");
+        let record = std::fs::read_to_string(
+            stub.provider_dir(&theme)
+                .join(crate::theme_media::VIDEO_RECORD_FILE),
+        )
+        .expect("save must write the theme-relative video record");
         assert_eq!(record.trim(), "video=media/background.mp4");
         assert!(
             !stub
@@ -7356,7 +7458,10 @@ exit 1
         }
         let media = TempDir::new().unwrap();
         let video = media.path().join("slugcat.mp4");
-        assert!(synth_video(&video), "failed to synthesize the fixture video");
+        assert!(
+            synth_video(&video),
+            "failed to synthesize the fixture video"
+        );
         let video_str = video.to_string_lossy().to_string();
         let stub = SaveStub::new(
             &save_layers_doc("skwd-wall-vk", "skwd-wall-vk"),
@@ -7384,9 +7489,8 @@ exit 1
                 .exists(),
             "an over-bound video must never be copied"
         );
-        let record =
-            std::fs::read_to_string(dir.join(crate::theme_media::VIDEO_RECORD_FILE))
-                .expect("the url must be recorded when the video is over the bound");
+        let record = std::fs::read_to_string(dir.join(crate::theme_media::VIDEO_RECORD_FILE))
+            .expect("the url must be recorded when the video is over the bound");
         assert!(
             record.contains("url=https://example.com/slugcat.mp4"),
             "the record must carry the manifest's url, was: {record}"
@@ -7501,7 +7605,12 @@ exit 1
         let snapshot = br#"{"palette":"blue-v2"}"#;
         let live = br#"{"palette":"blue-v1"}"#;
         assert!(
-            palette_needs_reassert(Some("custom theme-blue"), Some(live), snapshot, "theme-blue"),
+            palette_needs_reassert(
+                Some("custom theme-blue"),
+                Some(live),
+                snapshot,
+                "theme-blue"
+            ),
             "right scheme but drifted bytes must re-assert"
         );
     }
@@ -8011,9 +8120,17 @@ scale = 1.3
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("source.txt"), "custom JokerTheme").unwrap();
         let res = NoctaliaV5Provider::new().reassert_colours(theme.path());
-        assert!(res.is_ok(), "a missing snapshot must be a quiet Ok: {:?}", res);
+        assert!(
+            res.is_ok(),
+            "a missing snapshot must be a quiet Ok: {:?}",
+            res
+        );
         assert_eq!(stub.sets(), 0, "no snapshot must issue no set");
-        assert_eq!(stub.templates(), 0, "no snapshot must run no templates-apply");
+        assert_eq!(
+            stub.templates(),
+            0,
+            "no snapshot must run no templates-apply"
+        );
     }
 
     #[test]
@@ -8022,9 +8139,17 @@ scale = 1.3
         let stub = ColorStub::new("wallpaper vibrant", 0, None, true);
         let theme = stub.custom_theme("builtin Kanagawa", true);
         let res = NoctaliaV5Provider::new().reassert_colours(theme.path());
-        assert!(res.is_ok(), "a non-custom source must be a quiet Ok: {:?}", res);
+        assert!(
+            res.is_ok(),
+            "a non-custom source must be a quiet Ok: {:?}",
+            res
+        );
         assert_eq!(stub.sets(), 0, "a non-custom source must issue no set");
-        assert_eq!(stub.templates(), 0, "a non-custom source must run no templates-apply");
+        assert_eq!(
+            stub.templates(),
+            0,
+            "a non-custom source must run no templates-apply"
+        );
     }
 
     #[test]
@@ -8033,7 +8158,11 @@ scale = 1.3
         let stub = ColorStub::new("custom JokerTheme", 0, None, true);
         let theme = stub.custom_theme("custom JokerTheme", true);
         let snapshot = std::fs::read(
-            theme.path().join("providers").join("noctalia-v5").join("palette.json"),
+            theme
+                .path()
+                .join("providers")
+                .join("noctalia-v5")
+                .join("palette.json"),
         )
         .unwrap();
         let live_path = PathBuf::from(std::env::var("HVE_NOCTALIA_CONFIG").unwrap())
@@ -8044,7 +8173,11 @@ scale = 1.3
         let res = NoctaliaV5Provider::new().reassert_colours(theme.path());
         assert!(res.is_ok(), "matching state must be Ok: {:?}", res);
         assert_eq!(stub.sets(), 0, "matching state must issue no set");
-        assert_eq!(stub.templates(), 0, "matching state must run no templates-apply");
+        assert_eq!(
+            stub.templates(),
+            0,
+            "matching state must run no templates-apply"
+        );
     }
 
     #[test]
@@ -8066,9 +8199,17 @@ scale = 1.3
         // Armed: dropping restores the fake engine config and clears the
         // held state, so this test leaves nothing behind.
         drop(hold);
-        assert!(res.is_ok(), "a yielded authority must be a quiet Ok: {:?}", res);
+        assert!(
+            res.is_ok(),
+            "a yielded authority must be a quiet Ok: {:?}",
+            res
+        );
         assert_eq!(stub.sets(), 0, "a yield in flight must issue no set");
-        assert_eq!(stub.templates(), 0, "a yield in flight must run no templates-apply");
+        assert_eq!(
+            stub.templates(),
+            0,
+            "a yield in flight must run no templates-apply"
+        );
         assert_eq!(
             std::fs::read_to_string(&stub.skwd_cfg).unwrap(),
             OWNER_JSON,
@@ -8100,7 +8241,11 @@ scale = 1.3
         assert_eq!(stub.sets(), 1, "one set converges the drifted scheme");
         assert_eq!(stub.templates(), 1, "one templates-apply re-renders");
         let snapshot = std::fs::read(
-            theme.path().join("providers").join("noctalia-v5").join("palette.json"),
+            theme
+                .path()
+                .join("providers")
+                .join("noctalia-v5")
+                .join("palette.json"),
         )
         .unwrap();
         assert_eq!(
@@ -8161,10 +8306,8 @@ scale = 1.3
             let env = crate::test_utils::TempEnv::new();
             let bin = tempfile::tempdir().expect("stub bin dir");
             let keys = ["PATH", "HVE_LAYOUT_SETTLE_MS"];
-            let saved: Vec<(&'static str, Option<String>)> = keys
-                .iter()
-                .map(|k| (*k, std::env::var(k).ok()))
-                .collect();
+            let saved: Vec<(&'static str, Option<String>)> =
+                keys.iter().map(|k| (*k, std::env::var(k).ok())).collect();
 
             let live_dir = PathBuf::from(std::env::var("HOME").unwrap())
                 .join(".local")
@@ -8400,7 +8543,10 @@ scale = 1.3
         let theme = stub.theme_with(WIPED_SETTINGS);
 
         let res = NoctaliaV5Provider::new().apply(theme.path());
-        assert!(res.is_ok(), "a layoutless theme must apply cleanly: {res:?}");
+        assert!(
+            res.is_ok(),
+            "a layoutless theme must apply cleanly: {res:?}"
+        );
         stub.wait_for_verify();
         assert_eq!(
             stub.reloads(),
@@ -8942,25 +9088,25 @@ scale = 1.3
         }
     }
 
-    static GLOBAL_LOG_CAPTURE: std::sync::OnceLock<GlobalLogCapture> =
-        std::sync::OnceLock::new();
+    static GLOBAL_LOG_CAPTURE: std::sync::OnceLock<GlobalLogCapture> = std::sync::OnceLock::new();
 
     fn install_global_log_capture() -> GlobalLogCapture {
-        GLOBAL_LOG_CAPTURE.get_or_init(|| {
-            let capture = GlobalLogCapture::default();
-            // Best-effort: if a global default is already set (it never is
-            // in this suite), capture is degraded, never failing a test.
-            let _ = tracing::subscriber::set_global_default(
-                tracing_subscriber::fmt()
-                    .with_writer(capture.clone())
-                    .with_ansi(false)
-                    .without_time()
-                    .with_max_level(tracing::Level::INFO)
-                    .finish(),
-            );
-            capture
-        })
-        .clone()
+        GLOBAL_LOG_CAPTURE
+            .get_or_init(|| {
+                let capture = GlobalLogCapture::default();
+                // Best-effort: if a global default is already set (it never is
+                // in this suite), capture is degraded, never failing a test.
+                let _ = tracing::subscriber::set_global_default(
+                    tracing_subscriber::fmt()
+                        .with_writer(capture.clone())
+                        .with_ansi(false)
+                        .without_time()
+                        .with_max_level(tracing::Level::INFO)
+                        .finish(),
+                );
+                capture
+            })
+            .clone()
     }
 
     fn u18_read_capture(capture: &GlobalLogCapture) -> String {

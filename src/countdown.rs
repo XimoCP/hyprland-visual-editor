@@ -92,9 +92,13 @@ pub fn start_countdown(window_weak: Weak<crate::MainWindow>) {
     let weak = window.as_weak();
     let total = seconds; // capture for tick closure
     let timer = Timer::default();
-    timer.start(TimerMode::Repeated, Duration::from_millis(1000), move || {
-        tick(&weak, total);
-    });
+    timer.start(
+        TimerMode::Repeated,
+        Duration::from_millis(1000),
+        move || {
+            tick(&weak, total);
+        },
+    );
 
     COUNTDOWN_TIMER.with(|t| {
         *t.borrow_mut() = Some(timer);
@@ -264,7 +268,11 @@ fn tick(window_weak: &Weak<crate::MainWindow>, total_seconds: i32) {
 
     let current = window.get_countdown_seconds();
     let result = process_tick(current, total_seconds);
-    tracing::debug!("[countdown] Tick: {}s, progress: {:.2}", result.next_seconds, result.progress);
+    tracing::debug!(
+        "[countdown] Tick: {}s, progress: {:.2}",
+        result.next_seconds,
+        result.progress
+    );
     window.set_countdown_seconds(result.next_seconds);
     window.set_countdown_progress(result.progress);
 
@@ -331,7 +339,10 @@ mod tests {
         let result = process_tick(5, 10);
         assert_eq!(result.next_seconds, 4, "debe decrementar en 1");
         assert_eq!(result.progress, 0.4, "progress = 4/10");
-        assert!(!result.should_minimize, "no debe minimizar con segundos restantes");
+        assert!(
+            !result.should_minimize,
+            "no debe minimizar con segundos restantes"
+        );
     }
 
     #[test]
@@ -356,15 +367,24 @@ mod tests {
     fn test_process_tick_current_exceeds_total() {
         let result = process_tick(15, 10);
         assert_eq!(result.next_seconds, 14, "decrementa igual");
-        assert!(result.progress > 1.0, "progress > 1.0 cuando current > total");
-        assert!(!result.should_minimize, "no debe minimizar con current > total");
+        assert!(
+            result.progress > 1.0,
+            "progress > 1.0 cuando current > total"
+        );
+        assert!(
+            !result.should_minimize,
+            "no debe minimizar con current > total"
+        );
     }
 
     #[test]
     fn test_process_tick_total_is_zero() {
         let result = process_tick(5, 0);
         assert_eq!(result.next_seconds, 4, "decrementa igual");
-        assert_eq!(result.progress, 0.0, "progress = 0.0 para evitar división por cero");
+        assert_eq!(
+            result.progress, 0.0,
+            "progress = 0.0 para evitar división por cero"
+        );
         assert!(!result.should_minimize, "no minimiza aún: next > 0");
     }
 
@@ -372,7 +392,10 @@ mod tests {
     fn test_process_tick_total_zero_and_current_zero() {
         let result = process_tick(0, 0);
         assert_eq!(result.next_seconds, -1);
-        assert_eq!(result.progress, 0.0, "progress = 0.0 para evitar división por cero");
+        assert_eq!(
+            result.progress, 0.0,
+            "progress = 0.0 para evitar división por cero"
+        );
         assert!(result.should_minimize, "minimiza cuando next <= 0");
     }
 
@@ -380,8 +403,14 @@ mod tests {
     fn test_process_tick_current_negative() {
         let result = process_tick(-3, 10);
         assert_eq!(result.next_seconds, -4, "decrementa consistentemente");
-        assert!(result.progress < 0.0, "progress negativo cuando current es negativo");
-        assert!(result.should_minimize, "debe minimizar con current negativo");
+        assert!(
+            result.progress < 0.0,
+            "progress negativo cuando current es negativo"
+        );
+        assert!(
+            result.should_minimize,
+            "debe minimizar con current negativo"
+        );
     }
 
     #[test]
@@ -423,7 +452,11 @@ mod tests {
     #[test]
     fn test_grace_positive_counts_down() {
         for s in [1, 2, 4, 6, 8, 10] {
-            assert_eq!(resolve_grace(s), GraceDecision::Countdown, "{s}s must countdown");
+            assert_eq!(
+                resolve_grace(s),
+                GraceDecision::Countdown,
+                "{s}s must countdown"
+            );
         }
     }
 
@@ -508,8 +541,14 @@ mod tests {
     #[test]
     fn test_blur_entering_vs_visible_hidden_flag_interaction() {
         // Machine allows false must win over every other flag
-        assert_eq!(blur_decision(false, true, false, false, 4), BlurDecision::Nothing);
-        assert_eq!(blur_decision(false, false, false, false, 4), BlurDecision::Nothing);
+        assert_eq!(
+            blur_decision(false, true, false, false, 4),
+            BlurDecision::Nothing
+        );
+        assert_eq!(
+            blur_decision(false, false, false, false, 4),
+            BlurDecision::Nothing
+        );
     }
 }
 
@@ -545,18 +584,30 @@ pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) -> crate::hypr_ipc:
                     .unwrap_or((false, false));
                 let auto_minimize = win.get_auto_minimize();
                 let minimize_seconds = win.get_minimize_seconds();
-                let decision = blur_decision(machine_allows, gallery_active, hidden, auto_minimize, minimize_seconds);
+                let decision = blur_decision(
+                    machine_allows,
+                    gallery_active,
+                    hidden,
+                    auto_minimize,
+                    minimize_seconds,
+                );
                 match decision {
                     BlurDecision::ImmediateHide => {
-                        tracing::info!("[countdown] Gallery focus lost → immediate hide (Esc path)");
+                        tracing::info!(
+                            "[countdown] Gallery focus lost → immediate hide (Esc path)"
+                        );
                         minimize_now(w.clone());
                     }
                     BlurDecision::StartCountdown => {
-                        tracing::debug!("[countdown] Foco perdido, posible countdown (machine allows)");
+                        tracing::debug!(
+                            "[countdown] Foco perdido, posible countdown (machine allows)"
+                        );
                         start_countdown(w.clone());
                     }
                     BlurDecision::Nothing => {
-                        tracing::debug!("[countdown] Foco perdido ignorado (machine gate or hidden)");
+                        tracing::debug!(
+                            "[countdown] Foco perdido ignorado (machine gate or hidden)"
+                        );
                     }
                 }
             });
@@ -582,7 +633,9 @@ pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) -> crate::hypr_ipc:
                         } else if let Some(mut ctrl) = crate::composer::global_controller() {
                             ctrl.run_settle(&win);
                         }
-                        tracing::info!("[countdown] Focus gained confirmed Entering→Visible, settle ran");
+                        tracing::info!(
+                            "[countdown] Focus gained confirmed Entering→Visible, settle ran"
+                        );
                     }
                 } else if !did_confirm && prev_state == crate::show_state::ShowState::Hidden {
                     tracing::debug!("[countdown] Focus gained ignored (Hidden)");

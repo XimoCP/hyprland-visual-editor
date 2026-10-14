@@ -75,9 +75,12 @@ impl HvePresetsProvider {
     /// Bundle the custom presets the active selection uses (theme-packages T4).
     /// Best-effort by contract: an unreadable shipped set only warns and the
     /// save continues; a missing source is skipped inside the bundler.
-    fn bundle_active_presets(&self, theme_dir: &Path, active: &crate::theme_presets::ActivePresets) {
-        let Some(shipped) =
-            crate::theme_presets::ShippedPresets::load(&self.engine.assets_dir())
+    fn bundle_active_presets(
+        &self,
+        theme_dir: &Path,
+        active: &crate::theme_presets::ActivePresets,
+    ) {
+        let Some(shipped) = crate::theme_presets::ShippedPresets::load(&self.engine.assets_dir())
         else {
             tracing::warn!(
                 "[hve-presets] cannot read the shipped preset set; skipping custom preset bundling"
@@ -145,8 +148,8 @@ impl ThemeProvider for HvePresetsProvider {
         fs::create_dir_all(&provider_dir)
             .map_err(|e| format!("Cannot create provider dir: {}", e))?;
 
-        let json = serde_json::to_string_pretty(&state)
-            .map_err(|e| format!("Serialize error: {}", e))?;
+        let json =
+            serde_json::to_string_pretty(&state).map_err(|e| format!("Serialize error: {}", e))?;
         fs::write(provider_dir.join("state.json"), &json)
             .map_err(|e| format!("Cannot write state.json: {}", e))?;
 
@@ -159,15 +162,18 @@ impl ThemeProvider for HvePresetsProvider {
     }
 
     fn apply(&self, theme_dir: &Path) -> Result<(), String> {
-        let state_path = theme_dir.join("providers").join(self.id()).join("state.json");
+        let state_path = theme_dir
+            .join("providers")
+            .join(self.id())
+            .join("state.json");
         // W10b: the theme's `state.json` is an UNTRUSTED file — bounded,
         // regular-file-guarded read (W10 owns the ONE set of limits and the
         // ONE error type). A FIFO or over-bound state refuses the apply with
         // the ordinary error below instead of blocking or slurping.
         let raw = crate::theme_media::read_theme_record(&state_path)
             .map_err(|e| format!("Cannot read state.json: {}", e))?;
-        let state: serde_json::Value = serde_json::from_str(&raw)
-            .map_err(|e| format!("Parse error: {}", e))?;
+        let state: serde_json::Value =
+            serde_json::from_str(&raw).map_err(|e| format!("Parse error: {}", e))?;
 
         // T4: install the CUSTOM presets the theme carries under `presets/`
         // into the user's store BEFORE the apply path resolves them, so a
@@ -256,9 +262,12 @@ impl ThemeProvider for HvePresetsProvider {
         }
 
         if changed {
-            let _ = self
-                .engine
-                .apply_geometry(cfg.border_size, cfg.border_radius, cfg.gaps_in, cfg.gaps_out);
+            let _ = self.engine.apply_geometry(
+                cfg.border_size,
+                cfg.border_radius,
+                cfg.gaps_in,
+                cfg.gaps_out,
+            );
             let _ = cfg.save();
         }
 
@@ -330,7 +339,10 @@ mod tests {
 
     #[test]
     fn pretty_preset_file_strips_the_directory_and_extension() {
-        assert_eq!(pretty_preset_file("06_impacto_clasico.lua"), "06 impacto clasico");
+        assert_eq!(
+            pretty_preset_file("06_impacto_clasico.lua"),
+            "06 impacto clasico"
+        );
         assert_eq!(pretty_preset_file("/abs/path/12_rebote.lua"), "12 rebote");
         assert_eq!(pretty_preset_file("rgb.json"), "rgb");
         assert_eq!(pretty_preset_file("none"), "none");
@@ -387,7 +399,12 @@ mod tests {
         let scripts = proj.path().join("assets/scripts");
         fs::create_dir_all(&scripts).unwrap();
         let log = proj.path().join("applied.log");
-        for name in ["apply_animation.sh", "border.sh", "shader.sh", "geometry.sh"] {
+        for name in [
+            "apply_animation.sh",
+            "border.sh",
+            "shader.sh",
+            "geometry.sh",
+        ] {
             fs::write(
                 scripts.join(name),
                 format!("#!/bin/bash\necho \"$1\" >> {}\n", log.display()),
@@ -535,7 +552,10 @@ mod tests {
         let mut state =
             br#"{"active_anim_file":"custom.lua","active_border_file":"","active_shader_file":""}"#
                 .to_vec();
-        state.resize(crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1, b' ');
+        state.resize(
+            crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1,
+            b' ',
+        );
         fs::write(tmp.path().join("state.json"), state).unwrap();
 
         assert!(

@@ -10,13 +10,13 @@
 //! code from hyprmod is used.
 
 pub mod gallery;
+#[cfg(test)]
+mod integration_tests;
 pub mod nav;
 pub mod size;
 pub mod slots;
 #[cfg(test)]
 mod ui_tests;
-#[cfg(test)]
-mod integration_tests;
 
 use self::nav::{ExpansionState, NavCommand, NavState, Screen};
 use self::size::SizePolicy;
@@ -397,7 +397,10 @@ impl Shell {
     ///
     /// The epoch is what keeps that promise across entries: it is bumped
     /// here, so any float still in flight from a previous entry expires.
-    pub fn enter_panel(shell: &Rc<RefCell<Self>>, section: crate::shell::nav::PanelSection) -> bool {
+    pub fn enter_panel(
+        shell: &Rc<RefCell<Self>>,
+        section: crate::shell::nav::PanelSection,
+    ) -> bool {
         let entered = {
             let mut s = shell.borrow_mut();
             let entered = s.nav.enter_panel(section);
@@ -434,7 +437,10 @@ impl Shell {
             let mut s = shell.borrow_mut();
             s.nav.complete_mutation();
             // R5: suppress shader overlay for 3s after any Mutating completes
-            s.suppress_until = Some(Instant::now() + Duration::from_millis(crate::shell::gallery::slot::SHADER_FLICKER_MS));
+            s.suppress_until = Some(
+                Instant::now()
+                    + Duration::from_millis(crate::shell::gallery::slot::SHADER_FLICKER_MS),
+            );
             matches!(s.nav.panel_state(), crate::shell::nav::PanelState::Open(_))
         };
         Self::mirror_panel(shell);
@@ -550,7 +556,9 @@ impl Shell {
 
     /// Push panel state to the Slint mirrors.
     fn mirror_panel(shell: &Rc<RefCell<Self>>) {
-        let Some(window) = shell.borrow().window.upgrade() else { return };
+        let Some(window) = shell.borrow().window.upgrade() else {
+            return;
+        };
         let (section, is_mutating, is_open) = {
             let s = shell.borrow();
             let state = s.nav.panel_state();
@@ -710,7 +718,9 @@ impl Shell {
     /// Push `current_size` (clamped to the minimum) to the Slint window
     /// via `set_size(LogicalSize)`.
     fn push_size_to_window(&self) {
-        let Some(window) = self.window.upgrade() else { return };
+        let Some(window) = self.window.upgrade() else {
+            return;
+        };
         let clamped = self.size.clamp(self.current_size);
         let ls = LogicalSize::new(clamped.0, clamped.1);
         window.window().set_size(WindowSize::Logical(ls));
@@ -772,7 +782,11 @@ mod tests {
         Shell::dispatch(&shell, NavCommand::Expand(Screen::Gallery));
         drain_anim();
         let (w, h) = window_logical(&weak);
-        assert_eq!((w, h), (1200.0, 800.0), "animator walks to the expanded size");
+        assert_eq!(
+            (w, h),
+            (1200.0, 800.0),
+            "animator walks to the expanded size"
+        );
         assert_eq!(Shell::current_size(&shell), (1200.0, 800.0));
     }
 
@@ -784,7 +798,11 @@ mod tests {
         Shell::dispatch(&shell, NavCommand::Back);
         drain_anim();
         let (w, h) = window_logical(&weak);
-        assert_eq!((w, h), (900.0, 680.0), "animator walks back to the base size");
+        assert_eq!(
+            (w, h),
+            (900.0, 680.0),
+            "animator walks back to the base size"
+        );
     }
 
     // ── Unregistered target (spec R3 edge case) ───────────────────────
@@ -880,9 +898,10 @@ mod tests {
         // Simulate a hide/show cycle by calling sync_after_show — the
         // window should return to the expanded size even if something
         // reset it during the hide.
-        weak.upgrade().unwrap().window().set_size(WindowSize::Logical(
-            LogicalSize::new(1.0, 1.0),
-        ));
+        weak.upgrade()
+            .unwrap()
+            .window()
+            .set_size(WindowSize::Logical(LogicalSize::new(1.0, 1.0)));
         Shell::sync_after_show(&shell);
         let (w, h) = window_logical(&weak);
         assert_eq!((w, h), (1200.0, 800.0), "sync_after_show restores expanded");
@@ -892,9 +911,10 @@ mod tests {
     fn sync_after_show_restores_base_size_when_collapsed() {
         let (shell, weak) = shell_with_window();
         // Start collapsed at base; simulate a weird size from the hide.
-        weak.upgrade().unwrap().window().set_size(WindowSize::Logical(
-            LogicalSize::new(1.0, 1.0),
-        ));
+        weak.upgrade()
+            .unwrap()
+            .window()
+            .set_size(WindowSize::Logical(LogicalSize::new(1.0, 1.0)));
         Shell::sync_after_show(&shell);
         let (w, h) = window_logical(&weak);
         assert_eq!((w, h), (900.0, 680.0), "sync_after_show restores base");
@@ -921,16 +941,21 @@ mod tests {
         );
 
         // Simulate a hide that reset the window (compositor round-trip).
-        weak.upgrade().unwrap().window().set_size(WindowSize::Logical(
-            LogicalSize::new(1.0, 1.0),
-        ));
+        weak.upgrade()
+            .unwrap()
+            .window()
+            .set_size(WindowSize::Logical(LogicalSize::new(1.0, 1.0)));
         Shell::sync_after_show(&shell);
 
         // Reveal must NOT push the gallery expanded size over the floating
         // panel — the panel is the live border preview and its geometry is
         // the compositor's own (preserved through the special-workspace move).
         let (w, h) = window_logical(&weak);
-        assert_eq!((w, h), (1.0, 1.0), "floating panel keeps its geometry through hide/show");
+        assert_eq!(
+            (w, h),
+            (1.0, 1.0),
+            "floating panel keeps its geometry through hide/show"
+        );
         assert_eq!(
             Shell::current_size(&shell),
             (float_w, float_h),
@@ -953,7 +978,11 @@ mod tests {
         assert!(win.get_expanded());
 
         Shell::move_focus(&shell, 1);
-        assert_eq!(win.get_focused_card(), 0, "move_focus does NOT auto-mirror; callbacks do");
+        assert_eq!(
+            win.get_focused_card(),
+            0,
+            "move_focus does NOT auto-mirror; callbacks do"
+        );
 
         Shell::dispatch(&shell, NavCommand::Back);
         assert_eq!(win.get_mounted_screen(), 0, "Home remounted on Back");

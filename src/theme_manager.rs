@@ -383,8 +383,7 @@ impl ThemeManager {
             let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&raw) else {
                 continue;
             };
-            let Some(providers) = value.get_mut("providers").and_then(|p| p.as_array_mut())
-            else {
+            let Some(providers) = value.get_mut("providers").and_then(|p| p.as_array_mut()) else {
                 continue;
             };
             let before = providers.len();
@@ -511,10 +510,16 @@ impl ThemeManager {
             let meta = crate::theme_media::read_theme_record(&meta_path)
                 .ok()
                 .and_then(|s| serde_json::from_str::<ThemeMeta>(&s).ok());
-            let providers = meta.as_ref().map(|m| m.providers.clone()).unwrap_or_default();
+            let providers = meta
+                .as_ref()
+                .map(|m| m.providers.clone())
+                .unwrap_or_default();
             themes.push(ThemeInfo {
                 is_active: name == self.last_applied,
-                saved_at: meta.as_ref().map(|m| m.saved_at.clone()).unwrap_or_default(),
+                saved_at: meta
+                    .as_ref()
+                    .map(|m| m.saved_at.clone())
+                    .unwrap_or_default(),
                 name,
                 providers,
             });
@@ -526,9 +531,7 @@ impl ThemeManager {
         // not active. Shell-agnostic themes (e.g. presets-only) always show
         // because their providers are always registered.
         let registered = self.provider_ids();
-        themes.retain(|t| {
-            t.providers.iter().all(|pid| registered.contains(pid))
-        });
+        themes.retain(|t| t.providers.iter().all(|pid| registered.contains(pid)));
 
         Ok(themes)
     }
@@ -553,11 +556,17 @@ impl ThemeManager {
         let meta = crate::theme_media::read_theme_record(&theme_dir.join("meta.json"))
             .ok()
             .and_then(|s| serde_json::from_str::<ThemeMeta>(&s).ok());
-        let recorded: Vec<String> = meta.as_ref().map(|m| m.providers.clone()).unwrap_or_default();
+        let recorded: Vec<String> = meta
+            .as_ref()
+            .map(|m| m.providers.clone())
+            .unwrap_or_default();
 
         let mut facts = ThemeFacts {
             name: name.to_string(),
-            saved_at: meta.as_ref().map(|m| m.saved_at.clone()).unwrap_or_default(),
+            saved_at: meta
+                .as_ref()
+                .map(|m| m.saved_at.clone())
+                .unwrap_or_default(),
             providers: recorded.clone(),
             swatches: Vec::new(),
             rows: Vec::new(),
@@ -590,8 +599,7 @@ impl ThemeManager {
         let theme_dir = self.themes_dir.join(&name);
 
         // Create directory structure
-        fs::create_dir_all(&theme_dir)
-            .map_err(|e| format!("Cannot create theme dir: {}", e))?;
+        fs::create_dir_all(&theme_dir).map_err(|e| format!("Cannot create theme dir: {}", e))?;
 
         // Run each registered provider if selected
         let mut enabled = Vec::new();
@@ -654,11 +662,7 @@ impl ThemeManager {
         for p in &self.providers {
             if meta.providers.iter().any(|id| id == p.id()) {
                 if let Err(e) = p.post_apply(&name) {
-                    tracing::warn!(
-                        "[themes] Provider '{}' post_apply warning: {}",
-                        p.id(),
-                        e
-                    );
+                    tracing::warn!("[themes] Provider '{}' post_apply warning: {}", p.id(), e);
                 }
             }
         }
@@ -756,8 +760,7 @@ impl ThemeManager {
         if new_path.exists() {
             return Err("name-exists".into());
         }
-        fs::rename(&old_path, &new_path)
-            .map_err(|e| format!("Failed to rename theme: {}", e))?;
+        fs::rename(&old_path, &new_path).map_err(|e| format!("Failed to rename theme: {}", e))?;
         if self.last_applied == old_name {
             self.last_applied = new_name;
         }
@@ -805,18 +808,19 @@ impl ThemeManager {
             );
             return;
         }
-        let meta: ThemeMeta = match crate::theme_media::read_theme_record(&theme_dir.join("meta.json"))
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-        {
-            Some(meta) => meta,
-            None => {
-                tracing::debug!(
+        let meta: ThemeMeta =
+            match crate::theme_media::read_theme_record(&theme_dir.join("meta.json"))
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
+            {
+                Some(meta) => meta,
+                None => {
+                    tracing::debug!(
                     "[themes] Unreadable metadata for '{name}'; colour-authority repair skipped"
                 );
-                return;
-            }
-        };
+                    return;
+                }
+            };
         for id in &meta.providers {
             let Some(provider) = self.provider(id) else {
                 continue;
@@ -867,7 +871,9 @@ fn cleanup_bake_cache(theme_dir: &Path) {
             remove_cached_frame(&cache, &source);
         }
         thumbs::PreviewSpec::Video {
-            cached_frame, theme_dir, ..
+            cached_frame,
+            theme_dir,
+            ..
         } => {
             remove_cached_frame(&cache, &cached_frame);
             // Artifacts baked from the frame are content-keyed: only the
@@ -917,7 +923,13 @@ fn remove_content_artifacts_quiet(cache: &Path, source: &Path) {
 /// Remove the five content-keyed artifacts for one bake key. Missing files
 /// are silent no-ops; other failures warn and are swallowed.
 fn remove_keyed_artifacts(cache: &Path, key: &str) {
-    for suffix in ["-thumb.png", "-hero.png", "-slat.png", "-slat-exp.png", "-frame.png"] {
+    for suffix in [
+        "-thumb.png",
+        "-hero.png",
+        "-slat.png",
+        "-slat-exp.png",
+        "-frame.png",
+    ] {
         let artifact = cache.join(format!("{key}{suffix}"));
         if let Err(e) = fs::remove_file(&artifact) {
             if e.kind() != std::io::ErrorKind::NotFound {
@@ -1200,11 +1212,7 @@ mod tests {
     /// Write `hve/themes/<name>` with a meta listing `providers`, plus one
     /// `facts.txt` per provider id. Returns the config dir to hand to
     /// `ThemeManager::new`.
-    fn theme_with_facts(
-        root: &Path,
-        name: &str,
-        providers: &[(&str, &str)],
-    ) -> PathBuf {
+    fn theme_with_facts(root: &Path, name: &str, providers: &[(&str, &str)]) -> PathBuf {
         let dir = root.join("hve").join("themes").join(name);
         let meta = serde_json::json!({
             "saved_at": "2026-10-03T00:00:00Z",
@@ -1229,7 +1237,10 @@ mod tests {
             "Cars",
             &[
                 ("facts-a", "Animation=06 impacto\nswatch=#112233\nEmpty=\n"),
-                ("facts-b", "Palette=Garnet\nswatch=#445566\nswatch=#778899\n"),
+                (
+                    "facts-b",
+                    "Palette=Garnet\nswatch=#445566\nswatch=#778899\n",
+                ),
             ],
         );
 
@@ -1259,7 +1270,11 @@ mod tests {
     #[test]
     fn theme_info_keeps_the_name_when_no_provider_is_registered() {
         let tmp = TempDir::new().unwrap();
-        theme_with_facts(tmp.path(), "Orphan", &[("facts-gone", "Animation=whatever\n")]);
+        theme_with_facts(
+            tmp.path(),
+            "Orphan",
+            &[("facts-gone", "Animation=whatever\n")],
+        );
 
         let tm = ThemeManager::new(tmp.path());
         let facts = tm.theme_info("Orphan").expect("meta is readable");
@@ -1277,10 +1292,19 @@ mod tests {
 
         assert!(tm.theme_info("../Cars").is_none(), "traversal is refused");
         assert!(tm.theme_info("a/b").is_none(), "separators are refused");
-        assert!(tm.theme_info(".hidden").is_none(), "hidden dirs are refused");
+        assert!(
+            tm.theme_info(".hidden").is_none(),
+            "hidden dirs are refused"
+        );
         assert!(tm.theme_info("").is_none(), "an empty name is refused");
-        assert!(tm.theme_info("Nope").is_none(), "an unknown theme is refused");
-        assert!(tm.theme_info("Cars").is_some(), "a real theme still reports");
+        assert!(
+            tm.theme_info("Nope").is_none(),
+            "an unknown theme is refused"
+        );
+        assert!(
+            tm.theme_info("Cars").is_some(),
+            "a real theme still reports"
+        );
     }
 
     // ── W10b: a theme's `meta.json` is an UNTRUSTED file ───────────────
@@ -1323,8 +1347,13 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let theme_dir = tmp.path().join("hve").join("themes").join("Fat");
         fs::create_dir_all(&theme_dir).unwrap();
-        let mut meta = br#"{"saved_at":"2026-10-03T00:00:00Z","description":"","providers":["noctalia-v5"]}"#.to_vec();
-        meta.resize(crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1, b' ');
+        let mut meta =
+            br#"{"saved_at":"2026-10-03T00:00:00Z","description":"","providers":["noctalia-v5"]}"#
+                .to_vec();
+        meta.resize(
+            crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1,
+            b' ',
+        );
         fs::write(theme_dir.join("meta.json"), meta).unwrap();
 
         let tm = ThemeManager::new(tmp.path());
@@ -1348,7 +1377,10 @@ mod tests {
         let mut tm = ThemeManager::new(tmp.path());
         tm.register_provider(Box::new(FactsProvider { id: "facts-a" }));
         let facts = tm.theme_info("Fresh").expect("just saved");
-        assert_eq!(facts.rows, vec![("Animation".to_string(), "late".to_string())]);
+        assert_eq!(
+            facts.rows,
+            vec![("Animation".to_string(), "late".to_string())]
+        );
     }
 
     /// Test-only provider for the provider-declared cleanup seam: it owns
@@ -1548,13 +1580,7 @@ mod tests {
         let config_dir = root.path().join("config");
         let themes_dir = config_dir.join("hve").join("themes");
         for name in ["Cars", "Night", "Space", "Spiderman"] {
-            seed_meta(
-                &themes_dir,
-                name,
-                "2026-10-10T00:00:00.000Z",
-                "",
-                &["stub"],
-            );
+            seed_meta(&themes_dir, name, "2026-10-10T00:00:00.000Z", "", &["stub"]);
         }
         let canary = root.path().join("canary");
         fs::create_dir_all(&canary).unwrap();
@@ -1671,7 +1697,9 @@ mod tests {
                  theme that can never be applied or deleted"
             ));
             assert!(
-                err == "name-empty" || err == "name-invalid" || err.starts_with("invalid theme name"),
+                err == "name-empty"
+                    || err == "name-invalid"
+                    || err.starts_with("invalid theme name"),
                 "unexpected refusal shape for {name:?}: {err}"
             );
         }
@@ -1873,7 +1901,13 @@ mod tests {
         let config_dir = TempDir::new().unwrap();
         let themes_dir = config_dir.path().join("hve").join("themes");
         for name in ["ThemeOne", "ThemeTwo"] {
-            seed_meta(&themes_dir, name, "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
+            seed_meta(
+                &themes_dir,
+                name,
+                "2026-09-21T00:00:00.000Z",
+                "",
+                &["noctalia-v5"],
+            );
             let v5 = themes_dir.join(name).join("providers").join("noctalia-v5");
             fs::create_dir_all(&v5).unwrap();
             fs::write(v5.join("source.txt"), "custom JokerTheme\n").unwrap();
@@ -1886,10 +1920,16 @@ mod tests {
         ));
 
         tm.delete("ThemeOne").expect("delete must succeed");
-        assert!(palette.exists(), "palette still referenced by ThemeTwo must stay");
+        assert!(
+            palette.exists(),
+            "palette still referenced by ThemeTwo must stay"
+        );
 
         tm.delete("ThemeTwo").expect("delete must succeed");
-        assert!(!palette.exists(), "palette with no surviving referrer must be removed");
+        assert!(
+            !palette.exists(),
+            "palette with no surviving referrer must be removed"
+        );
 
         match old_noctalia {
             Some(v) => std::env::set_var("HVE_NOCTALIA_CONFIG", v),
@@ -1917,7 +1957,13 @@ mod tests {
         let config_dir = TempDir::new().unwrap();
         let themes_dir = config_dir.path().join("hve").join("themes");
         for (name, img) in [("ThemeA", &img_a), ("ThemeB", &img_b)] {
-            seed_meta(&themes_dir, name, "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
+            seed_meta(
+                &themes_dir,
+                name,
+                "2026-09-21T00:00:00.000Z",
+                "",
+                &["noctalia-v5"],
+            );
             let v5 = themes_dir.join(name).join("providers").join("noctalia-v5");
             fs::create_dir_all(&v5).unwrap();
             fs::write(v5.join("wallpaper.txt"), format!("{}\n", img.display())).unwrap();
@@ -1925,13 +1971,17 @@ mod tests {
 
         let cache = thumbs::cache_dir();
         fs::create_dir_all(&cache).unwrap();
-        let key_a =
-            thumbs::content_cache_key_from_bytes(&fs::read(&img_a).unwrap());
-        let key_b =
-            thumbs::content_cache_key_from_bytes(&fs::read(&img_b).unwrap());
+        let key_a = thumbs::content_cache_key_from_bytes(&fs::read(&img_a).unwrap());
+        let key_b = thumbs::content_cache_key_from_bytes(&fs::read(&img_b).unwrap());
         assert_ne!(key_a, key_b, "distinct sources must key distinctly");
         let mut files_a = Vec::new();
-        for suffix in ["-thumb.png", "-hero.png", "-slat.png", "-slat-exp.png", "-frame.png"] {
+        for suffix in [
+            "-thumb.png",
+            "-hero.png",
+            "-slat.png",
+            "-slat-exp.png",
+            "-frame.png",
+        ] {
             let p = cache.join(format!("{key_a}{suffix}"));
             fs::write(&p, b"cached").unwrap();
             files_a.push(p);
@@ -1947,13 +1997,27 @@ mod tests {
         tm.delete("ThemeA").expect("delete must succeed");
 
         for p in &files_a {
-            assert!(!p.exists(), "deleted theme's cache artifact must be gone: {}", p.display());
+            assert!(
+                !p.exists(),
+                "deleted theme's cache artifact must be gone: {}",
+                p.display()
+            );
         }
         for p in &files_b {
-            assert!(p.exists(), "surviving theme's cache artifact must stay: {}", p.display());
+            assert!(
+                p.exists(),
+                "surviving theme's cache artifact must stay: {}",
+                p.display()
+            );
         }
-        assert!(!themes_dir.join("ThemeA").exists(), "theme dir itself must be gone");
-        assert!(themes_dir.join("ThemeB").exists(), "other theme dir must stay");
+        assert!(
+            !themes_dir.join("ThemeA").exists(),
+            "theme dir itself must be gone"
+        );
+        assert!(
+            themes_dir.join("ThemeB").exists(),
+            "other theme dir must stay"
+        );
     }
 
     /// U2 (iii): every cleanup step is best-effort — a palette directory that
@@ -1970,8 +2034,17 @@ mod tests {
 
         let config_dir = TempDir::new().unwrap();
         let themes_dir = config_dir.path().join("hve").join("themes");
-        seed_meta(&themes_dir, "Broken", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
-        let v5 = themes_dir.join("Broken").join("providers").join("noctalia-v5");
+        seed_meta(
+            &themes_dir,
+            "Broken",
+            "2026-09-21T00:00:00.000Z",
+            "",
+            &["noctalia-v5"],
+        );
+        let v5 = themes_dir
+            .join("Broken")
+            .join("providers")
+            .join("noctalia-v5");
         fs::create_dir_all(&v5).unwrap();
         fs::write(v5.join("source.txt"), "custom JokerTheme\n").unwrap();
 
@@ -1979,8 +2052,12 @@ mod tests {
         tm.register_provider(Box::new(
             crate::providers::noctalia::NoctaliaV5Provider::new(),
         ));
-        tm.delete("Broken").expect("cleanup failure must not fail the delete");
-        assert!(!themes_dir.join("Broken").exists(), "theme dir itself must be gone");
+        tm.delete("Broken")
+            .expect("cleanup failure must not fail the delete");
+        assert!(
+            !themes_dir.join("Broken").exists(),
+            "theme dir itself must be gone"
+        );
 
         match old_noctalia {
             Some(v) => std::env::set_var("HVE_NOCTALIA_CONFIG", v),
@@ -2010,10 +2087,23 @@ mod tests {
 
         let config_dir = TempDir::new().unwrap();
         let themes_dir = config_dir.path().join("hve").join("themes");
-        seed_meta(&themes_dir, "Escaper", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
-        let v5 = themes_dir.join("Escaper").join("providers").join("noctalia-v5");
+        seed_meta(
+            &themes_dir,
+            "Escaper",
+            "2026-09-21T00:00:00.000Z",
+            "",
+            &["noctalia-v5"],
+        );
+        let v5 = themes_dir
+            .join("Escaper")
+            .join("providers")
+            .join("noctalia-v5");
         fs::create_dir_all(&v5).unwrap();
-        fs::write(v5.join("wallpaper.txt"), format!("{}\n", user_file.display())).unwrap();
+        fs::write(
+            v5.join("wallpaper.txt"),
+            format!("{}\n", user_file.display()),
+        )
+        .unwrap();
 
         let mut tm = ThemeManager::new(config_dir.path());
         tm.delete("Escaper").expect("delete must succeed");
@@ -2021,7 +2111,10 @@ mod tests {
             user_file.exists(),
             "a user file outside the bake cache must survive the delete, even named *-frame.png"
         );
-        assert!(!themes_dir.join("Escaper").exists(), "theme dir itself must be gone");
+        assert!(
+            !themes_dir.join("Escaper").exists(),
+            "theme dir itself must be gone"
+        );
     }
 
     /// W2-2 unit: containment itself. A `..` escape is not inside, a genuine
@@ -2042,7 +2135,10 @@ mod tests {
         );
         let child = cache.join("k-frame.png");
         fs::write(&child, b"cached").unwrap();
-        assert!(path_inside_dir(&cache, &child), "a genuine child must count as inside");
+        assert!(
+            path_inside_dir(&cache, &child),
+            "a genuine child must count as inside"
+        );
         assert!(
             !path_inside_dir(&cache, &cache.join("missing-frame.png")),
             "an unresolvable candidate must fail closed"
@@ -2065,12 +2161,30 @@ mod tests {
 
         let config_dir = TempDir::new().unwrap();
         let themes_dir = config_dir.path().join("hve").join("themes");
-        seed_meta(&themes_dir, "Gone", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
-        let gone_v5 = themes_dir.join("Gone").join("providers").join("noctalia-v5");
+        seed_meta(
+            &themes_dir,
+            "Gone",
+            "2026-09-21T00:00:00.000Z",
+            "",
+            &["noctalia-v5"],
+        );
+        let gone_v5 = themes_dir
+            .join("Gone")
+            .join("providers")
+            .join("noctalia-v5");
         fs::create_dir_all(&gone_v5).unwrap();
         fs::write(gone_v5.join("source.txt"), "custom JokerTheme\n").unwrap();
-        seed_meta(&themes_dir, "Stays", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
-        let stays_v5 = themes_dir.join("Stays").join("providers").join("noctalia-v5");
+        seed_meta(
+            &themes_dir,
+            "Stays",
+            "2026-09-21T00:00:00.000Z",
+            "",
+            &["noctalia-v5"],
+        );
+        let stays_v5 = themes_dir
+            .join("Stays")
+            .join("providers")
+            .join("noctalia-v5");
         fs::create_dir_all(&stays_v5).unwrap();
         fs::write(stays_v5.join("source.txt"), "custom\tJokerTheme\n").unwrap();
 
@@ -2105,12 +2219,30 @@ mod tests {
 
         let config_dir = TempDir::new().unwrap();
         let themes_dir = config_dir.path().join("hve").join("themes");
-        seed_meta(&themes_dir, "Gone", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
-        let gone_v5 = themes_dir.join("Gone").join("providers").join("noctalia-v5");
+        seed_meta(
+            &themes_dir,
+            "Gone",
+            "2026-09-21T00:00:00.000Z",
+            "",
+            &["noctalia-v5"],
+        );
+        let gone_v5 = themes_dir
+            .join("Gone")
+            .join("providers")
+            .join("noctalia-v5");
         fs::create_dir_all(&gone_v5).unwrap();
         fs::write(gone_v5.join("source.txt"), "custom JokerTheme\n").unwrap();
-        seed_meta(&themes_dir, "_Backup", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
-        let stays_v5 = themes_dir.join("_Backup").join("providers").join("noctalia-v5");
+        seed_meta(
+            &themes_dir,
+            "_Backup",
+            "2026-09-21T00:00:00.000Z",
+            "",
+            &["noctalia-v5"],
+        );
+        let stays_v5 = themes_dir
+            .join("_Backup")
+            .join("providers")
+            .join("noctalia-v5");
         fs::create_dir_all(&stays_v5).unwrap();
         fs::write(stays_v5.join("source.txt"), "custom JokerTheme\n").unwrap();
 
@@ -2146,14 +2278,33 @@ mod tests {
 
         let config_dir = TempDir::new().unwrap();
         let themes_dir = config_dir.path().join("hve").join("themes");
-        seed_meta(&themes_dir, "Gone", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
-        let gone_v5 = themes_dir.join("Gone").join("providers").join("noctalia-v5");
+        seed_meta(
+            &themes_dir,
+            "Gone",
+            "2026-09-21T00:00:00.000Z",
+            "",
+            &["noctalia-v5"],
+        );
+        let gone_v5 = themes_dir
+            .join("Gone")
+            .join("providers")
+            .join("noctalia-v5");
         fs::create_dir_all(&gone_v5).unwrap();
         fs::write(gone_v5.join("source.txt"), "custom JokerTheme\n").unwrap();
-        seed_meta(&themes_dir, "Locked", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
+        seed_meta(
+            &themes_dir,
+            "Locked",
+            "2026-09-21T00:00:00.000Z",
+            "",
+            &["noctalia-v5"],
+        );
         let locked_prov = themes_dir.join("Locked").join("providers");
         fs::create_dir_all(locked_prov.join("noctalia-v5")).unwrap();
-        fs::write(locked_prov.join("noctalia-v5").join("source.txt"), "custom JokerTheme\n").unwrap();
+        fs::write(
+            locked_prov.join("noctalia-v5").join("source.txt"),
+            "custom JokerTheme\n",
+        )
+        .unwrap();
         fs::set_permissions(&locked_prov, fs::Permissions::from_mode(0o000)).unwrap();
         if fs::read_dir(&locked_prov).is_ok() {
             // Permissive environment (e.g. running as root): the fixture
@@ -2199,8 +2350,17 @@ mod tests {
 
         let config_dir = TempDir::new().unwrap();
         let themes_dir = config_dir.path().join("hve").join("themes");
-        seed_meta(&themes_dir, "Live", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
-        let v5 = themes_dir.join("Live").join("providers").join("noctalia-v5");
+        seed_meta(
+            &themes_dir,
+            "Live",
+            "2026-09-21T00:00:00.000Z",
+            "",
+            &["noctalia-v5"],
+        );
+        let v5 = themes_dir
+            .join("Live")
+            .join("providers")
+            .join("noctalia-v5");
         fs::create_dir_all(&v5).unwrap();
         fs::write(v5.join("source.txt"), "custom JokerTheme\n").unwrap();
 
@@ -2214,7 +2374,10 @@ mod tests {
             palette.exists(),
             "the live palette of the applied theme must survive its delete"
         );
-        assert!(!themes_dir.join("Live").exists(), "theme dir itself must be gone");
+        assert!(
+            !themes_dir.join("Live").exists(),
+            "theme dir itself must be gone"
+        );
         assert!(tm.last_applied.is_empty(), "last_applied still clears");
 
         match old_noctalia {
@@ -2252,7 +2415,10 @@ mod tests {
                 "",
                 &["declares-stuff"],
             );
-            let prov = themes_dir.join(name).join("providers").join("declares-stuff");
+            let prov = themes_dir
+                .join(name)
+                .join("providers")
+                .join("declares-stuff");
             fs::create_dir_all(&prov).unwrap();
             fs::write(prov.join("record.txt"), key).unwrap();
         }
@@ -2278,7 +2444,10 @@ mod tests {
             !orphan.exists(),
             "an unreferenced declared artifact must be removed"
         );
-        assert!(shared.exists(), "the survivor's artifact must stay untouched");
+        assert!(
+            shared.exists(),
+            "the survivor's artifact must stay untouched"
+        );
 
         tm.delete("Stays").expect("delete must succeed");
         assert!(
@@ -2309,7 +2478,10 @@ mod tests {
                 "",
                 &["declares-stuff"],
             );
-            let prov = themes_dir.join(name).join("providers").join("declares-stuff");
+            let prov = themes_dir
+                .join(name)
+                .join("providers")
+                .join("declares-stuff");
             fs::create_dir_all(&prov).unwrap();
             fs::write(prov.join("record.txt"), "shared-key").unwrap();
         }
@@ -2357,12 +2529,27 @@ mod tests {
 
         let config_dir = TempDir::new().unwrap();
         let themes_dir = config_dir.path().join("hve").join("themes");
-        seed_meta(&themes_dir, "Gone", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
-        let gone_v5 = themes_dir.join("Gone").join("providers").join("noctalia-v5");
+        seed_meta(
+            &themes_dir,
+            "Gone",
+            "2026-09-21T00:00:00.000Z",
+            "",
+            &["noctalia-v5"],
+        );
+        let gone_v5 = themes_dir
+            .join("Gone")
+            .join("providers")
+            .join("noctalia-v5");
         fs::create_dir_all(&gone_v5).unwrap();
         fs::write(gone_v5.join("source.txt"), "custom K2\n").unwrap();
         // The survivor's record lives under a NON-owner provider dir.
-        seed_meta(&themes_dir, "Stays", "2026-09-21T00:00:00.000Z", "", &["noctalia"]);
+        seed_meta(
+            &themes_dir,
+            "Stays",
+            "2026-09-21T00:00:00.000Z",
+            "",
+            &["noctalia"],
+        );
         let stays_other = themes_dir.join("Stays").join("providers").join("noctalia");
         fs::create_dir_all(&stays_other).unwrap();
         fs::write(stays_other.join("source.txt"), "custom K2\n").unwrap();
@@ -2413,8 +2600,17 @@ mod tests {
 
         let config_dir = TempDir::new().unwrap();
         let themes_dir = config_dir.path().join("hve").join("themes");
-        seed_meta(&themes_dir, "Gone", "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
-        let gone_v5 = themes_dir.join("Gone").join("providers").join("noctalia-v5");
+        seed_meta(
+            &themes_dir,
+            "Gone",
+            "2026-09-21T00:00:00.000Z",
+            "",
+            &["noctalia-v5"],
+        );
+        let gone_v5 = themes_dir
+            .join("Gone")
+            .join("providers")
+            .join("noctalia-v5");
         fs::create_dir_all(&gone_v5).unwrap();
         fs::write(gone_v5.join("source.txt"), "custom K3\n").unwrap();
 
@@ -2453,7 +2649,13 @@ mod tests {
         let config_dir = TempDir::new().unwrap();
         let themes_dir = config_dir.path().join("hve").join("themes");
         for name in ["Gone", "Stays"] {
-            seed_meta(&themes_dir, name, "2026-09-21T00:00:00.000Z", "", &["noctalia-v5"]);
+            seed_meta(
+                &themes_dir,
+                name,
+                "2026-09-21T00:00:00.000Z",
+                "",
+                &["noctalia-v5"],
+            );
             let v5 = themes_dir.join(name).join("providers").join("noctalia-v5");
             fs::create_dir_all(&v5).unwrap();
             fs::write(v5.join("source.txt"), "custom K4\n").unwrap();

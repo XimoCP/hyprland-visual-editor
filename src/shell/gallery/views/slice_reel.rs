@@ -22,7 +22,13 @@ pub struct ReelSpring {
 
 impl ReelSpring {
     pub fn new(x: f32, k: f32, c: f32) -> Self {
-        Self { x, v: 0.0, target: x, k, c }
+        Self {
+            x,
+            v: 0.0,
+            target: x,
+            k,
+            c,
+        }
     }
 
     /// Map a desired settle duration to spring constants. ω = 6.64/s with
@@ -73,7 +79,11 @@ impl ReelSpring {
 
     /// Display value: exact target once settled, live x otherwise.
     pub fn value(&self) -> f32 {
-        if self.settled() { self.target } else { self.x }
+        if self.settled() {
+            self.target
+        } else {
+            self.x
+        }
     }
 }
 
@@ -190,7 +200,10 @@ mod tests {
         s.retarget(5.0);
         s.tick(0.05); // 50ms frame — worst case
         s.tick(0.05);
-        assert!(s.x.is_finite() && s.v.is_finite(), "sub-stepping must stay stable");
+        assert!(
+            s.x.is_finite() && s.v.is_finite(),
+            "sub-stepping must stay stable"
+        );
     }
 
     #[test]
@@ -229,7 +242,11 @@ mod tests {
         glide_to(0.0, 5.0, 300.0);
         assert!(step(1.0 / 240.0).is_some(), "armed reel moves");
         snap();
-        assert_eq!(step(1.0 / 240.0), None, "snap disarms — no further movement");
+        assert_eq!(
+            step(1.0 / 240.0),
+            None,
+            "snap disarms — no further movement"
+        );
     }
 
     #[test]

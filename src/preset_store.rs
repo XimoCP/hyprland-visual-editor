@@ -196,8 +196,7 @@ impl PresetStore {
     pub fn load(&self, name: &str) -> Result<String, String> {
         Self::validate_name(name)?;
         let path = self.base.join(format!("{}.lua", name));
-        fs::read_to_string(&path)
-            .map_err(|e| format!("Cannot read preset {}: {}", name, e))
+        fs::read_to_string(&path).map_err(|e| format!("Cannot read preset {}: {}", name, e))
     }
 
     /// Save a user preset. Overwrites if it already exists.
@@ -212,8 +211,7 @@ impl PresetStore {
         Self::refuse_a_name_that_already_carries_the_extension(name)?;
         self.init()?;
         let path = self.base.join(format!("{}.lua", name));
-        fs::write(&path, content)
-            .map_err(|e| format!("Cannot write preset {}: {}", name, e))
+        fs::write(&path, content).map_err(|e| format!("Cannot write preset {}: {}", name, e))
     }
 
     /// Rename a user preset. Returns error if target already exists.
@@ -242,8 +240,7 @@ impl PresetStore {
         if !path.exists() {
             return Err(format!("Preset '{}' not found", name));
         }
-        fs::remove_file(&path)
-            .map_err(|e| format!("Cannot delete preset {}: {}", name, e))
+        fs::remove_file(&path).map_err(|e| format!("Cannot delete preset {}: {}", name, e))
     }
 
     /// Check if a user preset exists.
@@ -360,7 +357,12 @@ impl PresetStore {
     /// to `None`.
     fn emit_leaf(params: &BorderParams, leaf_name: &str) -> String {
         let (enabled, speed, bezier, style) = match params.find_leaf(leaf_name) {
-            Some(leaf) => (leaf.enabled, leaf.speed, leaf.bezier.as_deref(), leaf.style.as_deref()),
+            Some(leaf) => (
+                leaf.enabled,
+                leaf.speed,
+                leaf.bezier.as_deref(),
+                leaf.style.as_deref(),
+            ),
             None => (false, None, None, None),
         };
         let mut line = format!(
@@ -399,13 +401,19 @@ impl PresetStore {
             return fs::read_to_string(&user)
                 .map_err(|e| format!("Cannot read {}: {}", user.display(), e));
         }
-        Err(format!("Preset '{}' not found in built-in or user dirs", name))
+        Err(format!(
+            "Preset '{}' not found in built-in or user dirs",
+            name
+        ))
     }
 
     /// Read an animation preset Lua file from the built-in or user preset
     /// directory. Mirrors [`Self::read_border_file`]; the Motion read-back
     /// (Phase 4) is its only consumer.
-    pub fn read_animation_file(name: &str, project_dir: &std::path::Path) -> Result<String, String> {
+    pub fn read_animation_file(
+        name: &str,
+        project_dir: &std::path::Path,
+    ) -> Result<String, String> {
         Self::validate_name(name)?;
         // Built-in directory (assets/animations/)
         let builtin = project_dir
@@ -422,7 +430,10 @@ impl PresetStore {
             return fs::read_to_string(&user)
                 .map_err(|e| format!("Cannot read {}: {}", user.display(), e));
         }
-        Err(format!("Preset '{}' not found in built-in or user dirs", name))
+        Err(format!(
+            "Preset '{}' not found in built-in or user dirs",
+            name
+        ))
     }
 
     /// Write a draft border Lua file to the fragments directory.
@@ -430,13 +441,15 @@ impl PresetStore {
     /// (which resolves names inside scanned dirs) and writes directly
     /// to the fragment that `border.sh` would have produced.
     /// Returns the path to the written fragment.
-    pub fn write_draft(content: &str, proj: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    pub fn write_draft(
+        content: &str,
+        proj: &std::path::Path,
+    ) -> Result<std::path::PathBuf, String> {
         let fragment_dir = proj.join("assets").join("fragments");
         fs::create_dir_all(&fragment_dir)
             .map_err(|e| format!("Cannot create fragments dir: {}", e))?;
         let fragment = fragment_dir.join("border.lua");
-        fs::write(&fragment, content)
-            .map_err(|e| format!("Cannot write draft fragment: {}", e))?;
+        fs::write(&fragment, content).map_err(|e| format!("Cannot write draft fragment: {}", e))?;
         Ok(fragment)
     }
 
@@ -449,7 +462,10 @@ impl PresetStore {
     /// Check whether a draft border fragment exists on disk.
     #[cfg(test)]
     pub fn has_draft(proj: &std::path::Path) -> bool {
-        proj.join("assets").join("fragments").join("border.lua").exists()
+        proj.join("assets")
+            .join("fragments")
+            .join("border.lua")
+            .exists()
     }
 
     /// Encode BorderParams color slots into a Slint-compat string for the
@@ -457,59 +473,79 @@ impl PresetStore {
     /// Format: comma-separated `type:value` where type is `p` (palette) or `c` (custom RGBA hex).
     pub fn encode_colors(colors: &[crate::border_preset::BorderColor]) -> String {
         use crate::border_preset::BorderColor;
-        let parts: Vec<String> = colors.iter().map(|c| match c {
-            BorderColor::Token(t) => format!("p:{}", t.as_str()),
-            BorderColor::Custom { r, g, b, a } => format!("c:{:02x}{:02x}{:02x}{:02x}", r, g, b, a),
-        }).collect();
+        let parts: Vec<String> = colors
+            .iter()
+            .map(|c| match c {
+                BorderColor::Token(t) => format!("p:{}", t.as_str()),
+                BorderColor::Custom { r, g, b, a } => {
+                    format!("c:{:02x}{:02x}{:02x}{:02x}", r, g, b, a)
+                }
+            })
+            .collect();
         parts.join(",")
     }
 
     /// Decode a Slint `tune-active-colors` string → Vec<BorderColor>.
     pub fn decode_colors(s: &str) -> Vec<crate::border_preset::BorderColor> {
         use crate::border_preset::{BorderColor, PaletteToken};
-        if s.is_empty() { return Vec::new(); }
-        s.split(',').filter(|p| !p.is_empty()).map(|p| {
-            if let Some(rest) = p.strip_prefix("p:") {
-                let tok = match rest.trim() {
-                    "primary" => PaletteToken::Primary,
-                    "secondary" => PaletteToken::Secondary,
-                    "tertiary" => PaletteToken::Tertiary,
-                    "error" => PaletteToken::Error,
-                    "surface" => PaletteToken::Surface,
-                    "surface_lowest" => PaletteToken::SurfaceLowest,
-                    _ => PaletteToken::Primary,
-                };
-                BorderColor::Token(tok)
-            } else if let Some(raw) = p.strip_prefix("c:") {
-                // Two encoders feed this field: `encode_colors` writes a bare
-                // "rrggbb[aa]", and the Slint colour picker writes "#rrggbbaa"
-                // (its `hex8` output). Accept both.
-                //
-                // Slicing `hex[i..i+2]` over the 9-byte "#rrggbbaa" form runs
-                // one byte past the end and panicked the whole process the
-                // first time a custom colour was committed from the running
-                // GUI. `chunks(2)` cannot overrun, and anything that is not a
-                // clean 6/8-digit payload degrades to the palette default
-                // rather than taking the app down with it.
-                let hex = raw.trim().trim_start_matches('#');
-                let bytes: Vec<u8> = if hex.len() == 6 || hex.len() == 8 {
-                    hex.as_bytes()
-                        .chunks(2)
-                        .filter_map(|c| std::str::from_utf8(c).ok())
-                        .filter_map(|c| u8::from_str_radix(c, 16).ok())
-                        .collect()
+        if s.is_empty() {
+            return Vec::new();
+        }
+        s.split(',')
+            .filter(|p| !p.is_empty())
+            .map(|p| {
+                if let Some(rest) = p.strip_prefix("p:") {
+                    let tok = match rest.trim() {
+                        "primary" => PaletteToken::Primary,
+                        "secondary" => PaletteToken::Secondary,
+                        "tertiary" => PaletteToken::Tertiary,
+                        "error" => PaletteToken::Error,
+                        "surface" => PaletteToken::Surface,
+                        "surface_lowest" => PaletteToken::SurfaceLowest,
+                        _ => PaletteToken::Primary,
+                    };
+                    BorderColor::Token(tok)
+                } else if let Some(raw) = p.strip_prefix("c:") {
+                    // Two encoders feed this field: `encode_colors` writes a bare
+                    // "rrggbb[aa]", and the Slint colour picker writes "#rrggbbaa"
+                    // (its `hex8` output). Accept both.
+                    //
+                    // Slicing `hex[i..i+2]` over the 9-byte "#rrggbbaa" form runs
+                    // one byte past the end and panicked the whole process the
+                    // first time a custom colour was committed from the running
+                    // GUI. `chunks(2)` cannot overrun, and anything that is not a
+                    // clean 6/8-digit payload degrades to the palette default
+                    // rather than taking the app down with it.
+                    let hex = raw.trim().trim_start_matches('#');
+                    let bytes: Vec<u8> = if hex.len() == 6 || hex.len() == 8 {
+                        hex.as_bytes()
+                            .chunks(2)
+                            .filter_map(|c| std::str::from_utf8(c).ok())
+                            .filter_map(|c| u8::from_str_radix(c, 16).ok())
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    match bytes.as_slice() {
+                        [r, g, b, a] => BorderColor::Custom {
+                            r: *r,
+                            g: *g,
+                            b: *b,
+                            a: *a,
+                        },
+                        [r, g, b] => BorderColor::Custom {
+                            r: *r,
+                            g: *g,
+                            b: *b,
+                            a: 0xff,
+                        },
+                        _ => BorderColor::Token(PaletteToken::Primary),
+                    }
                 } else {
-                    Vec::new()
-                };
-                match bytes.as_slice() {
-                    [r, g, b, a] => BorderColor::Custom { r: *r, g: *g, b: *b, a: *a },
-                    [r, g, b] => BorderColor::Custom { r: *r, g: *g, b: *b, a: 0xff },
-                    _ => BorderColor::Token(PaletteToken::Primary),
+                    BorderColor::Token(PaletteToken::Primary)
                 }
-            } else {
-                BorderColor::Token(PaletteToken::Primary)
-            }
-        }).collect()
+            })
+            .collect()
     }
 
     /// Encode inactive border color → Slint string.
@@ -519,57 +555,114 @@ impl PresetStore {
 
     /// Encode glow state → pipe-separated `key=value` pairs for Slint.
     pub fn encode_glow(g: Option<&crate::border_preset::GlowParams>) -> String {
-        let Some(glow) = g else { return String::new(); };
-        format!("enabled:{}|range:{}|power:{}|color:{}|inactive:{}|ox:{}|oy:{}",
-            glow.enabled, glow.range, glow.render_power,
+        let Some(glow) = g else {
+            return String::new();
+        };
+        format!(
+            "enabled:{}|range:{}|power:{}|color:{}|inactive:{}|ox:{}|oy:{}",
+            glow.enabled,
+            glow.range,
+            glow.render_power,
             Self::encode_colors(&[glow.color.clone()]),
             Self::encode_colors(&[glow.color_inactive.clone()]),
-            glow.offset.0, glow.offset.1)
+            glow.offset.0,
+            glow.offset.1
+        )
     }
 
     /// Decode glow string → Option<GlowParams>.
     pub fn decode_glow(s: &str) -> Option<crate::border_preset::GlowParams> {
-        if s.is_empty() { return None; }
+        if s.is_empty() {
+            return None;
+        }
         let (mut enabled, mut range, mut power) = (false, 20, 4);
         let (mut ox, mut oy) = (0i32, 0i32);
         let (mut color, mut inactive) = (
-            crate::border_preset::BorderColor::Custom { r: 0xff, g: 0xff, b: 0xff, a: 0x44 },
-            crate::border_preset::BorderColor::Custom { r: 0xff, g: 0xff, b: 0xff, a: 0x00 },
+            crate::border_preset::BorderColor::Custom {
+                r: 0xff,
+                g: 0xff,
+                b: 0xff,
+                a: 0x44,
+            },
+            crate::border_preset::BorderColor::Custom {
+                r: 0xff,
+                g: 0xff,
+                b: 0xff,
+                a: 0x00,
+            },
         );
         for part in s.split('|') {
-            if let Some(v) = part.strip_prefix("enabled:") { enabled = v == "true"; }
-            else if let Some(v) = part.strip_prefix("range:") { range = v.parse().unwrap_or(20); }
-            else if let Some(v) = part.strip_prefix("power:") { power = v.parse().unwrap_or(4); }
-            else if let Some(v) = part.strip_prefix("color:") { if let Some(c) = Self::decode_colors(v).into_iter().next() { color = c; } }
-            else if let Some(v) = part.strip_prefix("inactive:") { if let Some(c) = Self::decode_colors(v).into_iter().next() { inactive = c; } }
-            else if let Some(v) = part.strip_prefix("ox:") { ox = v.parse().unwrap_or(0); }
-            else if let Some(v) = part.strip_prefix("oy:") { oy = v.parse().unwrap_or(0); }
+            if let Some(v) = part.strip_prefix("enabled:") {
+                enabled = v == "true";
+            } else if let Some(v) = part.strip_prefix("range:") {
+                range = v.parse().unwrap_or(20);
+            } else if let Some(v) = part.strip_prefix("power:") {
+                power = v.parse().unwrap_or(4);
+            } else if let Some(v) = part.strip_prefix("color:") {
+                if let Some(c) = Self::decode_colors(v).into_iter().next() {
+                    color = c;
+                }
+            } else if let Some(v) = part.strip_prefix("inactive:") {
+                if let Some(c) = Self::decode_colors(v).into_iter().next() {
+                    inactive = c;
+                }
+            } else if let Some(v) = part.strip_prefix("ox:") {
+                ox = v.parse().unwrap_or(0);
+            } else if let Some(v) = part.strip_prefix("oy:") {
+                oy = v.parse().unwrap_or(0);
+            }
         }
-        Some(crate::border_preset::GlowParams { enabled, range, render_power: power, color, color_inactive: inactive, offset: (ox, oy) })
+        Some(crate::border_preset::GlowParams {
+            enabled,
+            range,
+            render_power: power,
+            color,
+            color_inactive: inactive,
+            offset: (ox, oy),
+        })
     }
 
     /// Encode animations → pipe-separated leaf entries for Slint.
     pub fn encode_animations(a: &[crate::border_preset::AnimLeaf]) -> String {
-        a.iter().map(|l| {
-            format!("{}|{}|{}|{}|{}", l.leaf, l.enabled,
-                l.speed.map(|s| s.to_string()).unwrap_or_default(),
-                l.bezier.as_deref().unwrap_or(""), l.style.as_deref().unwrap_or(""))
-        }).collect::<Vec<_>>().join(",")
+        a.iter()
+            .map(|l| {
+                format!(
+                    "{}|{}|{}|{}|{}",
+                    l.leaf,
+                    l.enabled,
+                    l.speed.map(|s| s.to_string()).unwrap_or_default(),
+                    l.bezier.as_deref().unwrap_or(""),
+                    l.style.as_deref().unwrap_or("")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
     }
 
     /// Decode animations string → Vec<AnimLeaf>.
     pub fn decode_animations(s: &str) -> Vec<crate::border_preset::AnimLeaf> {
-        if s.is_empty() { return Vec::new(); }
-        s.split(',').filter(|p| !p.is_empty()).map(|p| {
-            let parts: Vec<&str> = p.split('|').collect();
-            crate::border_preset::AnimLeaf {
-                leaf: parts.first().unwrap_or(&"").to_string(),
-                enabled: parts.get(1).map(|v| *v == "true").unwrap_or(false),
-                speed: parts.get(2).and_then(|v| v.parse().ok()),
-                bezier: parts.get(3).filter(|v| !v.is_empty()).map(|v| v.to_string()),
-                style: parts.get(4).filter(|v| !v.is_empty()).map(|v| v.to_string()),
-            }
-        }).collect()
+        if s.is_empty() {
+            return Vec::new();
+        }
+        s.split(',')
+            .filter(|p| !p.is_empty())
+            .map(|p| {
+                let parts: Vec<&str> = p.split('|').collect();
+                crate::border_preset::AnimLeaf {
+                    leaf: parts.first().unwrap_or(&"").to_string(),
+                    enabled: parts.get(1).map(|v| *v == "true").unwrap_or(false),
+                    speed: parts.get(2).and_then(|v| v.parse().ok()),
+                    bezier: parts
+                        .get(3)
+                        .filter(|v| !v.is_empty())
+                        .map(|v| v.to_string()),
+                    style: parts
+                        .get(4)
+                        .filter(|v| !v.is_empty())
+                        .map(|v| v.to_string()),
+                }
+            })
+            .collect()
     }
 }
 
@@ -1025,7 +1118,12 @@ mod tests {
         use crate::border_preset::{BorderColor, PaletteToken};
         let colors = vec![
             BorderColor::Token(PaletteToken::Primary),
-            BorderColor::Custom { r: 0xff, g: 0x00, b: 0x88, a: 0xcc },
+            BorderColor::Custom {
+                r: 0xff,
+                g: 0x00,
+                b: 0x88,
+                a: 0xcc,
+            },
             BorderColor::Token(PaletteToken::SurfaceLowest),
         ];
         let encoded = PresetStore::encode_colors(&colors);
@@ -1033,7 +1131,15 @@ mod tests {
         let decoded = PresetStore::decode_colors(&encoded);
         assert_eq!(decoded.len(), 3);
         assert_eq!(decoded[0], BorderColor::Token(PaletteToken::Primary));
-        assert_eq!(decoded[1], BorderColor::Custom { r: 0xff, g: 0x00, b: 0x88, a: 0xcc });
+        assert_eq!(
+            decoded[1],
+            BorderColor::Custom {
+                r: 0xff,
+                g: 0x00,
+                b: 0x88,
+                a: 0xcc
+            }
+        );
         assert_eq!(decoded[2], BorderColor::Token(PaletteToken::SurfaceLowest));
         // Empty round-trip
         assert_eq!(PresetStore::encode_colors(&[]), "");
@@ -1051,16 +1157,31 @@ mod tests {
         use crate::border_preset::{BorderColor, PaletteToken};
         assert_eq!(
             PresetStore::decode_colors("c:#371e1bff"),
-            vec![BorderColor::Custom { r: 0x37, g: 0x1e, b: 0x1b, a: 0xff }]
+            vec![BorderColor::Custom {
+                r: 0x37,
+                g: 0x1e,
+                b: 0x1b,
+                a: 0xff
+            }]
         );
         assert_eq!(
             PresetStore::decode_colors("c:ff0088cc"),
-            vec![BorderColor::Custom { r: 0xff, g: 0x00, b: 0x88, a: 0xcc }]
+            vec![BorderColor::Custom {
+                r: 0xff,
+                g: 0x00,
+                b: 0x88,
+                a: 0xcc
+            }]
         );
         // 6-digit payloads are opaque.
         assert_eq!(
             PresetStore::decode_colors("c:#371e1b"),
-            vec![BorderColor::Custom { r: 0x37, g: 0x1e, b: 0x1b, a: 0xff }]
+            vec![BorderColor::Custom {
+                r: 0x37,
+                g: 0x1e,
+                b: 0x1b,
+                a: 0xff
+            }]
         );
         // Short / empty / odd payloads degrade to the palette default instead
         // of taking the process down with them.
@@ -1079,9 +1200,21 @@ mod tests {
     fn encode_decode_glow_round_trip() {
         use crate::border_preset::{BorderColor, GlowParams};
         let glow = GlowParams {
-            enabled: true, range: 20, render_power: 4,
-            color: BorderColor::Custom { r: 0x9d, g: 0x00, b: 0xff, a: 0x88 },
-            color_inactive: BorderColor::Custom { r: 0x9d, g: 0x00, b: 0xff, a: 0x00 },
+            enabled: true,
+            range: 20,
+            render_power: 4,
+            color: BorderColor::Custom {
+                r: 0x9d,
+                g: 0x00,
+                b: 0xff,
+                a: 0x88,
+            },
+            color_inactive: BorderColor::Custom {
+                r: 0x9d,
+                g: 0x00,
+                b: 0xff,
+                a: 0x00,
+            },
             offset: (0, 0),
         };
         let encoded = PresetStore::encode_glow(Some(&glow));
@@ -1091,7 +1224,15 @@ mod tests {
         assert_eq!(decoded.enabled, true);
         assert_eq!(decoded.range, 20);
         assert_eq!(decoded.render_power, 4);
-        assert_eq!(decoded.color, BorderColor::Custom { r: 0x9d, g: 0x00, b: 0xff, a: 0x88 });
+        assert_eq!(
+            decoded.color,
+            BorderColor::Custom {
+                r: 0x9d,
+                g: 0x00,
+                b: 0xff,
+                a: 0x88
+            }
+        );
         // None round-trip
         assert_eq!(PresetStore::encode_glow(None), "");
         assert!(PresetStore::decode_glow("").is_none());
@@ -1101,8 +1242,20 @@ mod tests {
     fn encode_decode_animations_round_trip() {
         use crate::border_preset::AnimLeaf;
         let anims = vec![
-            AnimLeaf { leaf: "borderangle".into(), enabled: true, speed: Some(30), bezier: Some("my_curve".into()), style: Some("loop".into()) },
-            AnimLeaf { leaf: "border".into(), enabled: false, speed: None, bezier: None, style: None },
+            AnimLeaf {
+                leaf: "borderangle".into(),
+                enabled: true,
+                speed: Some(30),
+                bezier: Some("my_curve".into()),
+                style: Some("loop".into()),
+            },
+            AnimLeaf {
+                leaf: "border".into(),
+                enabled: false,
+                speed: None,
+                bezier: None,
+                style: None,
+            },
         ];
         let encoded = PresetStore::encode_animations(&anims);
         assert_eq!(encoded, "borderangle|true|30|my_curve|loop,border|false|||");
@@ -1143,9 +1296,19 @@ mod tests {
         use crate::border_preset::{AnimLeaf, BorderColor, BorderParams, GlowParams};
         let params = BorderParams {
             active_colors: vec![
-                BorderColor::Custom { r: 0xff, g: 0x00, b: 0x00, a: 0xff },
+                BorderColor::Custom {
+                    r: 0xff,
+                    g: 0x00,
+                    b: 0x00,
+                    a: 0xff,
+                },
                 BorderColor::Token(crate::border_preset::PaletteToken::Primary),
-                BorderColor::Custom { r: 0x00, g: 0xff, b: 0x00, a: 0x88 },
+                BorderColor::Custom {
+                    r: 0x00,
+                    g: 0xff,
+                    b: 0x00,
+                    a: 0x88,
+                },
             ],
             angle: 45,
             inactive: BorderColor::Token(crate::border_preset::PaletteToken::SurfaceLowest),
@@ -1154,15 +1317,43 @@ mod tests {
                 enabled: true,
                 range: 20,
                 render_power: 4,
-                color: BorderColor::Custom { r: 0xff, g: 0xff, b: 0xff, a: 0x44 },
-                color_inactive: BorderColor::Custom { r: 0xff, g: 0xff, b: 0xff, a: 0x00 },
+                color: BorderColor::Custom {
+                    r: 0xff,
+                    g: 0xff,
+                    b: 0xff,
+                    a: 0x44,
+                },
+                color_inactive: BorderColor::Custom {
+                    r: 0xff,
+                    g: 0xff,
+                    b: 0xff,
+                    a: 0x00,
+                },
                 offset: (0, 0),
             }),
             rule_enabled: true,
             animations: vec![
-                AnimLeaf { leaf: "borderangle".into(), enabled: true, speed: Some(30), bezier: Some("my_curve".into()), style: Some("loop".into()) },
-                AnimLeaf { leaf: "border".into(), enabled: false, speed: None, bezier: None, style: None },
-                AnimLeaf { leaf: "fadeShadow".into(), enabled: false, speed: None, bezier: None, style: None },
+                AnimLeaf {
+                    leaf: "borderangle".into(),
+                    enabled: true,
+                    speed: Some(30),
+                    bezier: Some("my_curve".into()),
+                    style: Some("loop".into()),
+                },
+                AnimLeaf {
+                    leaf: "border".into(),
+                    enabled: false,
+                    speed: None,
+                    bezier: None,
+                    style: None,
+                },
+                AnimLeaf {
+                    leaf: "fadeShadow".into(),
+                    enabled: false,
+                    speed: None,
+                    bezier: None,
+                    style: None,
+                },
             ],
             curves: vec!["my_curve".to_string()],
         };
@@ -1177,7 +1368,10 @@ mod tests {
         fs::write(preset_dir.join("roundtrip.lua"), &content).unwrap();
         let loaded = fs::read_to_string(preset_dir.join("roundtrip.lua")).unwrap();
         let reparsed = crate::border_preset::parse(&loaded);
-        assert_eq!(reparsed, params, "round-trip: parse(generate(params)) == params");
+        assert_eq!(
+            reparsed, params,
+            "round-trip: parse(generate(params)) == params"
+        );
         fs::remove_dir_all(&dir).unwrap();
         // Suppress unused variable warning
         let _ = store;
@@ -1188,7 +1382,10 @@ mod tests {
         use crate::border_preset::{AnimLeaf, BorderColor, BorderParams};
         let custom = |r, g, b, a| BorderColor::Custom { r, g, b, a };
         let params = BorderParams {
-            active_colors: vec![custom(0x00, 0xff, 0xf7, 0xff), custom(0x1a, 0x00, 0x26, 0xff)],
+            active_colors: vec![
+                custom(0x00, 0xff, 0xf7, 0xff),
+                custom(0x1a, 0x00, 0x26, 0xff),
+            ],
             angle: 45,
             inactive: custom(0x0f, 0x0f, 0x26, 0x55),
             border_size: Some(2),
@@ -1242,7 +1439,7 @@ mod tests {
 
     #[test]
     fn draft_lifecycle_write_list_unchanged_cleanup() {
-        use crate::border_preset::{BorderParams, BorderColor, PaletteToken};
+        use crate::border_preset::{BorderColor, BorderParams, PaletteToken};
         let dir = temp_dir();
         // Simulate a project dir with fragments/ and assets/borders/
         let proj = dir.join("project");
@@ -1264,7 +1461,9 @@ mod tests {
         assert!(fragment.exists(), "draft fragment must exist after write");
         assert!(PresetStore::has_draft(&proj));
         // User preset list must NOT contain the draft
-        let store = PresetStore { base: dir.join("user_presets") };
+        let store = PresetStore {
+            base: dir.join("user_presets"),
+        };
         fs::create_dir_all(&store.base).unwrap();
         store.save("real_preset", "-- test").unwrap();
         let names = store.list();

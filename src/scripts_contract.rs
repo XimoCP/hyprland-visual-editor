@@ -49,12 +49,7 @@ fn fake_bin_dir(base: &Path) -> PathBuf {
     bin
 }
 
-fn run_bash(
-    script: &str,
-    args: &[&str],
-    envs: &[(&str, &str)],
-    cwd: &Path,
-) -> Output {
+fn run_bash(script: &str, args: &[&str], envs: &[(&str, &str)], cwd: &Path) -> Output {
     let bin_tmp = tempfile::tempdir().unwrap();
     let bin = fake_bin_dir(bin_tmp.path());
     let path = format!(
@@ -145,7 +140,10 @@ fn core_scripts_have_no_format_detection() {
         "reload_coalescer.sh",
     ] {
         let src = read_script(name);
-        assert!(!src.contains("HVE_FORMAT"), "{name} must not read HVE_FORMAT");
+        assert!(
+            !src.contains("HVE_FORMAT"),
+            "{name} must not read HVE_FORMAT"
+        );
         assert!(
             !src.contains("detect_format"),
             "{name} must not call detect_format"
@@ -167,10 +165,7 @@ fn prompts_target_lua_fragments_only() {
     ];
     for (name, fragment) in cases {
         let src = read_script(name);
-        assert!(
-            src.contains(fragment),
-            "{name} must target {fragment}"
-        );
+        assert!(src.contains(fragment), "{name} must target {fragment}");
         let opposite = fragment.replace(".lua", ".conf");
         assert!(
             !src.contains(&opposite),
@@ -182,7 +177,10 @@ fn prompts_target_lua_fragments_only() {
 #[test]
 fn assembler_and_scanner_are_lua_only() {
     let assemble = read_script("assemble.sh");
-    assert!(assemble.contains("overlay.lua"), "assembler targets overlay.lua");
+    assert!(
+        assemble.contains("overlay.lua"),
+        "assembler targets overlay.lua"
+    );
     assert!(
         !assemble.contains("overlay.conf"),
         "assembler must not reference overlay.conf"
@@ -190,10 +188,7 @@ fn assembler_and_scanner_are_lua_only() {
 
     let scan = read_script("scan.sh");
     assert!(scan.contains("\"*.lua\""), "scanner must glob *.lua");
-    assert!(
-        !scan.contains("\"*.conf\""),
-        "scanner must not glob *.conf"
-    );
+    assert!(!scan.contains("\"*.conf\""), "scanner must not glob *.conf");
 }
 
 #[test]
@@ -709,12 +704,7 @@ fn descriptor_with_symlinked_theme_dir_falls_through_to_live_palette() {
     std::fs::create_dir_all(link.parent().unwrap()).unwrap();
     std::os::unix::fs::symlink(&outside, &link).unwrap();
     let palette = link.join("evil.json");
-    write_color_authority(
-        home.path(),
-        "Animation",
-        palette.to_str().unwrap(),
-        "evil",
-    );
+    write_color_authority(home.path(), "Animation", palette.to_str().unwrap(), "evil");
     write_live_palette(home.path(), "skwd-wall", LIVE_SKWALL_JSON);
 
     let colors = run_get_colors_with_scheme(home.path(), "custom skwd-wall");
@@ -741,15 +731,9 @@ fn descriptor_with_symlinked_palette_file_falls_through_to_live_palette() {
         .join("themes")
         .join("Animation");
     std::fs::create_dir_all(&theme_dir).unwrap();
-    std::os::unix::fs::symlink(outside.join("evil.json"), theme_dir.join("link.json"))
-        .unwrap();
+    std::os::unix::fs::symlink(outside.join("evil.json"), theme_dir.join("link.json")).unwrap();
     let palette = theme_dir.join("link.json");
-    write_color_authority(
-        home.path(),
-        "Animation",
-        palette.to_str().unwrap(),
-        "evil",
-    );
+    write_color_authority(home.path(), "Animation", palette.to_str().unwrap(), "evil");
     write_live_palette(home.path(), "skwd-wall", LIVE_SKWALL_JSON);
 
     let colors = run_get_colors_with_scheme(home.path(), "custom skwd-wall");
@@ -820,18 +804,17 @@ fn sandbox_scripts_with_modules() -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::TempDir::new().unwrap();
     let scripts = tmp.path().join("scripts");
     std::fs::create_dir_all(scripts.join("color_sources.d")).unwrap();
-    std::fs::copy(
-        scripts_dir().join("colors.sh"),
-        scripts.join("colors.sh"),
-    )
-    .unwrap();
+    std::fs::copy(scripts_dir().join("colors.sh"), scripts.join("colors.sh")).unwrap();
     let repo_modules = scripts_dir().join("color_sources.d");
     if repo_modules.is_dir() {
         for entry in std::fs::read_dir(&repo_modules).unwrap().flatten() {
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "sh") {
-                std::fs::copy(&path, scripts.join("color_sources.d").join(entry.file_name()))
-                    .unwrap();
+                std::fs::copy(
+                    &path,
+                    scripts.join("color_sources.d").join(entry.file_name()),
+                )
+                .unwrap();
             }
         }
     }
@@ -1014,10 +997,16 @@ impl OverlaySandbox {
             std::fs::copy(scripts_dir().join(name), scripts.join(name))
                 .unwrap_or_else(|e| panic!("cannot stage {name}: {e}"));
         }
-        for entry in std::fs::read_dir(scripts_dir().join("color_sources.d")).unwrap().flatten() {
+        for entry in std::fs::read_dir(scripts_dir().join("color_sources.d"))
+            .unwrap()
+            .flatten()
+        {
             if entry.path().extension().is_some_and(|e| e == "sh") {
-                std::fs::copy(entry.path(), scripts.join("color_sources.d").join(entry.file_name()))
-                    .unwrap();
+                std::fs::copy(
+                    entry.path(),
+                    scripts.join("color_sources.d").join(entry.file_name()),
+                )
+                .unwrap();
             }
         }
 
@@ -1025,7 +1014,10 @@ impl OverlaySandbox {
         // a user can apply.
         let borders = root.join("assets/borders");
         std::fs::create_dir_all(&borders).unwrap();
-        for entry in std::fs::read_dir(repo_root().join("assets/borders")).unwrap().flatten() {
+        for entry in std::fs::read_dir(repo_root().join("assets/borders"))
+            .unwrap()
+            .flatten()
+        {
             std::fs::copy(entry.path(), borders.join(entry.file_name())).unwrap();
         }
 
@@ -1033,7 +1025,10 @@ impl OverlaySandbox {
         // covered with the same realism as borders.
         let animations = root.join("assets/animations");
         std::fs::create_dir_all(&animations).unwrap();
-        for entry in std::fs::read_dir(repo_root().join("assets/animations")).unwrap().flatten() {
+        for entry in std::fs::read_dir(repo_root().join("assets/animations"))
+            .unwrap()
+            .flatten()
+        {
             std::fs::copy(entry.path(), animations.join(entry.file_name())).unwrap();
         }
 
@@ -1062,7 +1057,10 @@ impl OverlaySandbox {
                 "XDG_CONFIG_HOME".to_owned(),
                 self.root.join("xdg").to_string_lossy().into_owned(),
             ),
-            ("HVE_CACHE_DIR".to_owned(), self.cache.to_string_lossy().into_owned()),
+            (
+                "HVE_CACHE_DIR".to_owned(),
+                self.cache.to_string_lossy().into_owned(),
+            ),
             (
                 "PATH".to_owned(),
                 format!(
@@ -1182,11 +1180,7 @@ impl OverlaySandbox {
         let end = rest
             .find('"')
             .expect("the roster declaration must be closed");
-        let new_src = format!(
-            "{} {token}{}",
-            &src[..start + needle.len()],
-            &rest[end..]
-        );
+        let new_src = format!("{} {token}{}", &src[..start + needle.len()], &rest[end..]);
         std::fs::write(&path, new_src).unwrap();
     }
 }
@@ -1262,7 +1256,9 @@ fn referenced_tokens(overlay: &str, locals: &BTreeSet<String>) -> BTreeSet<Strin
         let Some(after) = after.strip_prefix('=') else {
             continue;
         };
-        let Some(open) = after.find('{') else { continue };
+        let Some(open) = after.find('{') else {
+            continue;
+        };
         let Some(close) = after[open..].find('}') else {
             continue;
         };
@@ -1466,9 +1462,7 @@ fn preset_without_spaces_around_equals_is_still_scanned() {
     let locals = preset_locals(&overlay);
     let refs = referenced_tokens(&overlay, &locals);
     assert!(
-        refs.contains("primary")
-            && refs.contains("secondary")
-            && refs.contains("tertiary"),
+        refs.contains("primary") && refs.contains("secondary") && refs.contains("tertiary"),
         "the scanner must find palette references written as `colors={{…}}`: {refs:?}"
     );
 
@@ -1505,18 +1499,43 @@ fn preset_without_spaces_around_equals_is_still_scanned() {
 fn keeper_saved_border_params() -> BorderParams {
     BorderParams {
         active_colors: vec![
-            BorderColor::Custom { r: 0x11, g: 0x22, b: 0x33, a: 0xff },
-            BorderColor::Custom { r: 0x44, g: 0x55, b: 0x66, a: 0xff },
+            BorderColor::Custom {
+                r: 0x11,
+                g: 0x22,
+                b: 0x33,
+                a: 0xff,
+            },
+            BorderColor::Custom {
+                r: 0x44,
+                g: 0x55,
+                b: 0x66,
+                a: 0xff,
+            },
         ],
         angle: 77,
-        inactive: BorderColor::Custom { r: 0x77, g: 0x88, b: 0x99, a: 0xff },
+        inactive: BorderColor::Custom {
+            r: 0x77,
+            g: 0x88,
+            b: 0x99,
+            a: 0xff,
+        },
         border_size: Some(3),
         glow: Some(GlowParams {
             enabled: true,
             range: 21,
             render_power: 6,
-            color: BorderColor::Custom { r: 0xaa, g: 0xbb, b: 0xcc, a: 0xff },
-            color_inactive: BorderColor::Custom { r: 0x01, g: 0x02, b: 0x03, a: 0xff },
+            color: BorderColor::Custom {
+                r: 0xaa,
+                g: 0xbb,
+                b: 0xcc,
+                a: 0xff,
+            },
+            color_inactive: BorderColor::Custom {
+                r: 0x01,
+                g: 0x02,
+                b: 0x03,
+                a: 0xff,
+            },
             offset: (3, 4),
         }),
         rule_enabled: false,
@@ -1538,7 +1557,8 @@ fn keeper_saved_border_params() -> BorderParams {
 #[test]
 fn saved_user_border_preset_reaches_the_overlay() {
     let sb = OverlaySandbox::build();
-    let content = PresetStore::generate_border_lua_full("keeper_saved", &keeper_saved_border_params());
+    let content =
+        PresetStore::generate_border_lua_full("keeper_saved", &keeper_saved_border_params());
     sb.write_user_preset("borders", "keeper_saved", &content);
 
     let overlay = sb.apply_border_preset("keeper_saved");
@@ -1963,7 +1983,11 @@ hve_install_reference_themes "$1" "$2"
     );
     let out = run_bash(
         &script,
-        &["hve-themes-test", src.to_str().unwrap(), dest.to_str().unwrap()],
+        &[
+            "hve-themes-test",
+            src.to_str().unwrap(),
+            dest.to_str().unwrap(),
+        ],
         &[],
         root.path(),
     );

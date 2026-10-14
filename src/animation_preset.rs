@@ -155,9 +155,9 @@ pub fn parse(content: &str) -> Option<AnimationParams> {
     // `popin 80%`, silently changing the animation. The pair cannot be deleted
     // by accident.
     let both_windows_leaves_are_popin_100 = ["windowsIn", "windowsOut"].iter().all(|leaf| {
-        anims.iter().any(|a| {
-            a.leaf == *leaf && a.style.as_deref().map(str::trim) == Some("popin 100%")
-        })
+        anims
+            .iter()
+            .any(|a| a.leaf == *leaf && a.style.as_deref().map(str::trim) == Some("popin 100%"))
     });
     let style = chosen
         .and_then(|a| a.style.as_deref())
@@ -360,7 +360,10 @@ fn cut_top_level_comma(s: &str) -> &str {
 
 /// Extract a floating-point `key = N` assignment.
 fn extract_f32_value(text: &str, key: &str) -> Option<f32> {
-    extract_assignment_value(text, key)?.trim().parse::<f32>().ok()
+    extract_assignment_value(text, key)?
+        .trim()
+        .parse::<f32>()
+        .ok()
 }
 
 /// Extract a quoted `key = "value"` assignment (quotes stripped).
@@ -447,7 +450,11 @@ mod tests {
         ];
         for p in cases {
             let lua = generate("Test", &p);
-            assert_eq!(parse(&lua), Some(p.clone()), "round trip failed for {p:?}\n{lua}");
+            assert_eq!(
+                parse(&lua),
+                Some(p.clone()),
+                "round trip failed for {p:?}\n{lua}"
+            );
         }
     }
 
@@ -496,13 +503,28 @@ mod tests {
 
     #[test]
     fn style_from_lua_matches_family_prefix() {
-        assert_eq!(AnimationStyle::from_lua("popin 70%"), Some(AnimationStyle::Popin));
-        assert_eq!(AnimationStyle::from_lua("slide right"), Some(AnimationStyle::Slide));
-        assert_eq!(AnimationStyle::from_lua("slidevert"), Some(AnimationStyle::Slide));
+        assert_eq!(
+            AnimationStyle::from_lua("popin 70%"),
+            Some(AnimationStyle::Popin)
+        );
+        assert_eq!(
+            AnimationStyle::from_lua("slide right"),
+            Some(AnimationStyle::Slide)
+        );
+        assert_eq!(
+            AnimationStyle::from_lua("slidevert"),
+            Some(AnimationStyle::Slide)
+        );
         assert_eq!(AnimationStyle::from_lua("fade"), Some(AnimationStyle::Fade));
         // The blend must not be swallowed by the plain `slide` prefix.
-        assert_eq!(AnimationStyle::from_lua("slidefade 15%"), Some(AnimationStyle::SlideFade));
-        assert_eq!(AnimationStyle::from_lua("slidefadevert 20%"), Some(AnimationStyle::SlideFade));
+        assert_eq!(
+            AnimationStyle::from_lua("slidefade 15%"),
+            Some(AnimationStyle::SlideFade)
+        );
+        assert_eq!(
+            AnimationStyle::from_lua("slidefadevert 20%"),
+            Some(AnimationStyle::SlideFade)
+        );
         assert_eq!(AnimationStyle::from_lua("loop"), None);
     }
 

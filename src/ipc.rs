@@ -141,10 +141,7 @@ fn ensure_private_dir(dir: &Path) -> Result<(), String> {
 /// Server, `cleanup()` and the second-launch handoff all go through here, so
 /// the three always name the same file. The directory is private (0700) by
 /// the time this returns, i.e. BEFORE any bind.
-fn socket_path_from(
-    xdg_runtime_dir: Option<&str>,
-    home: Option<&str>,
-) -> Result<PathBuf, String> {
+fn socket_path_from(xdg_runtime_dir: Option<&str>, home: Option<&str>) -> Result<PathBuf, String> {
     let dir = resolve_socket_dir(&observe_runtime_dir(xdg_runtime_dir), home)?;
     ensure_private_dir(&dir)?;
     Ok(dir.join("hve.sock"))
@@ -352,11 +349,7 @@ pub fn handoff_show_running() -> HandoffReport {
 
 // ─── Connection handler ──────────────────────────────────────────────
 
-fn handle_connection(
-    mut stream: UnixStream,
-    window: &slint::Weak<crate::MainWindow>,
-    proj: &Path,
-) {
+fn handle_connection(mut stream: UnixStream, window: &slint::Weak<crate::MainWindow>, proj: &Path) {
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
 
     let mut reader = BufReader::new(&stream);
@@ -374,11 +367,7 @@ fn handle_connection(
 
 // ─── Dispatch ────────────────────────────────────────────────────────
 
-fn dispatch_command(
-    cmd: &str,
-    window: &slint::Weak<crate::MainWindow>,
-    proj: &Path,
-) -> String {
+fn dispatch_command(cmd: &str, window: &slint::Weak<crate::MainWindow>, proj: &Path) -> String {
     match cmd {
         "pause-restart" => cmd_pause_restart(window),
         "next-anim" => cmd_next_anim(window),
@@ -587,12 +576,13 @@ fn cmd_refresh_theme(window: &slint::Weak<crate::MainWindow>, proj: &Path) -> St
         Some(colors) => colors,
         None => return "error: could not refresh visual state\n".to_string(),
     };
-    format_response(invoke_on_main(window, move |win| {
-        match crate::apply_visual_state(&win, &colors, &theme_pref) {
+    format_response(invoke_on_main(
+        window,
+        move |win| match crate::apply_visual_state(&win, &colors, &theme_pref) {
             Some(_) => "ok".to_string(),
             None => "error: could not refresh visual state".to_string(),
-        }
-    }))
+        },
+    ))
 }
 
 /// Route the `assert-color-authority` capability: re-assert the applied
@@ -764,7 +754,11 @@ fn cmd_repair_color_authority(proj: &Path) -> String {
 pub(crate) fn resolve_applied_authority(proj: &Path) -> String {
     let cfg = Config::load();
     let config_dir = dirs::config_dir()
-        .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")))
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join(".config"))
+        })
         .unwrap_or_else(|| PathBuf::from("/tmp/hve-config"));
     let mut manager = crate::theme_manager::ThemeManager::new(&config_dir);
     let engine = Engine::new(proj);
@@ -773,7 +767,8 @@ pub(crate) fn resolve_applied_authority(proj: &Path) -> String {
     resolve_assert_color_authority(cfg.last_applied_theme.trim(), &themes_dir, &manager)
 }
 
-fn cmd_quit(window: &slint::Weak<crate::MainWindow>) -> String {    let w = window.clone();
+fn cmd_quit(window: &slint::Weak<crate::MainWindow>) -> String {
+    let w = window.clone();
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(win) = w.upgrade() {
             let _ = win.window().hide();
@@ -847,7 +842,10 @@ mod tests {
 
     #[test]
     fn test_format_response_err_prefix() {
-        assert_eq!(format_response(Err("something broke".into())), "error: something broke\n");
+        assert_eq!(
+            format_response(Err("something broke".into())),
+            "error: something broke\n"
+        );
     }
 
     #[test]
@@ -898,7 +896,9 @@ mod tests {
     /// connects in time, so a regressed (never-connecting) client fails the
     /// assertion instead of hanging the test suite.
     fn accept_bounded(listener: &UnixListener, timeout: Duration) -> Option<UnixStream> {
-        listener.set_nonblocking(true).expect("listener nonblocking");
+        listener
+            .set_nonblocking(true)
+            .expect("listener nonblocking");
         let deadline = Instant::now() + timeout;
         loop {
             match listener.accept() {
@@ -986,9 +986,14 @@ mod tests {
                     "the server refusal must be surfaced, got: {detail}"
                 );
             }
-            HandoffOutcome::Shown(msg) => panic!("an error reply must not count as raised, got {msg}"),
+            HandoffOutcome::Shown(msg) => {
+                panic!("an error reply must not count as raised, got {msg}")
+            }
         }
-        assert!(server.join().expect("server thread").is_some(), "the client must connect");
+        assert!(
+            server.join().expect("server thread").is_some(),
+            "the client must connect"
+        );
     }
 
     #[test]
@@ -1006,7 +1011,10 @@ mod tests {
             matches!(outcome, HandoffOutcome::Unreachable(_)),
             "a connection closed without a reply is not a raised window, got: {outcome:?}"
         );
-        assert!(server.join().expect("server thread").is_some(), "the client must connect");
+        assert!(
+            server.join().expect("server thread").is_some(),
+            "the client must connect"
+        );
     }
 
     #[test]
@@ -1034,7 +1042,10 @@ mod tests {
             "the handoff must be bounded, waited {elapsed:?}"
         );
         let _ = release_tx.send(());
-        assert!(server.join().expect("server thread").is_some(), "the client must connect");
+        assert!(
+            server.join().expect("server thread").is_some(),
+            "the client must connect"
+        );
     }
 
     #[test]
@@ -1057,7 +1068,10 @@ mod tests {
             "the message must tell the user what happened, got: {}",
             report.message
         );
-        assert!(server.join().expect("server thread").is_some(), "the client must connect");
+        assert!(
+            server.join().expect("server thread").is_some(),
+            "the client must connect"
+        );
     }
 
     #[test]
@@ -1214,7 +1228,11 @@ mod tests {
 
         assert_eq!(response, "ok\n");
         let got = calls.lock().unwrap();
-        assert_eq!(got.len(), 1, "exactly one re-assert call for the applied theme");
+        assert_eq!(
+            got.len(),
+            1,
+            "exactly one re-assert call for the applied theme"
+        );
         assert_eq!(got[0], themes_dir.join("Demo"));
     }
 
@@ -1224,8 +1242,14 @@ mod tests {
         let calls = register_fake(&mut tm, None);
         seed_theme_meta(&themes_dir, "Demo", &["fake-colours"]);
 
-        assert_eq!(resolve_assert_color_authority("Demo", &themes_dir, &tm), "ok\n");
-        assert_eq!(resolve_assert_color_authority("Demo", &themes_dir, &tm), "ok\n");
+        assert_eq!(
+            resolve_assert_color_authority("Demo", &themes_dir, &tm),
+            "ok\n"
+        );
+        assert_eq!(
+            resolve_assert_color_authority("Demo", &themes_dir, &tm),
+            "ok\n"
+        );
         assert_eq!(
             calls.lock().unwrap().len(),
             2,
@@ -1294,7 +1318,10 @@ mod tests {
 
         let response = handle_keeper_palette_change();
 
-        assert_eq!(response, "noop\n", "the watcher must still see a quiet answer");
+        assert_eq!(
+            response, "noop\n",
+            "the watcher must still see a quiet answer"
+        );
         assert!(
             crate::color_authority::keeper_owns_palette(),
             "the keeper must own the palette now"
@@ -1527,9 +1554,8 @@ mod tests {
     fn without_a_runtime_dir_the_socket_lands_in_a_private_0700_directory() {
         let home = tempfile::tempdir().expect("home");
 
-        let path =
-            socket_path_from(None, Some(home.path().to_str().expect("utf-8 home")))
-                .expect("a usable HOME is enough");
+        let path = socket_path_from(None, Some(home.path().to_str().expect("utf-8 home")))
+            .expect("a usable HOME is enough");
 
         assert_ne!(
             path,
@@ -1564,11 +1590,8 @@ mod tests {
     #[test]
     fn a_set_valid_xdg_runtime_dir_is_still_used() {
         let runtime = tempfile::tempdir().expect("runtime dir");
-        std::fs::set_permissions(
-            runtime.path(),
-            std::fs::Permissions::from_mode(0o700),
-        )
-        .expect("make the fixture private");
+        std::fs::set_permissions(runtime.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("make the fixture private");
         let home = tempfile::tempdir().expect("home");
 
         let path = socket_path_from(

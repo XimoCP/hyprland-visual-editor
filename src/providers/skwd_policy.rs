@@ -142,7 +142,10 @@ pub(crate) fn marker_path() -> PathBuf {
 /// the normal `restore_color_authority` path; the previous value it must
 /// restore lives in the pending marker.
 pub(crate) fn held_previous_value() -> Option<String> {
-    read_marker().ok().flatten().map(|marker| marker.previous_value)
+    read_marker()
+        .ok()
+        .flatten()
+        .map(|marker| marker.previous_value)
 }
 
 /// True when the engine owns the color scheme and will asynchronously
@@ -446,7 +449,11 @@ pub(crate) fn plan_restore(text: &str, previous_value: &str) -> Option<RestorePl
     // Semantic double-check: the parsed document must agree that the switch
     // is currently off (the token scan and the parse cannot disagree once
     // both say "off" with a single anchor — but each check is cheap).
-    if parsed.get("theme").and_then(|t| t.get("policy")).and_then(|p| p.as_str()) != Some("off")
+    if parsed
+        .get("theme")
+        .and_then(|t| t.get("policy"))
+        .and_then(|p| p.as_str())
+        != Some("off")
     {
         return None;
     }
@@ -501,9 +508,12 @@ fn yield_skip_decision(text: &str) -> (&'static str, &'static str) {
 /// failure path so a failed write leaves nothing behind (W1 finding 1),
 /// and crash orphans from another pid are swept before writing.
 fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
-    let dir = path
-        .parent()
-        .ok_or_else(|| format!("[skwd-policy] cannot atomically write {}: no parent dir", path.display()))?;
+    let dir = path.parent().ok_or_else(|| {
+        format!(
+            "[skwd-policy] cannot atomically write {}: no parent dir",
+            path.display()
+        )
+    })?;
     sweep_orphaned_temps(dir, TEMP_STEM);
     let tmp = temp_sibling(path, TEMP_STEM);
     let mode = fs::metadata(path).ok().map(|m| m.permissions());
@@ -522,7 +532,11 @@ fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
     #[cfg(unix)]
     if let Some(perms) = &mode {
         fs::set_permissions(&tmp, perms.clone()).map_err(|e| {
-            format!("[skwd-policy] cannot preserve mode on {}: {}", tmp.display(), e)
+            format!(
+                "[skwd-policy] cannot preserve mode on {}: {}",
+                tmp.display(),
+                e
+            )
         })?;
     }
     fs::rename(&tmp, path).map_err(|e| {
@@ -548,14 +562,24 @@ fn write_marker(config_path: &Path, previous_value: &str) -> Result<(), String> 
     let dir = path
         .parent()
         .ok_or_else(|| format!("[skwd-policy] marker {} has no parent dir", path.display()))?;
-    fs::create_dir_all(dir)
-        .map_err(|e| format!("[skwd-policy] cannot create cache dir {}: {}", dir.display(), e))?;
+    fs::create_dir_all(dir).map_err(|e| {
+        format!(
+            "[skwd-policy] cannot create cache dir {}: {}",
+            dir.display(),
+            e
+        )
+    })?;
     sweep_orphaned_temps(dir, MARKER_TEMP_STEM);
     let tmp = temp_sibling(&path, MARKER_TEMP_STEM);
     let mut cleanup = TempFileGuard::new(&tmp);
     {
-        let mut f = fs::File::create(&tmp)
-            .map_err(|e| format!("[skwd-policy] cannot create marker {}: {}", tmp.display(), e))?;
+        let mut f = fs::File::create(&tmp).map_err(|e| {
+            format!(
+                "[skwd-policy] cannot create marker {}: {}",
+                tmp.display(),
+                e
+            )
+        })?;
         f.write_all(raw.as_bytes())
             .map_err(|e| format!("[skwd-policy] cannot write marker {}: {}", tmp.display(), e))?;
         // As durable as the config write it protects: a power cut must not
@@ -759,7 +783,10 @@ pub(crate) fn restore_color_authority(previous_value: &str) -> Result<bool, Stri
             // claim is moot. Clear the marker and report "nothing written".
             crate::decision_log::record(
                 "ENGINE ABSENT",
-                &format!("engine config not found at {}; nothing to release", path.display()),
+                &format!(
+                    "engine config not found at {}; nothing to release",
+                    path.display()
+                ),
             );
             clear_marker()?;
             return Ok(false);
@@ -773,7 +800,7 @@ pub(crate) fn restore_color_authority(previous_value: &str) -> Result<bool, Stri
                 "[skwd-policy] cannot re-read engine config {}: {}",
                 path.display(),
                 e
-            ))
+            ));
         }
     };
     let plan = match plan_restore(&text, previous_value) {
@@ -825,7 +852,11 @@ pub(crate) fn restore_color_authority(previous_value: &str) -> Result<bool, Stri
     );
     crate::decision_log::record(
         "MUTE RELEASED",
-        &format!("theme.policy -> \"{}\" ({})", previous_value, path.display()),
+        &format!(
+            "theme.policy -> \"{}\" ({})",
+            previous_value,
+            path.display()
+        ),
     );
     Ok(true)
 }
@@ -907,7 +938,9 @@ pub(crate) fn rehold_color_authority() -> Result<bool, String> {
     // as the keeper's hand.
     let anchor = serde_json::json!({ "closed_at": now_epoch_secs() }).to_string();
     let _ = fs::write(picker_voice_path(), anchor);
-    tracing::info!("[skwd-policy] engine picker closed: the mute is back (theme.policy -> \"off\")");
+    tracing::info!(
+        "[skwd-policy] engine picker closed: the mute is back (theme.policy -> \"off\")"
+    );
     crate::decision_log::record(
         "PICKER QUIET",
         "engine picker closed; the engine is silenced again",
@@ -1008,7 +1041,10 @@ pub(crate) fn recover_crashed_yield() -> Result<bool, String> {
             // Config no longer exists; nothing to repair.
             crate::decision_log::record(
                 "ENGINE ABSENT",
-                &format!("crash repair: engine config not found at {}", path.display()),
+                &format!(
+                    "crash repair: engine config not found at {}",
+                    path.display()
+                ),
             );
             clear_marker()?;
             return Ok(true);
@@ -1016,14 +1052,18 @@ pub(crate) fn recover_crashed_yield() -> Result<bool, String> {
         Err(e) => {
             crate::decision_log::record(
                 "ENGINE UNREADABLE",
-                &format!("crash repair: cannot read engine config {}: {}", path.display(), e),
+                &format!(
+                    "crash repair: cannot read engine config {}: {}",
+                    path.display(),
+                    e
+                ),
             );
             return Err(format!(
                 "[skwd-policy] cannot read engine config {} for crash \
                  repair: {}",
                 path.display(),
                 e
-            ))
+            ));
         }
     };
     if let Some(plan) = plan_restore(&text, &marker.previous_value) {
@@ -1091,8 +1131,7 @@ mod tests {
 
     /// Two bare `"policy"` anchors: the general switch plus a hidden second
     /// key. The edit MUST refuse — which one is the switch to flip?
-    const AMBIGUOUS: &str =
-        r#"{"theme": {"policy": "wallpaper"}, "other": {"policy": "fixed"}}"#;
+    const AMBIGUOUS: &str = r#"{"theme": {"policy": "wallpaper"}, "other": {"policy": "fixed"}}"#;
 
     /// Hermetic shell harness. `TempEnv` redirects HOME/XDG* under the
     /// shared env lock AND the `SKWD_WALL_V2_CONFIG` seam is redirected at
@@ -1212,7 +1251,12 @@ mod tests {
         // The document keeps its shape; the dotted per-wallpaper keys are
         // untouched and still say "wallpaper".
         assert_eq!(plan.new_text.matches("\"policy\"").count(), 1);
-        assert_eq!(plan.new_text.matches("\"theme.policy\": \"wallpaper\"").count(), 2);
+        assert_eq!(
+            plan.new_text
+                .matches("\"theme.policy\": \"wallpaper\"")
+                .count(),
+            2
+        );
         assert!(plan.new_text.contains("\"policy\": \"off\""));
         assert!(!plan.new_text.contains("\"theme.policy\": \"off\""));
     }
@@ -1284,10 +1328,11 @@ mod tests {
         // happened, so there is nothing to restore.
         assert!(plan_restore(r#"{"theme": {"policy": "wallpaper"}}"#, "wallpaper").is_none());
         // Ambiguous anchor: refuse.
-        assert!(
-            plan_restore(r#"{"theme": {"policy": "off"}, "other": {"policy": "wallpaper"}}"#, "wallpaper")
-                .is_none()
-        );
+        assert!(plan_restore(
+            r#"{"theme": {"policy": "off"}, "other": {"policy": "wallpaper"}}"#,
+            "wallpaper"
+        )
+        .is_none());
         // Unparsable current text: refuse to touch it.
         assert!(plan_restore("{{{ broken", "wallpaper").is_none());
     }
@@ -1304,7 +1349,12 @@ mod tests {
         let after_yield = env.read();
         assert!(after_yield.contains("\"policy\": \"off\""));
         assert_eq!(after_yield.matches("\"policy\"").count(), 1);
-        assert_eq!(after_yield.matches("\"theme.policy\": \"wallpaper\"").count(), 2);
+        assert_eq!(
+            after_yield
+                .matches("\"theme.policy\": \"wallpaper\"")
+                .count(),
+            2
+        );
         assert_eq!(
             after_yield.len(),
             FIXTURE.len() - 11 + 5,
@@ -1330,8 +1380,14 @@ mod tests {
         let marker = env.marker();
         assert!(!marker.exists(), "no marker before any yield");
 
-        assert_eq!(yield_color_authority().unwrap().as_deref(), Some("wallpaper"));
-        assert!(marker.exists(), "marker must exist while the engine is held off");
+        assert_eq!(
+            yield_color_authority().unwrap().as_deref(),
+            Some("wallpaper")
+        );
+        assert!(
+            marker.exists(),
+            "marker must exist while the engine is held off"
+        );
         let marker_json: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&marker).unwrap()).unwrap();
         assert_eq!(marker_json["previous_value"], "wallpaper");
@@ -1383,14 +1439,20 @@ mod tests {
     #[test]
     fn crash_recovery_restores_the_previous_value_and_clears_the_marker() {
         let env = PolicyEnv::new(Some(FIXTURE), Some(0o600));
-        assert_eq!(yield_color_authority().unwrap().as_deref(), Some("wallpaper"));
+        assert_eq!(
+            yield_color_authority().unwrap().as_deref(),
+            Some("wallpaper")
+        );
         // "Crash": the restore never runs, the marker survives, the config
         // stays off. The next start replays the repair.
         let recovered = recover_crashed_yield().expect("recovery returns a result");
         assert!(recovered, "the crash marker must have been found");
         assert_eq!(env.read(), FIXTURE, "recovery must restore the exact bytes");
         assert_eq!(env.mode(), 0o600);
-        assert!(!env.marker().exists(), "marker must be cleared after recovery");
+        assert!(
+            !env.marker().exists(),
+            "marker must be cleared after recovery"
+        );
         // A second recovery finds nothing.
         assert!(
             !recover_crashed_yield().unwrap(),
@@ -1401,7 +1463,10 @@ mod tests {
     #[test]
     fn restore_never_clobbers_a_value_the_engine_or_keeper_changed() {
         let env = PolicyEnv::new(Some(FIXTURE), None);
-        assert_eq!(yield_color_authority().unwrap().as_deref(), Some("wallpaper"));
+        assert_eq!(
+            yield_color_authority().unwrap().as_deref(),
+            Some("wallpaper")
+        );
         // The keeper changes the switch mid-apply: our restore must back
         // off and keep the file as-is, not overwrite their choice.
         let foreign = r#"{"theme": {"policy": "fixed"}}"#;
@@ -1409,7 +1474,10 @@ mod tests {
         let wrote = restore_color_authority("wallpaper").expect("restore returns a result");
         assert!(!wrote, "restore must not rewrite a foreign value");
         assert_eq!(env.read(), foreign, "the keeper's value must survive");
-        assert!(!env.marker().exists(), "marker cleared: we are no longer yielding");
+        assert!(
+            !env.marker().exists(),
+            "marker cleared: we are no longer yielding"
+        );
     }
 
     // ── W2: findings closure ──────────────────────────────────────────
@@ -1449,9 +1517,20 @@ mod tests {
         let a = temp_sibling(&target, "skwd-policy-yield");
         let b = temp_sibling(&target, "skwd-policy-yield");
         assert_ne!(a, b, "two invocations must never collide on the temp name");
-        assert_eq!(a.parent(), Some(tmp.path()), "temp must live beside the target");
-        let name = a.file_name().and_then(|n| n.to_str()).expect("utf8 temp name");
-        assert!(name.starts_with(".skwd-policy-yield."), "hidden dotfile, stem prefixed: {}", name);
+        assert_eq!(
+            a.parent(),
+            Some(tmp.path()),
+            "temp must live beside the target"
+        );
+        let name = a
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("utf8 temp name");
+        assert!(
+            name.starts_with(".skwd-policy-yield."),
+            "hidden dotfile, stem prefixed: {}",
+            name
+        );
         assert!(name.ends_with(".tmp"), "dotfile suffix: {}", name);
     }
 
@@ -1465,8 +1544,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let target = tmp.path().join("victim");
         fs::create_dir_all(&target).unwrap();
-        let err = write_atomic(&target, "{}")
-            .expect_err("renaming a file onto a directory must fail");
+        let err =
+            write_atomic(&target, "{}").expect_err("renaming a file onto a directory must fail");
         assert!(err.contains("[skwd-policy]"), "honest error: {}", err);
         let leftovers: Vec<_> = fs::read_dir(tmp.path())
             .unwrap()
@@ -1492,8 +1571,12 @@ mod tests {
         // covered by exactly the same removal as the rename failure.
         let src = std::fs::read_to_string("src/providers/skwd_policy.rs")
             .expect("src/providers/skwd_policy.rs must exist");
-        let start = src.find("fn write_atomic").expect("write_atomic must exist");
-        let end = src.find("fn write_marker").expect("write_marker must exist");
+        let start = src
+            .find("fn write_atomic")
+            .expect("write_atomic must exist");
+        let end = src
+            .find("fn write_marker")
+            .expect("write_marker must exist");
         let body = &src[start..end];
         let guard_at = body.find("TempFileGuard::new").expect("guard must arm");
         let create_at = body.find("File::create").expect("temp creation must exist");
@@ -1516,9 +1599,7 @@ mod tests {
         // sweep leftovers whose pid differs from ours.
         let tmp = tempfile::tempdir().unwrap();
         let target = tmp.path().join("config.json");
-        let stale = tmp
-            .path()
-            .join(".skwd-policy-yield.999999.0.tmp");
+        let stale = tmp.path().join(".skwd-policy-yield.999999.0.tmp");
         fs::write(&stale, b"orphan").unwrap();
         write_atomic(&target, r#"{"theme": {"policy": "off"}}"#).unwrap();
         assert!(
@@ -1528,9 +1609,17 @@ mod tests {
         let leftovers: Vec<_> = fs::read_dir(tmp.path())
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().starts_with(".skwd-policy-yield."))
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with(".skwd-policy-yield.")
+            })
             .collect();
-        assert!(leftovers.is_empty(), "no temp may survive a write: {:?}", leftovers);
+        assert!(
+            leftovers.is_empty(),
+            "no temp may survive a write: {:?}",
+            leftovers
+        );
     }
 
     #[test]
@@ -1541,8 +1630,12 @@ mod tests {
         // clear would leave the switch off until a later startup.
         let src = std::fs::read_to_string("src/providers/skwd_policy.rs")
             .expect("src/providers/skwd_policy.rs must exist");
-        let start = src.find("fn write_marker").expect("write_marker must exist");
-        let end = src.find("fn clear_marker").expect("clear_marker must exist");
+        let start = src
+            .find("fn write_marker")
+            .expect("write_marker must exist");
+        let end = src
+            .find("fn clear_marker")
+            .expect("clear_marker must exist");
         let body = &src[start..end];
         assert!(
             body.contains("sync_all"),
@@ -1598,7 +1691,10 @@ mod tests {
     #[test]
     fn startup_repair_finds_a_crashed_yield_repairs_and_logs() {
         let env = PolicyEnv::new(Some(FIXTURE), Some(0o600));
-        assert_eq!(yield_color_authority().unwrap().as_deref(), Some("wallpaper"));
+        assert_eq!(
+            yield_color_authority().unwrap().as_deref(),
+            Some("wallpaper")
+        );
         // "Crash": the restore never ran; the config stays off, the marker
         // survives. The next start replays the repair and logs the outcome.
         let capture = LogCapture::default();
@@ -1669,7 +1765,10 @@ mod tests {
         );
         // The marker stays (recovery refused to clear what it could not
         // repair) so the next startup retries — the temp sandbox cleans up.
-        assert!(env.marker().exists(), "unrepaired marker must survive for retry");
+        assert!(
+            env.marker().exists(),
+            "unrepaired marker must survive for retry"
+        );
     }
 
     // ── W1: hold the mute while a theme rules ─────────────────────────
@@ -1985,7 +2084,9 @@ mod tests {
     fn muted_with_claim() -> PolicyEnv {
         let env = PolicyEnv::new(Some(FIXTURE), None);
         env.write_authority();
-        let previous = yield_color_authority().unwrap().expect("the engine owns the scheme");
+        let previous = yield_color_authority()
+            .unwrap()
+            .expect("the engine owns the scheme");
         assert_eq!(previous, "wallpaper");
         env.write_authority();
         assert!(env.read().contains("\"policy\": \"off\""));
@@ -2008,12 +2109,18 @@ mod tests {
             "the engine's own value must be back, got: {}",
             env.read()
         );
-        assert!(env.marker().exists(), "the marker must survive the suspension");
+        assert!(
+            env.marker().exists(),
+            "the marker must survive the suspension"
+        );
         assert!(
             env.has_authority(),
             "the claim must survive: the overlay keeps the theme"
         );
-        assert!(color_authority_suspended(), "the suspension must be visible");
+        assert!(
+            color_authority_suspended(),
+            "the suspension must be visible"
+        );
     }
 
     /// The picker closed with nothing applied: the silence comes back and the
@@ -2053,7 +2160,10 @@ mod tests {
     #[test]
     fn recently_suspended_covers_the_grace_after_a_close() {
         let _env = muted_with_claim();
-        assert!(!color_authority_recently_suspended(), "nothing happened yet");
+        assert!(
+            !color_authority_recently_suspended(),
+            "nothing happened yet"
+        );
 
         suspend_color_authority().unwrap();
         assert!(color_authority_recently_suspended(), "suspended: guarded");

@@ -112,7 +112,11 @@ impl PanelSection {
     #[allow(dead_code)]
     pub fn from_shortcut(s: &str) -> Option<Self> {
         let key = s.trim().to_ascii_lowercase();
-        let bare = if key.starts_with("alt+") { &key[4..] } else { &key };
+        let bare = if key.starts_with("alt+") {
+            &key[4..]
+        } else {
+            &key
+        };
         match bare {
             "a" | "s" | "save" => Some(PanelSection::Save),
             "b" | "borders" => Some(PanelSection::Borders),
@@ -136,7 +140,10 @@ pub enum MutDir {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelState {
     Closed,
-    Mutating { direction: MutDir, target: PanelSection },
+    Mutating {
+        direction: MutDir,
+        target: PanelSection,
+    },
     Open(PanelSection),
 }
 
@@ -312,7 +319,10 @@ impl NavState {
         if self.panel != PanelState::Closed {
             return false;
         }
-        self.panel = PanelState::Mutating { direction: MutDir::Enter, target };
+        self.panel = PanelState::Mutating {
+            direction: MutDir::Enter,
+            target,
+        };
         true
     }
 
@@ -320,10 +330,16 @@ impl NavState {
     /// `Mutating{Enter,target}` → `Open(target)`, `Mutating{Leave,_}` → `Closed`.
     pub fn complete_mutation(&mut self) {
         match self.panel {
-            PanelState::Mutating { direction: MutDir::Enter, target } => {
+            PanelState::Mutating {
+                direction: MutDir::Enter,
+                target,
+            } => {
                 self.panel = PanelState::Open(target);
             }
-            PanelState::Mutating { direction: MutDir::Leave, .. } => {
+            PanelState::Mutating {
+                direction: MutDir::Leave,
+                ..
+            } => {
                 self.panel = PanelState::Closed;
             }
             _ => {}
@@ -335,16 +351,28 @@ impl NavState {
     pub fn leave_panel(&mut self) -> bool {
         match self.panel {
             PanelState::Open(section) => {
-                self.panel = PanelState::Mutating { direction: MutDir::Leave, target: section };
+                self.panel = PanelState::Mutating {
+                    direction: MutDir::Leave,
+                    target: section,
+                };
                 true
             }
-            PanelState::Mutating { direction: MutDir::Enter, target } => {
+            PanelState::Mutating {
+                direction: MutDir::Enter,
+                target,
+            } => {
                 // Reverse mid-flight (R1 Esc reverses)
-                self.panel = PanelState::Mutating { direction: MutDir::Leave, target };
+                self.panel = PanelState::Mutating {
+                    direction: MutDir::Leave,
+                    target,
+                };
                 true
             }
             PanelState::Closed => false,
-            PanelState::Mutating { direction: MutDir::Leave, .. } => false,
+            PanelState::Mutating {
+                direction: MutDir::Leave,
+                ..
+            } => false,
         }
     }
 
@@ -387,13 +415,21 @@ impl NavState {
 
     /// Gate a duration to 0 when reduced-motion is active (R8).
     pub fn effective_duration(&self, original_ms: u64) -> u64 {
-        if self.reduced_motion { 0 } else { original_ms }
+        if self.reduced_motion {
+            0
+        } else {
+            original_ms
+        }
     }
 
     /// Stateless helper also gates an arbitrary duration (convenience for timers).
     #[allow(dead_code)]
     pub fn effective_duration_static(original_ms: u64, reduced: bool) -> u64 {
-        if reduced { 0 } else { original_ms }
+        if reduced {
+            0
+        } else {
+            original_ms
+        }
     }
 }
 
@@ -425,7 +461,9 @@ mod tests {
     fn expand_happy_path_mounts_target_and_grows() {
         let mut ns = NavState::new();
         ns.push(NavCommand::Expand(Screen::Gallery));
-        let transition = ns.process_next().expect("queued expand must produce a transition");
+        let transition = ns
+            .process_next()
+            .expect("queued expand must produce a transition");
 
         assert_eq!(
             transition,
@@ -443,7 +481,11 @@ mod tests {
     fn expand_same_target_when_expanded_is_noop() {
         let mut ns = expanded_gallery();
         ns.push(NavCommand::Expand(Screen::Gallery));
-        assert_eq!(ns.process_next(), None, "spec R2: no transition for the same target");
+        assert_eq!(
+            ns.process_next(),
+            None,
+            "spec R2: no transition for the same target"
+        );
         assert_eq!(ns.expansion(), ExpansionState::Expanded(Screen::Gallery));
     }
 
@@ -464,7 +506,9 @@ mod tests {
     fn switching_expanded_target_unmounts_previous() {
         let mut ns = expanded_gallery();
         ns.push(NavCommand::Expand(Screen::Workshop));
-        let transition = ns.process_next().expect("target switch must produce a transition");
+        let transition = ns
+            .process_next()
+            .expect("target switch must produce a transition");
         assert_eq!(
             transition,
             NavTransition {
@@ -515,7 +559,11 @@ mod tests {
     #[test]
     fn process_next_on_empty_queue_is_none() {
         let mut ns = NavState::new();
-        assert_eq!(ns.process_next(), None, "drained queue yields no transition");
+        assert_eq!(
+            ns.process_next(),
+            None,
+            "drained queue yields no transition"
+        );
     }
 
     // ── Back / collapse (spec R2 back/collapse scenario) ───────────
@@ -541,7 +589,9 @@ mod tests {
     fn collapse_returns_to_home() {
         let mut ns = expanded_gallery();
         ns.push(NavCommand::Collapse);
-        let transition = ns.process_next().expect("collapse must produce a transition");
+        let transition = ns
+            .process_next()
+            .expect("collapse must produce a transition");
         assert_eq!(
             transition,
             NavTransition {
@@ -621,13 +671,19 @@ mod tests {
     fn test_enter_panel_only_from_gallery_sets_mutating() {
         let mut ns = NavState::new();
         // Not Gallery -> must refuse
-        assert!(!ns.enter_panel(PanelSection::Save), "enter_panel must fail when not Gallery");
+        assert!(
+            !ns.enter_panel(PanelSection::Save),
+            "enter_panel must fail when not Gallery"
+        );
         assert!(!ns.is_mutating(), "not mutating after failed enter");
         // Expand Gallery
         ns.push(NavCommand::Expand(Screen::Gallery));
         assert!(ns.process_next().is_some());
         // Now Gallery -> enter_panel succeeds and sets mutating
-        assert!(ns.enter_panel(PanelSection::Save), "enter_panel must succeed from Gallery");
+        assert!(
+            ns.enter_panel(PanelSection::Save),
+            "enter_panel must succeed from Gallery"
+        );
         assert!(ns.is_mutating(), "is_mutating true while Mutating");
         // Complete mutation -> open, no longer mutating
         ns.complete_mutation();
@@ -643,7 +699,10 @@ mod tests {
         let mut ns = NavState::new();
         ns.push(NavCommand::Expand(Screen::Gallery));
         assert!(ns.process_next().is_some());
-        assert!(ns.enter_panel(target), "Alt+A target must be enterable from Gallery");
+        assert!(
+            ns.enter_panel(target),
+            "Alt+A target must be enterable from Gallery"
+        );
         assert!(ns.is_mutating());
     }
 
@@ -657,12 +716,23 @@ mod tests {
     fn test_panel_state_floats_only_while_the_panel_is_present() {
         assert!(!PanelState::Closed.floats(), "closed: fullscreen");
         assert!(
-            PanelState::Mutating { direction: MutDir::Enter, target: PanelSection::Borders }.floats(),
+            PanelState::Mutating {
+                direction: MutDir::Enter,
+                target: PanelSection::Borders
+            }
+            .floats(),
             "entering: the float is the last beat"
         );
-        assert!(PanelState::Open(PanelSection::Borders).floats(), "open: floating preview");
         assert!(
-            !PanelState::Mutating { direction: MutDir::Leave, target: PanelSection::Borders }.floats(),
+            PanelState::Open(PanelSection::Borders).floats(),
+            "open: floating preview"
+        );
+        assert!(
+            !PanelState::Mutating {
+                direction: MutDir::Leave,
+                target: PanelSection::Borders
+            }
+            .floats(),
             "leaving: fullscreen is restored first"
         );
     }

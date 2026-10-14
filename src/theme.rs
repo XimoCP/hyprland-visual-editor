@@ -75,11 +75,11 @@ pub fn blend(c1: &Color, c2: &Color, t: f32) -> Color {
 /// Used when user explicitly selects "dark" mode.
 fn dark_palette() -> ColorScheme {
     ColorScheme {
-        primary: "#38bdf8".to_string(),    // sky-400
-        secondary: "#fbbf24".to_string(),  // amber-400
-        tertiary: "#c084fc".to_string(),   // violet-400
-        accent: "#34d399".to_string(),     // emerald-400
-        surface: "#1e293b".to_string(),    // slate-800
+        primary: "#38bdf8".to_string(),        // sky-400
+        secondary: "#fbbf24".to_string(),      // amber-400
+        tertiary: "#c084fc".to_string(),       // violet-400
+        accent: "#34d399".to_string(),         // emerald-400
+        surface: "#1e293b".to_string(),        // slate-800
         surface_lowest: "#0f172a".to_string(), // slate-900
     }
 }
@@ -88,11 +88,11 @@ fn dark_palette() -> ColorScheme {
 /// Used when user explicitly selects "light" mode.
 fn light_palette() -> ColorScheme {
     ColorScheme {
-        primary: "#0284c7".to_string(),    // sky-600
-        secondary: "#d97706".to_string(),  // amber-600
-        tertiary: "#7c3aed".to_string(),   // violet-600
-        accent: "#059669".to_string(),     // emerald-600
-        surface: "#f5f5f4".to_string(),    // stone-100
+        primary: "#0284c7".to_string(),        // sky-600
+        secondary: "#d97706".to_string(),      // amber-600
+        tertiary: "#7c3aed".to_string(),       // violet-600
+        accent: "#059669".to_string(),         // emerald-600
+        surface: "#f5f5f4".to_string(),        // stone-100
         surface_lowest: "#ffffff".to_string(), // white
     }
 }
@@ -322,11 +322,7 @@ pub fn render_logo_square_mono(accent: &Color, size: u32) -> Option<Vec<u8>> {
 /// - HV → `tertiary` darkened (darker purple)
 /// - V  → `tertiary` (purple)
 /// - E  → `accent` (green)
-pub fn render_logo_image(
-    secondary: &Color,
-    tertiary: &Color,
-    accent: &Color,
-) -> slint::Image {
+pub fn render_logo_image(secondary: &Color, tertiary: &Color, accent: &Color) -> slint::Image {
     let (data, w, h) = match render_logo_rgba(secondary, tertiary, accent, LOGO_WIDTH) {
         Some(r) => r,
         None => return slint::Image::default(),
@@ -472,17 +468,16 @@ mod tests {
         };
 
         // A Light answer from the fake → the core derives the light scheme.
-        let light = DesktopPreferenceRouter::new(vec![Box::new(FakeSource(
-            Some(DesktopPreference::Light),
-        ))]);
+        let light = DesktopPreferenceRouter::new(vec![Box::new(FakeSource(Some(
+            DesktopPreference::Light,
+        )))]);
         let resolved = system_scheme(&base, light.read());
         assert_eq!(resolved.surface, "#f5f5f4");
         assert_eq!(resolved.surface_lowest, "#ffffff");
 
         // A Dark answer → the core keeps the base scheme untouched.
-        let dark = DesktopPreferenceRouter::new(vec![Box::new(FakeSource(
-            Some(DesktopPreference::Dark),
-        ))]);
+        let dark =
+            DesktopPreferenceRouter::new(vec![Box::new(FakeSource(Some(DesktopPreference::Dark)))]);
         let resolved = system_scheme(&base, dark.read());
         assert_eq!(resolved.surface, base.surface);
         assert_eq!(resolved.primary, base.primary);

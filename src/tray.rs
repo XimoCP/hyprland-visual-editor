@@ -89,7 +89,10 @@ pub fn start_tray(
     let service = TrayService::new(tray);
     let handle = service.handle();
     service.spawn();
-    TrayHandle { system_active, handle }
+    TrayHandle {
+        system_active,
+        handle,
+    }
 }
 
 struct HveTray {
@@ -142,7 +145,10 @@ impl ksni::Tray for HveTray {
             ksni::MenuItem::Separator,
             // ── Toggle System ──
             StandardItem {
-                label: self.tr.tr_or("tray.toggle_system", "Toggle System").to_string(),
+                label: self
+                    .tr
+                    .tr_or("tray.toggle_system", "Toggle System")
+                    .to_string(),
                 activate: Box::new(|tray: &mut Self| {
                     let w = tray.window.clone();
                     let next_active = !tray.system_active.load(Ordering::Relaxed);
@@ -157,7 +163,10 @@ impl ksni::Tray for HveTray {
             .into(),
             // ── Next Animation ──
             StandardItem {
-                label: self.tr.tr_or("tray.next_animation", "Next Animation").to_string(),
+                label: self
+                    .tr
+                    .tr_or("tray.next_animation", "Next Animation")
+                    .to_string(),
                 activate: Box::new(|tray: &mut Self| {
                     let w = tray.window.clone();
                     let _ = slint::invoke_from_event_loop(move || {

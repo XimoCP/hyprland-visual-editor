@@ -46,10 +46,18 @@ fn populate_metadata(
     set_active_index: impl FnOnce(i32),
 ) {
     set_tags(ModelRc::from(
-        items.iter().map(|i| SharedString::from(&i.tag)).collect::<Vec<_>>().as_slice(),
+        items
+            .iter()
+            .map(|i| SharedString::from(&i.tag))
+            .collect::<Vec<_>>()
+            .as_slice(),
     ));
     set_files(ModelRc::from(
-        items.iter().map(|i| SharedString::from(&i.file)).collect::<Vec<_>>().as_slice(),
+        items
+            .iter()
+            .map(|i| SharedString::from(&i.file))
+            .collect::<Vec<_>>()
+            .as_slice(),
     ));
 
     // ALWAYS write an explicit index. Skipping the write when the stored file
@@ -85,24 +93,52 @@ pub fn populate_presets(window: &crate::MainWindow, engine: &Engine, cfg: &Confi
     window.set_shader_descs(ModelRc::from(shader_descs.as_slice()));
 
     // ── Tags, files, active index ──
-    populate_metadata(&animations, &cfg.active_anim_file, |v| window.set_anim_tags(v), |v| window.set_anim_files(v), |i| window.set_active_anim_index(i));
-    populate_metadata(&borders, &cfg.active_border_file, |v| window.set_border_tags(v), |v| window.set_border_files(v), |i| window.set_active_border_index(i));
-    populate_metadata(&shaders, &cfg.active_shader_file, |v| window.set_shader_tags(v), |v| window.set_shader_files(v), |i| window.set_active_shader_index(i));
+    populate_metadata(
+        &animations,
+        &cfg.active_anim_file,
+        |v| window.set_anim_tags(v),
+        |v| window.set_anim_files(v),
+        |i| window.set_active_anim_index(i),
+    );
+    populate_metadata(
+        &borders,
+        &cfg.active_border_file,
+        |v| window.set_border_tags(v),
+        |v| window.set_border_files(v),
+        |i| window.set_active_border_index(i),
+    );
+    populate_metadata(
+        &shaders,
+        &cfg.active_shader_file,
+        |v| window.set_shader_tags(v),
+        |v| window.set_shader_files(v),
+        |i| window.set_active_shader_index(i),
+    );
 
     // ── User-created presets (saved to ~/.config/hve/presets/) ──
     let border_store = crate::preset_store::PresetStore::new("borders");
-    let user_border_names: Vec<SharedString> = border_store.list()
-        .into_iter().map(|n| SharedString::from(n)).collect();
-    let user_border_tags: Vec<SharedString> = user_border_names.iter()
-        .map(|_| SharedString::from("CUSTOM")).collect();
+    let user_border_names: Vec<SharedString> = border_store
+        .list()
+        .into_iter()
+        .map(|n| SharedString::from(n))
+        .collect();
+    let user_border_tags: Vec<SharedString> = user_border_names
+        .iter()
+        .map(|_| SharedString::from("CUSTOM"))
+        .collect();
     window.set_user_border_preset_names(ModelRc::from(user_border_names.as_slice()));
     window.set_user_border_preset_tags(ModelRc::from(user_border_tags.as_slice()));
 
     let anim_store = crate::preset_store::PresetStore::new("animations");
-    let user_anim_names: Vec<SharedString> = anim_store.list()
-        .into_iter().map(|n| SharedString::from(n)).collect();
-    let user_anim_tags: Vec<SharedString> = user_anim_names.iter()
-        .map(|_| SharedString::from("CUSTOM")).collect();
+    let user_anim_names: Vec<SharedString> = anim_store
+        .list()
+        .into_iter()
+        .map(|n| SharedString::from(n))
+        .collect();
+    let user_anim_tags: Vec<SharedString> = user_anim_names
+        .iter()
+        .map(|_| SharedString::from("CUSTOM"))
+        .collect();
     window.set_user_animation_preset_names(ModelRc::from(user_anim_names.as_slice()));
     window.set_user_animation_preset_tags(ModelRc::from(user_anim_tags.as_slice()));
 }
@@ -274,15 +310,13 @@ mod tests {
         // become an EXPLICIT -1, never survive as if something were active.
         let active_idx = std::cell::RefCell::new(99);
 
-        populate_metadata(
-            &items,
-            "",
-            |_| {},
-            |_| {},
-            |i| *active_idx.borrow_mut() = i,
-        );
+        populate_metadata(&items, "", |_| {}, |_| {}, |i| *active_idx.borrow_mut() = i);
 
-        assert_eq!(*active_idx.borrow(), -1, "an empty stored file must clear the marker");
+        assert_eq!(
+            *active_idx.borrow(),
+            -1,
+            "an empty stored file must clear the marker"
+        );
     }
 
     // ── populate_metadata — values propagated ─────────────────────────
@@ -334,7 +368,11 @@ mod tests {
             |i| *active_idx.borrow_mut() = i,
         );
 
-        assert_eq!(*active_idx.borrow(), 1, "active file 'y.json' should produce index 1");
+        assert_eq!(
+            *active_idx.borrow(),
+            1,
+            "active file 'y.json' should produce index 1"
+        );
     }
 
     #[test]
@@ -354,7 +392,11 @@ mod tests {
             |i| *active_idx.borrow_mut() = i,
         );
 
-        assert_eq!(*active_idx.borrow(), -1, "non-matching active_file should not set index");
+        assert_eq!(
+            *active_idx.borrow(),
+            -1,
+            "non-matching active_file should not set index"
+        );
     }
 
     #[test]

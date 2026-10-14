@@ -27,10 +27,7 @@ pub(crate) enum ConfigGuardDecision {
 /// A present-and-valid `hyprland.lua` (containing `hl.` or `require(`) is
 /// always treated as a Lua user and never guarded, even when a stray
 /// `hyprland.conf` also exists.
-pub(crate) fn evaluate_config_guard(
-    lua: Option<&str>,
-    conf_exists: bool,
-) -> ConfigGuardDecision {
+pub(crate) fn evaluate_config_guard(lua: Option<&str>, conf_exists: bool) -> ConfigGuardDecision {
     if let Some(content) = lua {
         if is_valid_lua(content) {
             return if content.contains(HVE_BLOCK_START) {
@@ -88,7 +85,11 @@ pub(crate) fn evaluate_config_guard_at(hypr_dir: &Path) -> ConfigGuardDecision {
 /// directory can be resolved.
 pub(crate) fn evaluate_config_guard_default() -> ConfigGuardDecision {
     let hypr_dir: Option<PathBuf> = dirs::config_dir()
-        .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")))
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join(".config"))
+        })
         .map(|d| d.join("hypr"));
 
     match hypr_dir {
@@ -204,7 +205,10 @@ mod tests {
     #[test]
     fn nothing_to_do_preserves_current_behavior() {
         let d = ConfigGuardDecision::NothingToDo;
-        assert!(d.permits_mutation(), "a fresh install keeps writing settings");
+        assert!(
+            d.permits_mutation(),
+            "a fresh install keeps writing settings"
+        );
         assert!(d.permits_init_enable());
     }
 

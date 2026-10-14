@@ -106,8 +106,11 @@ fi
 
         /// Swap the stub's answer without touching the environment again.
         fn answer_with(&self, body: &str) {
-            std::fs::write(self._bin.path().join("gsettings"), format!("{ARGV_GUARD}{body}"))
-                .expect("rewrite stub");
+            std::fs::write(
+                self._bin.path().join("gsettings"),
+                format!("{ARGV_GUARD}{body}"),
+            )
+            .expect("rewrite stub");
         }
     }
 

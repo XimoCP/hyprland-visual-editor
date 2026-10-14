@@ -56,7 +56,11 @@ pub fn slice_scale(stage_width: f32) -> f32 {
 pub fn scaled_metrics(stage_width: f32) -> SliceMetrics {
     let expanded = (stage_width * 0.58).min(SLICE_EXPANDED_WIDTH);
     // Preserve caller intent for degenerate widths: return exact constants.
-    let expanded = if !(stage_width > 0.0) { SLICE_EXPANDED_WIDTH } else { expanded };
+    let expanded = if !(stage_width > 0.0) {
+        SLICE_EXPANDED_WIDTH
+    } else {
+        expanded
+    };
     let scale = expanded / SLICE_EXPANDED_WIDTH;
     SliceMetrics {
         expanded,
@@ -434,9 +438,8 @@ pub fn slot_width(d: f32) -> f32 {
 pub fn slot_center(d: f32) -> f32 {
     let ad = d.abs();
     let flow = (SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0 * d;
-    let over = ((SLICE_EXPANDED_WIDTH - SLICE_COLLAPSED_WIDTH) / 2.0)
-        * d.signum()
-        * (ad - 1.0).max(0.0);
+    let over =
+        ((SLICE_EXPANDED_WIDTH - SLICE_COLLAPSED_WIDTH) / 2.0) * d.signum() * (ad - 1.0).max(0.0);
     flow - over
 }
 
@@ -472,7 +475,10 @@ pub struct FocusStep {
 }
 
 pub fn focus_step(virtual_cur: i32, pos: f32, delta: isize) -> FocusStep {
-    FocusStep { virtual_next: virtual_cur + delta as i32, target: focus_target(pos, virtual_cur, delta) }
+    FocusStep {
+        virtual_next: virtual_cur + delta as i32,
+        target: focus_target(pos, virtual_cur, delta),
+    }
 }
 
 /// Shortest signed ring distance from `from` to `to` (wrap-aware).
@@ -615,7 +621,11 @@ pub fn ring_slot_fade(slot: &RingSlot, stage_width: f32) -> f32 {
     }
     let inset = ring_edge_inset(stage_width);
     let band_width = stage_width - 2.0 * inset;
-    let half = if band_width > 0.0 { band_width / 2.0 } else { stage_width / 2.0 };
+    let half = if band_width > 0.0 {
+        band_width / 2.0
+    } else {
+        stage_width / 2.0
+    };
     if half <= 0.0 {
         return 1.0;
     }
@@ -634,7 +644,13 @@ pub fn slice_delta_tiles(real_count: usize, focused: usize, stage_width: f32) ->
         .map(|s| {
             let fade = ring_slot_fade(&s, stage_width);
             let dist = (s.virtual_index - focused as isize).abs() as i32;
-            SliceUiTile { delta: (s.virtual_index - focused as isize) as i32, real_index: s.real_index, is_expanded: s.is_expanded, fade, dist }
+            SliceUiTile {
+                delta: (s.virtual_index - focused as isize) as i32,
+                real_index: s.real_index,
+                is_expanded: s.is_expanded,
+                fade,
+                dist,
+            }
         })
         .collect()
 }
@@ -973,7 +989,11 @@ mod tests {
         assert_eq!(SLICE_SPACING_PX, 4.0, "spacing must be small positive gap");
         assert_eq!(SLICE_SKEW_PX, 35.0, "skew must be 35px X-shear");
         assert_eq!(SLICE_ANIM_DURATION_MS, 350, "anim duration 350ms OutCubic");
-        assert_eq!(SLICE_ANIM_EASING, (0.215, 0.61, 0.355, 1.0), "OutCubic bezier");
+        assert_eq!(
+            SLICE_ANIM_EASING,
+            (0.215, 0.61, 0.355, 1.0),
+            "OutCubic bezier"
+        );
     }
 
     #[test]
@@ -1049,8 +1069,16 @@ mod tests {
     #[test]
     fn wheel_step_multi_notch_burst_moves_at_most_one() {
         let mut view = SliceView::new(6);
-        assert_eq!(view.wheel_step(3), 1, "burst of +3 notches → still one step");
-        assert_eq!(view.wheel_step(-5), 0, "burst of −5 notches → one step back");
+        assert_eq!(
+            view.wheel_step(3),
+            1,
+            "burst of +3 notches → still one step"
+        );
+        assert_eq!(
+            view.wheel_step(-5),
+            0,
+            "burst of −5 notches → one step back"
+        );
         assert_eq!(view.wheel_step(120), 1);
     }
 
@@ -1137,12 +1165,19 @@ mod tests {
     #[test]
     fn slice_key_up_down_not_consumed() {
         let mut view = SliceView::new(3);
-        assert!(!view.handle_key(GalleryKey::Up), "Up not consumed for slice");
+        assert!(
+            !view.handle_key(GalleryKey::Up),
+            "Up not consumed for slice"
+        );
         assert!(!view.handle_key(GalleryKey::Down));
         assert!(!view.handle_key(GalleryKey::Enter));
         assert!(!view.handle_key(GalleryKey::Escape));
         assert!(!view.handle_key(GalleryKey::Other));
-        assert_eq!(view.focused_index(), 0, "focus unchanged for non-consumed keys");
+        assert_eq!(
+            view.focused_index(),
+            0,
+            "focus unchanged for non-consumed keys"
+        );
     }
 
     #[test]
@@ -1188,25 +1223,49 @@ mod tests {
         // Shape w=108 h=200 skew=28 (collapsed), w=768 h=200 skew=28 (expanded)
         // Hit-test mask non-rect (spec R2.1)
         // Center point should be inside
-        assert!(SliceView::point_in_parallelogram(54.0, 100.0, 108.0, 200.0, 28.0));
-        assert!(SliceView::point_in_parallelogram(384.0, 100.0, 768.0, 200.0, 28.0));
+        assert!(SliceView::point_in_parallelogram(
+            54.0, 100.0, 108.0, 200.0, 28.0
+        ));
+        assert!(SliceView::point_in_parallelogram(
+            384.0, 100.0, 768.0, 200.0, 28.0
+        ));
         // Top-left corner outside due to skew (0,0 is left of slanted edge)
-        assert!(!SliceView::point_in_parallelogram(0.0, 0.0, 108.0, 200.0, 28.0));
+        assert!(!SliceView::point_in_parallelogram(
+            0.0, 0.0, 108.0, 200.0, 28.0
+        ));
         // Top edge at skew offset is inside
-        assert!(SliceView::point_in_parallelogram(28.0, 0.0, 108.0, 200.0, 28.0));
-        assert!(SliceView::point_in_parallelogram(30.0, 0.0, 108.0, 200.0, 28.0));
+        assert!(SliceView::point_in_parallelogram(
+            28.0, 0.0, 108.0, 200.0, 28.0
+        ));
+        assert!(SliceView::point_in_parallelogram(
+            30.0, 0.0, 108.0, 200.0, 28.0
+        ));
         // Far right top edge at w is inside (right == w at y=0)
-        assert!(SliceView::point_in_parallelogram(108.0, 0.0, 108.0, 200.0, 28.0));
+        assert!(SliceView::point_in_parallelogram(
+            108.0, 0.0, 108.0, 200.0, 28.0
+        ));
         // Beyond right should be outside
-        assert!(!SliceView::point_in_parallelogram(109.0, 0.0, 108.0, 200.0, 28.0));
+        assert!(!SliceView::point_in_parallelogram(
+            109.0, 0.0, 108.0, 200.0, 28.0
+        ));
         // Bottom-left inside (left=0 at y=h)
-        assert!(SliceView::point_in_parallelogram(0.0, 200.0, 108.0, 200.0, 28.0));
-        assert!(SliceView::point_in_parallelogram(2.0, 200.0, 108.0, 200.0, 28.0));
+        assert!(SliceView::point_in_parallelogram(
+            0.0, 200.0, 108.0, 200.0, 28.0
+        ));
+        assert!(SliceView::point_in_parallelogram(
+            2.0, 200.0, 108.0, 200.0, 28.0
+        ));
         // Bottom right slanted inside edge: right = w - skew at y=h
-        assert!(!SliceView::point_in_parallelogram(108.0, 200.0, 108.0, 200.0, 28.0));
-        assert!(SliceView::point_in_parallelogram(80.0, 200.0, 108.0, 200.0, 28.0));
+        assert!(!SliceView::point_in_parallelogram(
+            108.0, 200.0, 108.0, 200.0, 28.0
+        ));
+        assert!(SliceView::point_in_parallelogram(
+            80.0, 200.0, 108.0, 200.0, 28.0
+        ));
         // Below shape
-        assert!(!SliceView::point_in_parallelogram(54.0, 201.0, 108.0, 200.0, 28.0));
+        assert!(!SliceView::point_in_parallelogram(
+            54.0, 201.0, 108.0, 200.0, 28.0
+        ));
         // contains_point wrapper uses default SKEW 28
         let view = SliceView::new(1);
         assert!(view.contains_point(54.0, 100.0, 108.0, 200.0));
@@ -1270,7 +1329,11 @@ mod tests {
         assert!(view.is_video_playing());
         // Move focus triggers release via set_focused_index blur
         view.set_focused_index(1);
-        assert_eq!(view.video_state(), VideoState::Released, "release on blur S17");
+        assert_eq!(
+            view.video_state(),
+            VideoState::Released,
+            "release on blur S17"
+        );
     }
 
     #[test]
@@ -1280,7 +1343,11 @@ mod tests {
         view.request_video();
         assert_eq!(view.video_state(), VideoState::Pending);
         view.set_focused_index(1);
-        assert_eq!(view.video_state(), VideoState::Released, "pending → released on blur");
+        assert_eq!(
+            view.video_state(),
+            VideoState::Released,
+            "pending → released on blur"
+        );
     }
 
     // ── 3.1 depth cues: edge fade (design D4, skwd-wall exact) ──────────
@@ -1288,9 +1355,17 @@ mod tests {
     #[test]
     fn edge_fade_full_zone_skwd_formula() {
         // fullZone = min(0.6, (462 + 2·139) / halfView) — numerator 740 (gap 4).
-        assert_eq!(edge_fade_full_zone(640.0), 0.6, "1280px viewport clamps at cap");
+        assert_eq!(
+            edge_fade_full_zone(640.0),
+            0.6,
+            "1280px viewport clamps at cap"
+        );
         assert_eq!(edge_fade_full_zone(1120.0), 0.6, "740/1120 still clamped");
-        assert_eq!(edge_fade_full_zone(1480.0), 0.5, "2960px viewport: 740/1480");
+        assert_eq!(
+            edge_fade_full_zone(1480.0),
+            0.5,
+            "2960px viewport: 740/1480"
+        );
         assert_eq!(edge_fade_full_zone(0.0), 0.6, "degenerate halfView safe");
         assert_eq!(EDGE_FADE_END, 1.2, "fade reaches 0 at normDist 1.2");
         assert_eq!(EDGE_FADE_FULL_ZONE_CAP, 0.6);
@@ -1299,7 +1374,11 @@ mod tests {
     #[test]
     fn edge_norm_dist_uses_half_view_units() {
         assert_eq!(edge_norm_dist(1000.0, 640.0, 640.0), 0.5625, "|360|/640");
-        assert_eq!(edge_norm_dist(300.0, 1000.0, 700.0), 1.0, "one half-view away");
+        assert_eq!(
+            edge_norm_dist(300.0, 1000.0, 700.0),
+            1.0,
+            "one half-view away"
+        );
         assert_eq!(edge_norm_dist(500.0, 500.0, 640.0), 0.0, "centered card");
         assert_eq!(edge_norm_dist(100.0, 900.0, 0.0), 0.0, "zero halfView safe");
     }
@@ -1309,7 +1388,10 @@ mod tests {
         let fz = edge_fade_full_zone(640.0); // 0.6
         assert_eq!(fade_opacity(0.0, fz), 1.0);
         assert_eq!(fade_opacity(fz, fz), 1.0, "zone edge still full");
-        assert!((fade_opacity(0.9, fz) - 0.5).abs() < 1e-5, "falloff midpoint");
+        assert!(
+            (fade_opacity(0.9, fz) - 0.5).abs() < 1e-5,
+            "falloff midpoint"
+        );
         assert!(fade_opacity(1.199, fz) > 0.0, "still fading before end");
         assert_eq!(fade_opacity(1.2, fz), 0.0, "gone at normDist 1.2");
         assert_eq!(fade_opacity(2.0, fz), 0.0, "clamped beyond end");
@@ -1347,7 +1429,11 @@ mod tests {
     #[test]
     fn z_layer_current_above_hovered_above_idle() {
         assert_eq!(z_layer(2, 2, None), 2, "current paints topmost");
-        assert_eq!(z_layer(2, 2, Some(2)), 2, "hover on current stays current layer");
+        assert_eq!(
+            z_layer(2, 2, Some(2)),
+            2,
+            "hover on current stays current layer"
+        );
         assert_eq!(z_layer(1, 2, Some(1)), 1, "hovered above idle");
         assert_eq!(z_layer(0, 2, None), 0, "idle bottom");
         assert_eq!(z_layer(0, 2, Some(3)), 0);
@@ -1362,7 +1448,10 @@ mod tests {
                 let count = 6;
                 // ring_visible must contain focused and it must be centered
                 let slots = ring_visible_slots(count, focused, stage_w);
-                let focused_slot = slots.iter().find(|s| s.virtual_index == focused as isize).expect("focused must be visible");
+                let focused_slot = slots
+                    .iter()
+                    .find(|s| s.virtual_index == focused as isize)
+                    .expect("focused must be visible");
                 let center = focused_slot.x + focused_slot.width / 2.0;
                 assert!((center - stage_w / 2.0).abs() < 0.001, "focused center {center} != stage center {} (stage {stage_w} focused {focused})", stage_w/2.0);
             }
@@ -1372,7 +1461,10 @@ mod tests {
             for focused in 0..6usize {
                 let x = ring_slot_x(focused as isize, focused, stage_w);
                 let center = x + scaled_expanded_width(stage_w) / 2.0;
-                assert!((center - stage_w/2.0).abs() < 0.001, "ring_slot_x centering failed stage {stage_w} focused {focused}");
+                assert!(
+                    (center - stage_w / 2.0).abs() < 0.001,
+                    "ring_slot_x centering failed stage {stage_w} focused {focused}"
+                );
             }
         }
     }
@@ -1395,16 +1487,29 @@ mod tests {
                 continue;
             }
             let delta = b.x - a.x;
-            assert!((delta - scaled_collapsed_width(stage_w)).abs() < 0.001, "collapsed contiguity gap {} != {} between virt {} and {}", delta, scaled_collapsed_width(stage_w), a.virtual_index, b.virtual_index);
+            assert!(
+                (delta - scaled_collapsed_width(stage_w)).abs() < 0.001,
+                "collapsed contiguity gap {} != {} between virt {} and {}",
+                delta,
+                scaled_collapsed_width(stage_w),
+                a.virtual_index,
+                b.virtual_index
+            );
         }
         // direct ring_slot_x contiguity both sides
         let fx = ring_focused_x(stage_w);
         let right1 = ring_slot_x(focused as isize + 1, focused, stage_w);
         let right2 = ring_slot_x(focused as isize + 2, focused, stage_w);
-        assert!((right2 - right1 - scaled_collapsed_width(stage_w)).abs() < 0.001, "right side contiguity");
+        assert!(
+            (right2 - right1 - scaled_collapsed_width(stage_w)).abs() < 0.001,
+            "right side contiguity"
+        );
         let left1 = ring_slot_x(focused as isize - 1, focused, stage_w);
         let left2 = ring_slot_x(focused as isize - 2, focused, stage_w);
-        assert!((left1 - left2 - scaled_collapsed_width(stage_w)).abs() < 0.001, "left side contiguity");
+        assert!(
+            (left1 - left2 - scaled_collapsed_width(stage_w)).abs() < 0.001,
+            "left side contiguity"
+        );
         let _ = fx;
     }
 
@@ -1443,7 +1548,11 @@ mod tests {
             for focused in [0usize, 3, 5] {
                 let slots = ring_visible_slots(count, focused, stage_w);
                 for s in &slots {
-                    assert!(s.real_index < count, "real_index {} out of range", s.real_index);
+                    assert!(
+                        s.real_index < count,
+                        "real_index {} out of range",
+                        s.real_index
+                    );
                     assert_eq!(s.real_index, ring_real_index(s.virtual_index, count));
                 }
             }
@@ -1483,15 +1592,29 @@ mod tests {
                 assert!(max_r <= stage_w - inset + 0.001, "last visible slot ends at/before stage-inset, got max_r {max_r} stage {stage_w}");
                 // No slot body inside either inset zone
                 for s in &slots {
-                    assert!(s.x >= inset - 0.001, "slot x {} inside left inset {}", s.x, inset);
-                    assert!(s.x + s.width <= stage_w - inset + 0.001, "slot [{},{}] inside right inset {}", s.x, s.x + s.width, stage_w - inset);
+                    assert!(
+                        s.x >= inset - 0.001,
+                        "slot x {} inside left inset {}",
+                        s.x,
+                        inset
+                    );
+                    assert!(
+                        s.x + s.width <= stage_w - inset + 0.001,
+                        "slot [{},{}] inside right inset {}",
+                        s.x,
+                        s.x + s.width,
+                        stage_w - inset
+                    );
                 }
                 // no hole larger than collapsed width between sorted slots
                 let mut sorted = slots.clone();
-                sorted.sort_by(|a,b| a.x.partial_cmp(&b.x).unwrap());
+                sorted.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap());
                 for w in sorted.windows(2) {
                     let gap = w[1].x - (w[0].x + w[0].width);
-                    assert!(gap <= 0.001, "hole {gap} between slots at stage {stage_w} focused {focused}");
+                    assert!(
+                        gap <= 0.001,
+                        "hole {gap} between slots at stage {stage_w} focused {focused}"
+                    );
                 }
             }
         }
@@ -1499,16 +1622,25 @@ mod tests {
 
     #[test]
     fn ring_inset_constant_is_two_slots_per_side() {
-        assert_eq!(RING_EDGE_INSET_SLOTS, 2, "inset must be exactly 2 collapsed slots per side");
+        assert_eq!(
+            RING_EDGE_INSET_SLOTS, 2,
+            "inset must be exactly 2 collapsed slots per side"
+        );
         let inset_px = RING_EDGE_INSET_SLOTS as f32 * SLICE_COLLAPSED_WIDTH;
-        assert!((inset_px - 270.0).abs() < 0.001, "inset px must be 270 (2*135), got {inset_px}");
+        assert!(
+            (inset_px - 270.0).abs() < 0.001,
+            "inset px must be 270 (2*135), got {inset_px}"
+        );
         let stage_w = 1734.0; // aligned stage where band span exactly matches stage-2*inset
         let slots = ring_visible_slots(6, 2, stage_w);
         let min_x = slots.iter().map(|s| s.x).fold(f32::MAX, f32::min);
         let max_r = slots.iter().map(|s| s.x + s.width).fold(f32::MIN, f32::max);
         let span = max_r - min_x;
         let expected = stage_w - 2.0 * inset_px;
-        assert!((span - expected).abs() < 0.01, "band span {span} != expected {expected} (stage {stage_w} inset {inset_px})");
+        assert!(
+            (span - expected).abs() < 0.01,
+            "band span {span} != expected {expected} (stage {stage_w} inset {inset_px})"
+        );
     }
 
     #[test]
@@ -1526,8 +1658,8 @@ mod tests {
         // tiny stage fewer than one slat width — no panic, still centered
         let tiny = ring_visible_slots(6, 2, 50.0);
         assert!(!tiny.is_empty(), "tiny stage should still have focused");
-        let focused_slot = tiny.iter().find(|s| s.virtual_index==2).unwrap();
-        assert!((focused_slot.x + focused_slot.width/2.0 - 25.0).abs()<0.001);
+        let focused_slot = tiny.iter().find(|s| s.virtual_index == 2).unwrap();
+        assert!((focused_slot.x + focused_slot.width / 2.0 - 25.0).abs() < 0.001);
         // wheel/ move with count 1 wraps to 0
         let mut v1 = SliceView::new(1);
         assert_eq!(v1.move_focus(1), 0);
@@ -1547,12 +1679,14 @@ mod tests {
         let stage_w = 1200.0;
         let mut view = SliceView::new(6);
         view.set_focused_index(0);
-        for _ in 0..12 { view.move_focus(1); }
+        for _ in 0..12 {
+            view.move_focus(1);
+        }
         let back_to_zero = view.focused_index();
         assert_eq!(back_to_zero, 0, "12 steps wrap to start deterministically");
         let sx1 = ring_slot_x(0, back_to_zero, stage_w);
         let sx0 = ring_slot_x(0, 0, stage_w);
-        assert!((sx1 - sx0).abs()<0.001, "no drift after cycles");
+        assert!((sx1 - sx0).abs() < 0.001, "no drift after cycles");
     }
 
     // ── S2 ring → Slint model builder (WIRE) — V6 delta feed ──────────
@@ -1569,15 +1703,26 @@ mod tests {
         assert_eq!(foc.real_index, 2);
         // Contiguous signed deltas, strictly increasing left→right, no gaps.
         let deltas: Vec<i32> = tiles.iter().map(|t| t.delta).collect();
-        assert!(deltas.windows(2).all(|w| w[1] == w[0] + 1), "deltas contiguous: {deltas:?}");
-        assert!(deltas.first().unwrap() < &0 && deltas.last().unwrap() > &0, "window straddles the focus");
+        assert!(
+            deltas.windows(2).all(|w| w[1] == w[0] + 1),
+            "deltas contiguous: {deltas:?}"
+        );
+        assert!(
+            deltas.first().unwrap() < &0 && deltas.last().unwrap() > &0,
+            "window straddles the focus"
+        );
         // real_index always in range, clone mapping cyclic
         for t in &tiles {
             assert!(t.real_index < 6);
         }
         // wider stage yields more tiles, still centered on delta 0
         let wide = slice_delta_tiles(6, 2, 2560.0);
-        assert!(wide.len() > tiles.len(), "wider stage more tiles {} vs {}", wide.len(), tiles.len());
+        assert!(
+            wide.len() > tiles.len(),
+            "wider stage more tiles {} vs {}",
+            wide.len(),
+            tiles.len()
+        );
         assert!(wide.iter().find(|t| t.is_expanded).unwrap().delta == 0);
     }
 
@@ -1598,7 +1743,11 @@ mod tests {
         by_dist.dedup();
         // farthest slot from focus has the lowest fade but stays visible
         let far = tiles.iter().max_by(|a, b| a.dist.cmp(&b.dist)).unwrap();
-        assert!(far.fade < 1.0 && far.fade > 0.5, "outermost fade dimmer than center but bounded, got {}", far.fade);
+        assert!(
+            far.fade < 1.0 && far.fade > 0.5,
+            "outermost fade dimmer than center but bounded, got {}",
+            far.fade
+        );
         // degenerate inputs yield empty
         assert!(slice_delta_tiles(0, 0, 1920.0).is_empty());
         assert!(slice_delta_tiles(6, 0, 0.0).is_empty());
@@ -1609,19 +1758,49 @@ mod tests {
         let stage_w = 1920.0;
         let focused = 2usize;
         // centered expanded slot fully opaque
-        let center_slot = RingSlot { virtual_index: focused as isize, real_index: focused, x: ring_focused_x(stage_w), width: SLICE_EXPANDED_WIDTH, is_expanded: true };
+        let center_slot = RingSlot {
+            virtual_index: focused as isize,
+            real_index: focused,
+            x: ring_focused_x(stage_w),
+            width: SLICE_EXPANDED_WIDTH,
+            is_expanded: true,
+        };
         assert!((ring_slot_fade(&center_slot, stage_w) - 1.0).abs() < 0.001);
         // band-edge slot explicit: renormalized fade <0.9 (full-stage would be flat 1.0) and clearly visible
-        let band_edge = RingSlot { virtual_index: 1, real_index: 1, x: 363.0, width: SLICE_COLLAPSED_WIDTH, is_expanded: false };
+        let band_edge = RingSlot {
+            virtual_index: 1,
+            real_index: 1,
+            x: 363.0,
+            width: SLICE_COLLAPSED_WIDTH,
+            is_expanded: false,
+        };
         let f = ring_slot_fade(&band_edge, stage_w);
-        assert!(f < 0.9, "renormalized band-edge fade must be <1.0, got {f} (full-stage would be 1.0)");
-        assert!(f > 0.35, "outermost must stay clearly visible >0.35, got {f}");
+        assert!(
+            f < 0.9,
+            "renormalized band-edge fade must be <1.0, got {f} (full-stage would be 1.0)"
+        );
+        assert!(
+            f > 0.35,
+            "outermost must stay clearly visible >0.35, got {f}"
+        );
         assert!((0.0..=1.0).contains(&f), "far fade {f}");
         // near-center expanded stays at flat 1.0 zone unchanged
-        let near = ring_visible_slots(6, focused, stage_w).into_iter().find(|s| s.is_expanded).unwrap();
-        assert!((ring_slot_fade(&near, stage_w) - 1.0).abs() < 0.001, "center slot must remain flat 1.0");
+        let near = ring_visible_slots(6, focused, stage_w)
+            .into_iter()
+            .find(|s| s.is_expanded)
+            .unwrap();
+        assert!(
+            (ring_slot_fade(&near, stage_w) - 1.0).abs() < 0.001,
+            "center slot must remain flat 1.0"
+        );
         // small stage still valid
-        let tiny_slot = RingSlot { virtual_index: 0, real_index: 0, x: 0.0, width: SLICE_COLLAPSED_WIDTH, is_expanded: false };
+        let tiny_slot = RingSlot {
+            virtual_index: 0,
+            real_index: 0,
+            x: 0.0,
+            width: SLICE_COLLAPSED_WIDTH,
+            is_expanded: false,
+        };
         assert!((0.0..=1.0).contains(&ring_slot_fade(&tiny_slot, 50.0)));
     }
 
@@ -1635,17 +1814,36 @@ mod tests {
 
     #[test]
     fn slot_width_settled_expanded_and_collapsed() {
-        assert!((slot_width(0.0) - SLICE_EXPANDED_WIDTH).abs() < 0.001, "d=0 must be fully expanded 924, got {}", slot_width(0.0));
-        assert!((slot_width(1.0) - SLICE_COLLAPSED_WIDTH).abs() < 0.001, "|d|=1 must be collapsed 135, got {}", slot_width(1.0));
+        assert!(
+            (slot_width(0.0) - SLICE_EXPANDED_WIDTH).abs() < 0.001,
+            "d=0 must be fully expanded 924, got {}",
+            slot_width(0.0)
+        );
+        assert!(
+            (slot_width(1.0) - SLICE_COLLAPSED_WIDTH).abs() < 0.001,
+            "|d|=1 must be collapsed 135, got {}",
+            slot_width(1.0)
+        );
         assert!((slot_width(-1.0) - SLICE_COLLAPSED_WIDTH).abs() < 0.001);
-        assert!((slot_width(3.5) - SLICE_COLLAPSED_WIDTH).abs() < 0.001, "far slots stay collapsed");
+        assert!(
+            (slot_width(3.5) - SLICE_COLLAPSED_WIDTH).abs() < 0.001,
+            "far slots stay collapsed"
+        );
     }
 
     #[test]
     fn slot_width_midflight_straddlers_share_expansion() {
         // At frac=0.5 both straddlers are halfway grown.
-        assert!((slot_width(-0.5) - (SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0).abs() < 0.001, "outgoing d=-0.5 half-grown, got {}", slot_width(-0.5));
-        assert!((slot_width(0.5) - (SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0).abs() < 0.001, "incoming d=+0.5 half-grown, got {}", slot_width(0.5));
+        assert!(
+            (slot_width(-0.5) - (SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0).abs() < 0.001,
+            "outgoing d=-0.5 half-grown, got {}",
+            slot_width(-0.5)
+        );
+        assert!(
+            (slot_width(0.5) - (SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0).abs() < 0.001,
+            "incoming d=+0.5 half-grown, got {}",
+            slot_width(0.5)
+        );
     }
 
     #[test]
@@ -1653,44 +1851,102 @@ mod tests {
         // Parity with the legacy relative layout (relative centers / left edges):
         // expanded at 0 → left −462; first right +462; first left −597; second right +597.
         assert!((slot_center(0.0)).abs() < 0.001);
-        assert!((slot_center(1.0) - (SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0).abs() < 0.001, "d=1 center 529.5, got {}", slot_center(1.0));
-        assert!((slot_center(-1.0) + (SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0).abs() < 0.001);
-        assert!((slot_center(2.0) - ((SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0 + SLICE_COLLAPSED_WIDTH)).abs() < 0.001, "d=2 center 664.5, got {}", slot_center(2.0));
-        assert!((slot_center(-2.0) + ((SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0 + SLICE_COLLAPSED_WIDTH)).abs() < 0.001);
+        assert!(
+            (slot_center(1.0) - (SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0).abs() < 0.001,
+            "d=1 center 529.5, got {}",
+            slot_center(1.0)
+        );
+        assert!(
+            (slot_center(-1.0) + (SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0).abs()
+                < 0.001
+        );
+        assert!(
+            (slot_center(2.0)
+                - ((SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0 + SLICE_COLLAPSED_WIDTH))
+                .abs()
+                < 0.001,
+            "d=2 center 664.5, got {}",
+            slot_center(2.0)
+        );
+        assert!(
+            (slot_center(-2.0)
+                + ((SLICE_EXPANDED_WIDTH + SLICE_COLLAPSED_WIDTH) / 2.0 + SLICE_COLLAPSED_WIDTH))
+                .abs()
+                < 0.001
+        );
         // Left-edge parity with the old frozen tiles.
-        assert!((slot_left(0.0) + SLICE_EXPANDED_WIDTH / 2.0).abs() < 0.001, "d=0 left −462, got {}", slot_left(0.0));
-        assert!((slot_left(1.0) - SLICE_EXPANDED_WIDTH / 2.0).abs() < 0.001, "d=1 left +462, got {}", slot_left(1.0));
-        assert!((slot_left(-1.0) + (SLICE_EXPANDED_WIDTH / 2.0 + SLICE_COLLAPSED_WIDTH)).abs() < 0.001, "d=−1 left −597, got {}", slot_left(-1.0));
-        assert!((slot_left(2.0) - (SLICE_EXPANDED_WIDTH / 2.0 + SLICE_COLLAPSED_WIDTH)).abs() < 0.001, "d=2 left +597, got {}", slot_left(2.0));
+        assert!(
+            (slot_left(0.0) + SLICE_EXPANDED_WIDTH / 2.0).abs() < 0.001,
+            "d=0 left −462, got {}",
+            slot_left(0.0)
+        );
+        assert!(
+            (slot_left(1.0) - SLICE_EXPANDED_WIDTH / 2.0).abs() < 0.001,
+            "d=1 left +462, got {}",
+            slot_left(1.0)
+        );
+        assert!(
+            (slot_left(-1.0) + (SLICE_EXPANDED_WIDTH / 2.0 + SLICE_COLLAPSED_WIDTH)).abs() < 0.001,
+            "d=−1 left −597, got {}",
+            slot_left(-1.0)
+        );
+        assert!(
+            (slot_left(2.0) - (SLICE_EXPANDED_WIDTH / 2.0 + SLICE_COLLAPSED_WIDTH)).abs() < 0.001,
+            "d=2 left +597, got {}",
+            slot_left(2.0)
+        );
     }
 
     #[test]
     fn slot_center_midflight_gap_free_adjacency() {
         // Adjacency contract: adjacent slot centers differ by (w_i + w_j) / 2
         // at EVERY fractional position — the wall never opens a gap.
-        let pairs = [(-0.5f32, 0.5f32), (0.5, 1.5), (1.5, 2.5), (-1.5, -0.5), (0.0, 1.0), (0.25, 1.25), (-1.0, 0.0)];
+        let pairs = [
+            (-0.5f32, 0.5f32),
+            (0.5, 1.5),
+            (1.5, 2.5),
+            (-1.5, -0.5),
+            (0.0, 1.0),
+            (0.25, 1.25),
+            (-1.0, 0.0),
+        ];
         for (da, db) in pairs {
             let expected = (slot_width(da) + slot_width(db)) / 2.0;
             let got = slot_center(db) - slot_center(da);
-            assert!((got - expected).abs() < 0.01, "adjacency broken at ({da},{db}): centers differ {got}, half-width sum {expected}");
+            assert!(
+                (got - expected).abs() < 0.01,
+                "adjacency broken at ({da},{db}): centers differ {got}, half-width sum {expected}"
+            );
         }
     }
 
     #[test]
     fn slot_center_mirror_symmetric() {
         for d in [-0.25f32, 0.5, 1.0, 1.5, 3.0] {
-            assert!((slot_center(d) + slot_center(-d)).abs() < 0.001, "center not odd-symmetric at d={d}");
-            assert!((slot_width(d) - slot_width(-d)).abs() < 0.001, "width not symmetric at d={d}");
+            assert!(
+                (slot_center(d) + slot_center(-d)).abs() < 0.001,
+                "center not odd-symmetric at d={d}"
+            );
+            assert!(
+                (slot_width(d) - slot_width(-d)).abs() < 0.001,
+                "width not symmetric at d={d}"
+            );
         }
     }
 
     #[test]
     fn slot_center_incoming_approaches_center_as_focus_travels() {
         // next (+1): incoming card slides from +529.5 toward 0 (wall flows LEFT).
-        assert!(slot_center(0.5) < slot_center(1.0), "incoming must approach center mid-flight");
+        assert!(
+            slot_center(0.5) < slot_center(1.0),
+            "incoming must approach center mid-flight"
+        );
         assert!(slot_center(0.0).abs() < slot_center(0.5).abs());
         // outgoing drifts the opposite way.
-        assert!(slot_center(-0.5) > slot_center(-1.0), "outgoing must move left as focus advances");
+        assert!(
+            slot_center(-0.5) > slot_center(-1.0),
+            "outgoing must move left as focus advances"
+        );
     }
 
     #[test]
@@ -1701,20 +1957,35 @@ mod tests {
         // pitch left — and the whole arrangement stays gap-free at the
         // integer boundaries where relabels happen.
         let incoming_before = (slot_left(1.0 - 1.0), slot_width(1.0 - 1.0)); // old delta +1 at frac 1
-        assert!((incoming_before.0 + SLICE_EXPANDED_WIDTH / 2.0).abs() < 0.001, "incoming centered at frac=1, left {}", incoming_before.0);
+        assert!(
+            (incoming_before.0 + SLICE_EXPANDED_WIDTH / 2.0).abs() < 0.001,
+            "incoming centered at frac=1, left {}",
+            incoming_before.0
+        );
         assert!((incoming_before.1 - SLICE_EXPANDED_WIDTH).abs() < 0.001);
         let outgoing_before = (slot_left(0.0 - 1.0), slot_width(0.0 - 1.0)); // old delta 0 at frac 1
-        assert!((outgoing_before.0 + (SLICE_EXPANDED_WIDTH / 2.0 + SLICE_COLLAPSED_WIDTH)).abs() < 0.001, "outgoing one pitch left, left {}", outgoing_before.0);
+        assert!(
+            (outgoing_before.0 + (SLICE_EXPANDED_WIDTH / 2.0 + SLICE_COLLAPSED_WIDTH)).abs()
+                < 0.001,
+            "outgoing one pitch left, left {}",
+            outgoing_before.0
+        );
         assert!((outgoing_before.1 - SLICE_COLLAPSED_WIDTH).abs() < 0.001);
         for (da, db) in [(-1.0f32, 0.0f32), (0.0, 1.0), (1.0, 2.0), (-2.0, -1.0)] {
             let expected = (slot_width(da) + slot_width(db)) / 2.0;
-            assert!((slot_center(db) - slot_center(da) - expected).abs() < 0.01, "gap at ({da},{db})");
+            assert!(
+                (slot_center(db) - slot_center(da) - expected).abs() < 0.01,
+                "gap at ({da},{db})"
+            );
         }
     }
 
     #[test]
     fn focus_target_idle_jumps_full_distance() {
-        assert!((focus_target(2.0, 2, 3) - 5.0).abs() < 0.001, "idle +3 click targets focused+3");
+        assert!(
+            (focus_target(2.0, 2, 3) - 5.0).abs() < 0.001,
+            "idle +3 click targets focused+3"
+        );
         assert!((focus_target(2.0, 2, -1) - 1.0).abs() < 0.001);
         assert!((focus_target(0.0, 0, 1) - 1.0).abs() < 0.001);
     }
@@ -1740,7 +2011,10 @@ mod tests {
     #[test]
     fn focus_target_negative_live_value_chains_backward() {
         // prev chain from a fractional live position below the base.
-        assert!((focus_target(1.6, 2, -1) - 1.0).abs() < 0.001, "live 1.6 mid-flight + prev → virtual next 1.0");
+        assert!(
+            (focus_target(1.6, 2, -1) - 1.0).abs() < 0.001,
+            "live 1.6 mid-flight + prev → virtual next 1.0"
+        );
     }
 
     #[test]
@@ -1750,9 +2024,18 @@ mod tests {
         // stays within ±1, so the wall never loses the centered card no
         // matter how many cards pass.
         let step = focus_step(11, 11.4, 1);
-        assert_eq!(step.virtual_next, 12, "virtual focus crosses the seam unwrapped");
-        assert!((step.target - 12.0).abs() < 0.001, "mid-flight retarget is the virtual next, frac 0 at settle");
-        assert!((step.target - step.virtual_next as f32).abs() <= 1.0, "frac bounded after wrap");
+        assert_eq!(
+            step.virtual_next, 12,
+            "virtual focus crosses the seam unwrapped"
+        );
+        assert!(
+            (step.target - 12.0).abs() < 0.001,
+            "mid-flight retarget is the virtual next, frac 0 at settle"
+        );
+        assert!(
+            (step.target - step.virtual_next as f32).abs() <= 1.0,
+            "frac bounded after wrap"
+        );
         // prev across zero: real 0 → 11, virtual 0 → −1.
         let back = focus_step(0, -0.4, -1);
         assert_eq!(back.virtual_next, -1);
@@ -1765,7 +2048,10 @@ mod tests {
             let s = focus_step(v, pos, 1);
             v = s.virtual_next;
             pos = s.target;
-            assert!((pos - v as f32).abs() < 0.001, "frac must stay exactly 0 at virtual {v}");
+            assert!(
+                (pos - v as f32).abs() < 0.001,
+                "frac must stay exactly 0 at virtual {v}"
+            );
         }
         assert_eq!(v, 50);
     }
@@ -1789,9 +2075,18 @@ mod tests {
         }
         pos = target; // reel settles exactly on target (slice_reel::value)
         let frac = pos - v as f32;
-        assert!(frac.abs() < 0.001, "20 chained +1 must settle frac 0, got {frac} (virtual {v})");
-        assert!((slot_width(-frac) - SLICE_EXPANDED_WIDTH).abs() < 0.01, "focused must be 924 settled");
-        assert!((slot_width(1.0 - frac) - SLICE_COLLAPSED_WIDTH).abs() < 0.01, "neighbor must be 135 settled");
+        assert!(
+            frac.abs() < 0.001,
+            "20 chained +1 must settle frac 0, got {frac} (virtual {v})"
+        );
+        assert!(
+            (slot_width(-frac) - SLICE_EXPANDED_WIDTH).abs() < 0.01,
+            "focused must be 924 settled"
+        );
+        assert!(
+            (slot_width(1.0 - frac) - SLICE_COLLAPSED_WIDTH).abs() < 0.01,
+            "neighbor must be 135 settled"
+        );
         // Same contract backward: 20 chained −1 return to the origin exact.
         for _ in 0..20 {
             let s = focus_step(v, pos, -1);
@@ -1801,7 +2096,10 @@ mod tests {
         }
         pos = target;
         let frac = pos - v as f32;
-        assert!(frac.abs() < 0.001, "20 chained −1 must settle frac 0, got {frac} (virtual {v})");
+        assert!(
+            frac.abs() < 0.001,
+            "20 chained −1 must settle frac 0, got {frac} (virtual {v})"
+        );
         assert_eq!(v, 0);
     }
 
@@ -1813,7 +2111,10 @@ mod tests {
             let base = slice_delta_tiles(12, 6, w).len();
             for dw in [-1.0f32, -0.5, 0.5, 1.0] {
                 let n = slice_delta_tiles(12, 6, w + dw).len();
-                assert_eq!(n, base, "tile count must survive ±1px rounding at stage {w}");
+                assert_eq!(
+                    n, base,
+                    "tile count must survive ±1px rounding at stage {w}"
+                );
             }
         }
     }
@@ -1830,7 +2131,11 @@ mod tests {
         assert_eq!(ring_shortest_delta(0, 5, 6), -1, "0→5 wrap -1");
         assert_eq!(ring_shortest_delta(5, 0, 6), 1, "5→0 wrap +1");
         assert_eq!(ring_shortest_delta(0, 3, 6), 3, "tie half chooses positive");
-        assert_eq!(ring_shortest_delta(3, 0, 6), -3, "3→0 tie chooses negative? check sign");
+        assert_eq!(
+            ring_shortest_delta(3, 0, 6),
+            -3,
+            "3→0 tie chooses negative? check sign"
+        );
         assert_eq!(ring_shortest_delta(2, 2, 6), 0);
         assert_eq!(ring_shortest_delta(0, 1, 1), 0, "count 1 always 0");
         assert_eq!(ring_shortest_delta(0, 0, 0), 0);
@@ -1843,13 +2148,22 @@ mod tests {
 
     #[test]
     fn slice_wheel_debounce_is_150ms() {
-        assert_eq!(SLICE_WHEEL_DEBOUNCE_MS, 150, "V5 debounce 150ms (was 400ms) for chained wheel steps");
+        assert_eq!(
+            SLICE_WHEEL_DEBOUNCE_MS, 150,
+            "V5 debounce 150ms (was 400ms) for chained wheel steps"
+        );
     }
 
     // ── V3 ghost fix — per-SLOT flip (RED) ───────────────────────────────
 
     fn tile(expanded: bool) -> SliceUiTile {
-        SliceUiTile { delta: 0, real_index: 0, is_expanded: expanded, fade: 1.0, dist: 0 }
+        SliceUiTile {
+            delta: 0,
+            real_index: 0,
+            is_expanded: expanded,
+            fade: 1.0,
+            dist: 0,
+        }
     }
 
     fn tiles_with_expanded_at(len: usize, expanded_idx: Option<usize>) -> Vec<SliceUiTile> {
@@ -1933,7 +2247,15 @@ mod tests {
     #[test]
     fn flip_expanded_slot_clone_scenario_all_real_index_equal_still_flips_by_position() {
         // Ring clones: every tile maps to same theme (e.g. real_index 0) but only one SLOT expanded
-        let mut rows: Vec<SliceUiTile> = (0..5).map(|_| SliceUiTile { delta: 0, real_index: 0, is_expanded: false, fade: 1.0, dist: 0 }).collect();
+        let mut rows: Vec<SliceUiTile> = (0..5)
+            .map(|_| SliceUiTile {
+                delta: 0,
+                real_index: 0,
+                is_expanded: false,
+                fade: 1.0,
+                dist: 0,
+            })
+            .collect();
         rows[2].is_expanded = true;
         assert!(flip_expanded_slot(&mut rows, 1));
         assert!(!rows[2].is_expanded);
@@ -1960,9 +2282,27 @@ mod tests {
     fn flip_expanded_slot_slint_type_also_flips_by_position() {
         // Same logic must hold for the Slint-generated type used in main.rs
         let mut rows = vec![
-            crate::SliceTileData { delta: -1, real_index: 0, is_expanded: false, fade: 1.0, dist: 1 },
-            crate::SliceTileData { delta: 0, real_index: 1, is_expanded: true, fade: 1.0, dist: 0 },
-            crate::SliceTileData { delta: 1, real_index: 2, is_expanded: false, fade: 1.0, dist: 1 },
+            crate::SliceTileData {
+                delta: -1,
+                real_index: 0,
+                is_expanded: false,
+                fade: 1.0,
+                dist: 1,
+            },
+            crate::SliceTileData {
+                delta: 0,
+                real_index: 1,
+                is_expanded: true,
+                fade: 1.0,
+                dist: 0,
+            },
+            crate::SliceTileData {
+                delta: 1,
+                real_index: 2,
+                is_expanded: false,
+                fade: 1.0,
+                dist: 1,
+            },
         ];
         assert!(flip_expanded_slot(&mut rows, 1));
         assert!(!rows[1].is_expanded);
@@ -1976,8 +2316,16 @@ mod tests {
         // Large stages (≥ ~1594) → capped at exact skwd values.
         for w in [1920.0, 2560.0, 1600.0, 1594.0] {
             let m = scaled_metrics(w);
-            assert!((m.expanded - 924.0).abs() < 0.01, "large {w} expanded {}", m.expanded);
-            assert!((m.collapsed - 135.0).abs() < 0.01, "large {w} collapsed {}", m.collapsed);
+            assert!(
+                (m.expanded - 924.0).abs() < 0.01,
+                "large {w} expanded {}",
+                m.expanded
+            );
+            assert!(
+                (m.collapsed - 135.0).abs() < 0.01,
+                "large {w} collapsed {}",
+                m.collapsed
+            );
             assert!((m.height - 520.0).abs() < 0.01);
             assert!((m.skew - 35.0).abs() < 0.01);
             assert!((m.gap - 24.0).abs() < 0.01);
@@ -1985,7 +2333,11 @@ mod tests {
         }
         // Small logical widths: 58% clamp.
         let m1092 = scaled_metrics(1092.0);
-        assert!((m1092.expanded - 633.36).abs() < 0.5, "1092 expanded {} expected ~633", m1092.expanded);
+        assert!(
+            (m1092.expanded - 633.36).abs() < 0.5,
+            "1092 expanded {} expected ~633",
+            m1092.expanded
+        );
         assert!((m1092.collapsed - 135.0 * m1092.scale).abs() < 0.01);
         assert!((m1092.height - 520.0 * m1092.scale).abs() < 0.01);
         assert!((m1092.skew - 35.0 * m1092.scale).abs() < 0.01);
@@ -1994,7 +2346,11 @@ mod tests {
         assert!((m1092.height / m1092.expanded - 520.0 / 924.0).abs() < 0.001);
 
         let m1280 = scaled_metrics(1280.0);
-        assert!((m1280.expanded - 742.4).abs() < 0.5, "1280 expanded {} expected ~742", m1280.expanded);
+        assert!(
+            (m1280.expanded - 742.4).abs() < 0.5,
+            "1280 expanded {} expected ~742",
+            m1280.expanded
+        );
 
         // Zero / negative degenerate returns exact constants (no panic, no zero).
         let m0 = scaled_metrics(0.0);
@@ -2009,7 +2365,12 @@ mod tests {
         // least the inset band on both sides without clipping.
         let stage_small = 1092.0;
         let m = scaled_metrics(stage_small);
-        assert!(m.expanded < stage_small * 0.59, "expanded {} must be ≤58% of stage {}", m.expanded, stage_small);
+        assert!(
+            m.expanded < stage_small * 0.59,
+            "expanded {} must be ≤58% of stage {}",
+            m.expanded,
+            stage_small
+        );
         assert!(m.expanded < stage_small, "expanded must never exceed stage");
 
         // ring slots at small stage must: centered, contiguity scaled, no slot
@@ -2017,16 +2378,32 @@ mod tests {
         let slots = ring_visible_slots(6, 2, stage_small);
         let inset = ring_edge_inset(stage_small);
         for s in &slots {
-            assert!(s.x >= inset - 0.01, "slot x {} inside left inset {} scale", s.x, inset);
-            assert!(s.x + s.width <= stage_small - inset + 0.01, "slot right inside right inset");
+            assert!(
+                s.x >= inset - 0.01,
+                "slot x {} inside left inset {} scale",
+                s.x,
+                inset
+            );
+            assert!(
+                s.x + s.width <= stage_small - inset + 0.01,
+                "slot right inside right inset"
+            );
         }
         // Contiguity between collapsed neighbors uses scaled collapsed.
         let mut sorted = slots.clone();
         sorted.sort_by(|a, b| a.virtual_index.cmp(&b.virtual_index));
         for w in sorted.windows(2) {
-            let a = w[0]; let b = w[1];
-            if a.is_expanded || b.is_expanded { continue; }
-            assert!((b.x - a.x - m.collapsed).abs() < 0.01, "small collapsed contiguity {} vs {}", b.x - a.x, m.collapsed);
+            let a = w[0];
+            let b = w[1];
+            if a.is_expanded || b.is_expanded {
+                continue;
+            }
+            assert!(
+                (b.x - a.x - m.collapsed).abs() < 0.01,
+                "small collapsed contiguity {} vs {}",
+                b.x - a.x,
+                m.collapsed
+            );
         }
     }
 
@@ -2051,9 +2428,15 @@ mod tests {
         );
         // No overflow: leftmost x >=0, rightmost x+width <= stage (shadow pad stays inside).
         let min_x = small_slots.iter().map(|s| s.x).fold(f32::MAX, f32::min);
-        let max_r = small_slots.iter().map(|s| s.x + s.width).fold(f32::MIN, f32::max);
+        let max_r = small_slots
+            .iter()
+            .map(|s| s.x + s.width)
+            .fold(f32::MIN, f32::max);
         assert!(min_x >= -0.5, "leftmost x {min_x} must be ≥0 at 1092");
-        assert!(max_r <= 1092.0 + 0.5, "rightmost edge {max_r} must be ≤1092");
+        assert!(
+            max_r <= 1092.0 + 0.5,
+            "rightmost edge {max_r} must be ≤1092"
+        );
         // Also verify at 1280 (second small breakpoint) still 5.
         let mid_slots = ring_visible_slots(12, 6, 1280.0);
         assert_eq!(
@@ -2064,7 +2447,10 @@ mod tests {
             mid_slots
         );
         let mid_min = mid_slots.iter().map(|s| s.x).fold(f32::MAX, f32::min);
-        let mid_max = mid_slots.iter().map(|s| s.x + s.width).fold(f32::MIN, f32::max);
+        let mid_max = mid_slots
+            .iter()
+            .map(|s| s.x + s.width)
+            .fold(f32::MIN, f32::max);
         assert!(mid_min >= -0.5, "1280 leftmost {mid_min} ≥0");
         assert!(mid_max <= 1280.0 + 0.5, "1280 rightmost {mid_max} ≤1280");
 
@@ -2077,7 +2463,10 @@ mod tests {
         assert!((m_large.skew - 35.0).abs() < 0.01);
         assert!((m_large.gap - 24.0).abs() < 0.01);
         let inset_large = ring_edge_inset(1920.0);
-        assert!((inset_large - 270.0).abs() < 0.01, "large inset must stay 2*135=270, got {inset_large}");
+        assert!(
+            (inset_large - 270.0).abs() < 0.01,
+            "large inset must stay 2*135=270, got {inset_large}"
+        );
         // 1920 previously had 3 visible (expanded +1 left +1 right).
         assert!(
             large_slots.len() >= 3,
@@ -2095,16 +2484,28 @@ mod tests {
         let inset_1593 = ring_edge_inset(1593.0);
         let inset_1594 = ring_edge_inset(1594.0);
         let m1594 = scaled_metrics(1594.0);
-        assert!((inset_1593 - 32.0).abs() < 0.01, "1593 small inset must be 32, got {inset_1593}");
-        assert!((inset_1594 - 2.0 * m1594.collapsed).abs() < 0.01, "1594 large inset 2*coll");
+        assert!(
+            (inset_1593 - 32.0).abs() < 0.01,
+            "1593 small inset must be 32, got {inset_1593}"
+        );
+        assert!(
+            (inset_1594 - 2.0 * m1594.collapsed).abs() < 0.01,
+            "1594 large inset 2*coll"
+        );
     }
 
     #[test]
     fn fluid_slot_geometry_scaled_matches_fixed_at_large() {
         // V6 focus-flow scaled geometry must equal fixed geometry at large stage.
         for d in [-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0] {
-            assert!((slot_width_scaled(d, 1920.0) - slot_width(d)).abs() < 0.01, "d {d} width scaled vs fixed");
-            assert!((slot_center_scaled(d, 1920.0) - slot_center(d)).abs() < 0.01, "d {d} center scaled vs fixed");
+            assert!(
+                (slot_width_scaled(d, 1920.0) - slot_width(d)).abs() < 0.01,
+                "d {d} width scaled vs fixed"
+            );
+            assert!(
+                (slot_center_scaled(d, 1920.0) - slot_center(d)).abs() < 0.01,
+                "d {d} center scaled vs fixed"
+            );
             assert!((slot_left_scaled(d, 1920.0) - slot_left(d)).abs() < 0.01);
         }
         // At small stage, width scales proportionally.
@@ -2129,8 +2530,14 @@ mod tests {
         // Height ratio preserved across all widths.
         for w in widths {
             let m = scaled_metrics(w);
-            assert!((m.height / m.expanded - 520.0 / 924.0).abs() < 0.001, "height ratio drift at {w}");
-            assert!((m.skew / m.collapsed - 35.0 / 135.0).abs() < 0.001, "skew/collapsed drift at {w}");
+            assert!(
+                (m.height / m.expanded - 520.0 / 924.0).abs() < 0.001,
+                "height ratio drift at {w}"
+            );
+            assert!(
+                (m.skew / m.collapsed - 35.0 / 135.0).abs() < 0.001,
+                "skew/collapsed drift at {w}"
+            );
         }
     }
 }

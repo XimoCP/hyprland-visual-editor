@@ -27,14 +27,22 @@ pub const THUMBNAIL_CACHE_CAPACITY: usize = 200;
 /// `HVE_REDUCED_MOTION=1` or `PREFERS_REDUCED_MOTION`. Pure helper for
 /// tests and the Chrome reduced-motion path.
 pub fn prefers_reduced_motion() -> bool {
-    std::env::var("HVE_REDUCED_MOTION").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(false)
-        || std::env::var("PREFERS_REDUCED_MOTION").map(|v| v == "1").unwrap_or(false)
+    std::env::var("HVE_REDUCED_MOTION")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false)
+        || std::env::var("PREFERS_REDUCED_MOTION")
+            .map(|v| v == "1")
+            .unwrap_or(false)
 }
 
 /// Duration 0 when reduced-motion is active, otherwise original duration.
 /// S23: all animations disabled (duration 0) when prefers-reduced-motion.
 pub fn effective_duration(original_ms: u64, reduced: bool) -> u64 {
-    if reduced { 0 } else { original_ms }
+    if reduced {
+        0
+    } else {
+        original_ms
+    }
 }
 
 /// Complete-look color scheme carried by each card (spec R1).
@@ -340,7 +348,10 @@ impl Default for ThumbnailCache {
 // zero work and the wall never flickers. Non-image fields (accent, flags)
 // always come from the FRESH row.
 
-pub fn carry_over_bakes(old_rows: &[crate::GalleryCardData], fresh: Vec<crate::GalleryCardData>) -> Vec<crate::GalleryCardData> {
+pub fn carry_over_bakes(
+    old_rows: &[crate::GalleryCardData],
+    fresh: Vec<crate::GalleryCardData>,
+) -> Vec<crate::GalleryCardData> {
     let mut out = fresh;
     for card in out.iter_mut() {
         if let Some(prev) = old_rows.iter().find(|o| o.name == card.name) {
@@ -362,7 +373,10 @@ pub fn carry_over_bakes(old_rows: &[crate::GalleryCardData], fresh: Vec<crate::G
 ///   (absorbs `carry_over_bakes` semantics).
 /// - Pushes appended rows; untouched delegates are never rewritten.
 /// - Model identity (`&VecModel` pointer) is unchanged — caller keeps the same ModelRc.
-pub fn sync_cards(model: &slint::VecModel<crate::GalleryCardData>, new_rows: Vec<crate::GalleryCardData>) {
+pub fn sync_cards(
+    model: &slint::VecModel<crate::GalleryCardData>,
+    new_rows: Vec<crate::GalleryCardData>,
+) {
     use slint::Model as _;
 
     // ── 1) Remove stale names (descending for delegate stability) ──
@@ -490,7 +504,9 @@ mod tests {
             name: name.to_string().into(),
             saved_at: "".into(),
             is_active: false,
-            providers: slint::ModelRc::new(slint::VecModel::from(Vec::<slint::SharedString>::new())),
+            providers: slint::ModelRc::new(
+                slint::VecModel::from(Vec::<slint::SharedString>::new()),
+            ),
             accent: slint::Color::from_rgb_u8(1, 2, 3),
             primary: slint::Color::from_rgb_u8(0, 0, 0),
             secondary: slint::Color::from_rgb_u8(0, 0, 0),
@@ -509,7 +525,9 @@ mod tests {
     }
 
     fn has_bakes(c: &crate::GalleryCardData) -> bool {
-        c.thumb.size().width > 0 && c.slat_image.size().width > 0 && c.slat_expanded_image.size().width > 0
+        c.thumb.size().width > 0
+            && c.slat_image.size().width > 0
+            && c.slat_expanded_image.size().width > 0
     }
 
     // ── S5 RED: bake carry-over across gallery rebuilds ────────────
@@ -519,7 +537,10 @@ mod tests {
         let old = vec![card("Alpha", true), card("Beta", true)];
         let fresh = vec![card("Alpha", false), card("Beta", false)];
         let out = carry_over_bakes(&old, fresh);
-        assert!(out.iter().all(has_bakes), "matched cards must keep their bakes");
+        assert!(
+            out.iter().all(has_bakes),
+            "matched cards must keep their bakes"
+        );
         assert_eq!(out[0].name, "Alpha");
         assert_eq!(out[1].name, "Beta");
     }
@@ -531,7 +552,10 @@ mod tests {
         let out = carry_over_bakes(&old, fresh);
         assert_eq!(out.len(), 2, "count preserved");
         assert_eq!(out[0].name, "Zulu", "fresh order preserved");
-        assert!(!has_bakes(&out[0]), "unmatched new theme starts blank (async bake fills it)");
+        assert!(
+            !has_bakes(&out[0]),
+            "unmatched new theme starts blank (async bake fills it)"
+        );
         assert!(has_bakes(&out[1]), "existing theme keeps its bakes");
     }
 
@@ -564,7 +588,10 @@ mod tests {
     fn gallery_maps_empty() {
         let infos: Vec<ThemeInfo> = vec![];
         let cards = ThemeCard::from_infos(&infos);
-        assert!(cards.is_empty(), "empty ThemeManager.list() must map to empty cards");
+        assert!(
+            cards.is_empty(),
+            "empty ThemeManager.list() must map to empty cards"
+        );
     }
 
     #[test]
@@ -598,7 +625,10 @@ mod tests {
     fn gallery_card_defaults_match_tokens() {
         let i = info("Test", false, &[], "");
         let c = ThemeCard::from_info(&i);
-        assert_eq!(c.colors.accent, FALLBACK_ACCENT, "accent defaults to fallback #4fc3f7");
+        assert_eq!(
+            c.colors.accent, FALLBACK_ACCENT,
+            "accent defaults to fallback #4fc3f7"
+        );
         assert_eq!(c.colors.primary, FALLBACK_ACCENT);
         assert_eq!(c.border.size, 2, "border size default 2");
         assert_eq!(c.border.radius, 32, "border radius default 32");
@@ -666,12 +696,22 @@ mod tests {
 
     #[test]
     fn gallery_model_style_switch() {
-        let mut model = ThemeGalleryModel::new(vec![ThemeCard::from_info(&info("A", false, &[], ""))]);
-        assert_eq!(model.style(), crate::shell::gallery::views::GalleryStyle::Slice);
+        let mut model =
+            ThemeGalleryModel::new(vec![ThemeCard::from_info(&info("A", false, &[], ""))]);
+        assert_eq!(
+            model.style(),
+            crate::shell::gallery::views::GalleryStyle::Slice
+        );
         model.set_style(crate::shell::gallery::views::GalleryStyle::Hexagon);
-        assert_eq!(model.style(), crate::shell::gallery::views::GalleryStyle::Hexagon);
+        assert_eq!(
+            model.style(),
+            crate::shell::gallery::views::GalleryStyle::Hexagon
+        );
         model.set_style(crate::shell::gallery::views::GalleryStyle::Mosaic);
-        assert_eq!(model.style(), crate::shell::gallery::views::GalleryStyle::Mosaic);
+        assert_eq!(
+            model.style(),
+            crate::shell::gallery::views::GalleryStyle::Mosaic
+        );
     }
 
     #[test]
@@ -721,7 +761,10 @@ mod tests {
         // Alpha: non-image from new, images preserved from old (old baked)
         assert!(out_a.is_active, "Alpha is_active must come from new row");
         assert_eq!(out_a.accent, slint::Color::from_rgb_u8(99, 99, 99));
-        assert!(has_bakes(&out_a), "Alpha images preserved from old (old non-empty wins)");
+        assert!(
+            has_bakes(&out_a),
+            "Alpha images preserved from old (old non-empty wins)"
+        );
         // Beta: untouched — still baked, still inactive, accent unchanged
         assert!(!out_b.is_active);
         assert_eq!(out_b.accent, slint::Color::from_rgb_u8(20, 20, 20));
@@ -734,7 +777,10 @@ mod tests {
         fresh_gamma.is_active = true;
         crate::shell::gallery::model::sync_cards(&model2, vec![fresh_gamma]);
         let out_g = model2.row_data(0).unwrap();
-        assert!(has_bakes(&out_g), "when old empty and new carries, absorb new bake");
+        assert!(
+            has_bakes(&out_g),
+            "when old empty and new carries, absorb new bake"
+        );
         assert!(out_g.is_active);
     }
 
@@ -748,7 +794,10 @@ mod tests {
         let fresh_b = card("B", false);
         let mut fresh_c = card("C", false);
         fresh_c.is_active = true;
-        crate::shell::gallery::model::sync_cards(&model, vec![fresh_a.clone(), fresh_b.clone(), fresh_c.clone()]);
+        crate::shell::gallery::model::sync_cards(
+            &model,
+            vec![fresh_a.clone(), fresh_b.clone(), fresh_c.clone()],
+        );
         assert_eq!(model.row_count(), 3, "append must push");
         assert_eq!(model.row_data(0).unwrap().name, "A");
         assert_eq!(model.row_data(1).unwrap().name, "B");
@@ -756,7 +805,10 @@ mod tests {
         // Surviving rows kept their bakes (old non-empty preserved)
         assert!(has_bakes(&model.row_data(0).unwrap()));
         assert!(has_bakes(&model.row_data(1).unwrap()));
-        assert!(!has_bakes(&model.row_data(2).unwrap()), "new appended theme starts blank");
+        assert!(
+            !has_bakes(&model.row_data(2).unwrap()),
+            "new appended theme starts blank"
+        );
 
         // Remove: 3 → 2 (middle removed, descending safety)
         let model2 = VecModel::from(vec![card("A", true), card("B", true), card("C", true)]);
@@ -797,11 +849,24 @@ mod tests {
         // The overwritten card drops all four baked images: blank rows are
         // exactly what the thumb scheduler picks up for re-bake.
         let alpha = model.row_data(0).unwrap();
-        assert_eq!(alpha.thumb.size().width, 0, "overwritten thumb must be blank for re-bake");
-        assert_eq!(alpha.hero.size().width, 0, "overwritten hero must be blank for re-bake");
-        assert_eq!(alpha.slat_image.size().width, 0, "overwritten slat must be blank for re-bake");
         assert_eq!(
-            alpha.slat_expanded_image.size().width, 0,
+            alpha.thumb.size().width,
+            0,
+            "overwritten thumb must be blank for re-bake"
+        );
+        assert_eq!(
+            alpha.hero.size().width,
+            0,
+            "overwritten hero must be blank for re-bake"
+        );
+        assert_eq!(
+            alpha.slat_image.size().width,
+            0,
+            "overwritten slat must be blank for re-bake"
+        );
+        assert_eq!(
+            alpha.slat_expanded_image.size().width,
+            0,
             "overwritten expanded slat must be blank for re-bake"
         );
         // The untouched card keeps its bakes: no mass invalidation, no
@@ -819,7 +884,13 @@ mod tests {
         use std::collections::HashSet;
         let model = VecModel::from(vec![card("Alpha", true), card("Beta", true)]);
         crate::shell::gallery::model::invalidate_card_bakes(&model, &HashSet::new());
-        assert!(has_bakes(&model.row_data(0).unwrap()), "empty set must not blank Alpha");
-        assert!(has_bakes(&model.row_data(1).unwrap()), "empty set must not blank Beta");
+        assert!(
+            has_bakes(&model.row_data(0).unwrap()),
+            "empty set must not blank Alpha"
+        );
+        assert!(
+            has_bakes(&model.row_data(1).unwrap()),
+            "empty set must not blank Beta"
+        );
     }
 }

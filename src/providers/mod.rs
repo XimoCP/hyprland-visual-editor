@@ -97,9 +97,13 @@ pub fn register_default_providers(tm: &mut ThemeManager, engine: &Engine) {
     }
 
     if disabled.iter().any(|d| d == "hve-presets") {
-        tracing::info!("[providers] provider 'hve-presets' disabled in config — skipping registration");
+        tracing::info!(
+            "[providers] provider 'hve-presets' disabled in config — skipping registration"
+        );
     } else {
-        tm.register_provider(Box::new(hve_presets::HvePresetsProvider::new(engine.clone())));
+        tm.register_provider(Box::new(hve_presets::HvePresetsProvider::new(
+            engine.clone(),
+        )));
     }
 }
 
@@ -306,7 +310,11 @@ mod tests {
         sandbox.write_config(&["hve-presets"]);
 
         let ids = registered_ids(&sandbox);
-        assert_eq!(ids, vec!["noctalia-v5"], "presets must not register when disabled");
+        assert_eq!(
+            ids,
+            vec!["noctalia-v5"],
+            "presets must not register when disabled"
+        );
     }
 
     /// An empty list registers exactly what the seam registers today: the

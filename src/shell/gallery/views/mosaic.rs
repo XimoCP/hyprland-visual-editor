@@ -7,7 +7,7 @@
 //
 // Pure Rust — no Slint types. MosaicCell/MosaicView .slint handle visuals.
 
-use super::{GalleryStyle, GalleryView, GalleryKey};
+use super::{GalleryKey, GalleryStyle, GalleryView};
 
 // ── Constants (spec R2.3) ───────────────────────────────────────────
 
@@ -72,7 +72,12 @@ pub const MOSAIC_ASPECT_WIDE: f32 = 1.95;
 
 /// Final paint-ready tile rect in stage coordinates (offsets applied).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MosaicTile { pub x: f32, pub y: f32, pub w: f32, pub h: f32 }
+pub struct MosaicTile {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
 
 /// Packed block: tiles plus centered content box on the stage.
 #[derive(Debug, Clone, PartialEq)]
@@ -114,7 +119,11 @@ pub fn mosaic_display_aspect(idx: usize) -> f32 {
 pub fn justified_layout(aspects: &[f32], stage_w: f32, stage_h: f32) -> MosaicLayout {
     if aspects.is_empty() || !(stage_w > 0.0) || !(stage_h > 0.0) {
         return MosaicLayout {
-            tiles: vec![], content_w: 0.0, content_h: 0.0, offset_x: 0.0, offset_y: 0.0,
+            tiles: vec![],
+            content_w: 0.0,
+            content_h: 0.0,
+            offset_x: 0.0,
+            offset_y: 0.0,
         };
     }
     let g = MOSAIC_GUTTER_PX;
@@ -125,7 +134,13 @@ pub fn justified_layout(aspects: &[f32], stage_w: f32, stage_h: f32) -> MosaicLa
     // Sanitize first so the per-row target uses valid aspects only.
     let sanitized: Vec<f32> = aspects
         .iter()
-        .map(|&a| if a.is_finite() && a > 0.0 { a } else { MOSAIC_DEFAULT_ASPECT })
+        .map(|&a| {
+            if a.is_finite() && a > 0.0 {
+                a
+            } else {
+                MOSAIC_DEFAULT_ASPECT
+            }
+        })
         .collect();
     let target = sanitized.iter().sum::<f32>() / MOSAIC_ROW_COUNT as f32;
     // Greedy in-order packing; overflow force-closes into the last row.
@@ -213,7 +228,13 @@ pub fn justified_layout(aspects: &[f32], stage_w: f32, stage_h: f32) -> MosaicLa
         t.x += offset_x;
         t.y += offset_y;
     }
-    MosaicLayout { tiles, content_w, content_h, offset_x, offset_y }
+    MosaicLayout {
+        tiles,
+        content_w,
+        content_h,
+        offset_x,
+        offset_y,
+    }
 }
 
 /// Hero max width as fraction of usable width (45% cap).
@@ -276,8 +297,20 @@ pub fn justified_hero_layout(
     let g = MOSAIC_GUTTER_PX;
     let band = stage_h / MOSAIC_BAND_HEIGHT_DIVISOR;
     let th = (band - (MOSAIC_ROW_COUNT as f32 - 1.0) * g) / MOSAIC_ROW_COUNT as f32;
-    let sanitize = |a: f32| if a.is_finite() && a > 0.0 { a } else { MOSAIC_DEFAULT_ASPECT };
-    let real_at = |i: usize| -> usize { if reals.is_empty() { i } else { reals[i % reals.len()] } };
+    let sanitize = |a: f32| {
+        if a.is_finite() && a > 0.0 {
+            a
+        } else {
+            MOSAIC_DEFAULT_ASPECT
+        }
+    };
+    let real_at = |i: usize| -> usize {
+        if reals.is_empty() {
+            i
+        } else {
+            reals[i % reals.len()]
+        }
+    };
     let margin = stage_w * MOSAIC_SIDE_MARGIN_FRACTION;
     let usable_w = stage_w - 2.0 * margin;
 
@@ -291,7 +324,12 @@ pub fn justified_hero_layout(
         let w = (h * sanitize(aspects[0]))
             .min(usable_w * MOSAIC_HERO_MAX_WIDTH_FRACTION)
             .max(1.0);
-        tiles.push(MosaicTile { x: (usable_w - w) / 2.0, y: 0.0, w, h });
+        tiles.push(MosaicTile {
+            x: (usable_w - w) / 2.0,
+            y: 0.0,
+            w,
+            h,
+        });
         tile_reals.push(real_at(0));
     } else if n == 2 {
         // Two full-height tiles filling the usable width: the composition is
@@ -300,10 +338,24 @@ pub fn justified_hero_layout(
         let a0 = sanitize(aspects[0]);
         let a1 = sanitize(aspects[1]);
         let sum = a0 + a1;
-        let scale = if sum > 0.0 { (usable_w - g) / (h * sum) } else { 1.0 };
+        let scale = if sum > 0.0 {
+            (usable_w - g) / (h * sum)
+        } else {
+            1.0
+        };
         let w0 = (h * a0 * scale).clamp(1.0, (usable_w - g - 1.0).max(1.0));
-        tiles.push(MosaicTile { x: 0.0, y: 0.0, w: w0, h });
-        tiles.push(MosaicTile { x: w0 + g, y: 0.0, w: (usable_w - g - w0).max(1.0), h });
+        tiles.push(MosaicTile {
+            x: 0.0,
+            y: 0.0,
+            w: w0,
+            h,
+        });
+        tiles.push(MosaicTile {
+            x: w0 + g,
+            y: 0.0,
+            w: (usable_w - g - w0).max(1.0),
+            h,
+        });
         tile_reals.push(real_at(0));
         tile_reals.push(real_at(1));
     } else {
@@ -317,14 +369,27 @@ pub fn justified_hero_layout(
         let hero_x = (usable_w - hero_w) / 2.0;
         let region_l = ((usable_w - hero_w - 2.0 * g) / 2.0).max(1.0);
         // Model order: hero first, then the left region, then the right region.
-        tiles.push(MosaicTile { x: hero_x, y: 0.0, w: hero_w, h: band });
+        tiles.push(MosaicTile {
+            x: hero_x,
+            y: 0.0,
+            w: hero_w,
+            h: band,
+        });
         tile_reals.push(real_at(0));
 
-        let rem: Vec<(f32, usize)> =
-            (1..n).map(|i| (sanitize(aspects[i]), real_at(i))).collect();
+        let rem: Vec<(f32, usize)> = (1..n).map(|i| (sanitize(aspects[i]), real_at(i))).collect();
         let left_n = rem.len() / 2;
         let (left_items, right_items) = rem.split_at(left_n);
-        push_mosaic_region(left_items, 0.0, region_l, band, th, g, &mut tiles, &mut tile_reals);
+        push_mosaic_region(
+            left_items,
+            0.0,
+            region_l,
+            band,
+            th,
+            g,
+            &mut tiles,
+            &mut tile_reals,
+        );
         push_mosaic_region(
             right_items,
             hero_x + hero_w + g,
@@ -350,7 +415,16 @@ pub fn justified_hero_layout(
         t.x += offset_x;
         t.y += offset_y;
     }
-    (MosaicLayout { tiles, content_w, content_h, offset_x, offset_y }, tile_reals)
+    (
+        MosaicLayout {
+            tiles,
+            content_w,
+            content_h,
+            offset_x,
+            offset_y,
+        },
+        tile_reals,
+    )
 }
 
 /// Fill one side region (`region_l` wide, `band` tall) with `items`, in model
@@ -371,7 +445,12 @@ fn push_mosaic_region(
     match items.len() {
         0 => {}
         1 => {
-            tiles.push(MosaicTile { x: base_x, y: 0.0, w: region_l, h: band });
+            tiles.push(MosaicTile {
+                x: base_x,
+                y: 0.0,
+                w: region_l,
+                h: band,
+            });
             reals.push(items[0].1);
         }
         k => {
@@ -529,8 +608,7 @@ pub fn mosaic_page_capacity(stage_w: f32, stage_h: f32) -> usize {
     }
     let fits = |n: usize| -> bool {
         for phase in 0..10 {
-            let aspects: Vec<f32> =
-                (0..n).map(|i| mosaic_display_aspect(phase + i)).collect();
+            let aspects: Vec<f32> = (0..n).map(|i| mosaic_display_aspect(phase + i)).collect();
             let reals: Vec<usize> = (0..n).collect();
             let (layout, _) = justified_hero_layout(&aspects, &reals, stage_w, stage_h);
             if layout.tiles.is_empty()
@@ -569,7 +647,10 @@ pub fn mosaic_curtain_delays(tiles: &[MosaicTile]) -> Vec<u64> {
     tiles
         .iter()
         .map(|t| {
-            let ci = cols.iter().position(|&c| (c - t.x).abs() < 2.0).unwrap_or(0);
+            let ci = cols
+                .iter()
+                .position(|&c| (c - t.x).abs() < 2.0)
+                .unwrap_or(0);
             (ci as u64) * MOSAIC_CURTAIN_COL_STAGGER_MS
         })
         .collect()
@@ -637,9 +718,7 @@ impl MosaicPages {
     /// half is what keeps a capacity computed for a hidden window from
     /// outliving the window's real size.
     pub fn needs_recompute(&self, real_count: usize, stage_w: f32, stage_h: f32) -> bool {
-        self.real_count != real_count
-            || self.capacity == 0
-            || self.stage != (stage_w, stage_h)
+        self.real_count != real_count || self.capacity == 0 || self.stage != (stage_w, stage_h)
     }
 
     /// Recompute on a real-count / stage change. The ONLY operation that
@@ -701,8 +780,7 @@ impl MosaicPages {
         let pages_before = self.total_pages;
         let count_before = self.real_count;
         self.recompute(real_count, stage_w, stage_h);
-        let partition_moved =
-            self.capacity != capacity_before || self.total_pages != pages_before;
+        let partition_moved = self.capacity != capacity_before || self.total_pages != pages_before;
         let library_changed = self.real_count != count_before;
         if is_flip || !(partition_moved || library_changed) {
             return false;
@@ -710,27 +788,45 @@ impl MosaicPages {
         self.open_on_active()
     }
 
-    pub fn current(&self) -> usize { self.current }
-    pub fn total_pages(&self) -> usize { self.total_pages }
-    pub fn capacity(&self) -> usize { self.capacity }
-    pub fn real_count(&self) -> usize { self.real_count }
-    pub fn geometry_rebuilds(&self) -> usize { self.geometry_rebuilds }
+    pub fn current(&self) -> usize {
+        self.current
+    }
+    pub fn total_pages(&self) -> usize {
+        self.total_pages
+    }
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+    pub fn real_count(&self) -> usize {
+        self.real_count
+    }
+    pub fn geometry_rebuilds(&self) -> usize {
+        self.geometry_rebuilds
+    }
 
     /// The theme the cursor ring sits on (None = no cursor).
-    pub fn cursor_theme(&self) -> Option<usize> { self.cursor_theme }
+    pub fn cursor_theme(&self) -> Option<usize> {
+        self.cursor_theme
+    }
 
     /// Store the cursor's identity. The caller sets this whenever it moves the
     /// cursor, so a later recompute re-anchors to the same THEME.
-    pub fn set_cursor_theme(&mut self, theme: Option<usize>) { self.cursor_theme = theme; }
+    pub fn set_cursor_theme(&mut self, theme: Option<usize>) {
+        self.cursor_theme = theme;
+    }
 
     /// The ACTIVE theme (the one applied), as its real index (None = nothing
     /// active). The page that contains it leads its arrays with it.
-    pub fn active_theme(&self) -> Option<usize> { self.active_theme }
+    pub fn active_theme(&self) -> Option<usize> {
+        self.active_theme
+    }
 
     /// Store the active theme. The caller sets this from the library snapshot
     /// (`GalleryCardData::is_active`) before every render, so the page that
     /// holds it renders it as the hero.
-    pub fn set_active_theme(&mut self, theme: Option<usize>) { self.active_theme = theme; }
+    pub fn set_active_theme(&mut self, theme: Option<usize>) {
+        self.active_theme = theme;
+    }
 
     /// The page index that CONTAINS `theme`, or None when it is not in the
     /// library / there is no page. Pure.
@@ -779,7 +875,9 @@ impl MosaicPages {
     }
 
     /// Pagination UI is hidden when there is at most one page.
-    pub fn hidden(&self) -> bool { self.total_pages <= 1 }
+    pub fn hidden(&self) -> bool {
+        self.total_pages <= 1
+    }
 
     /// 1-based page-number list for the pagination UI.
     pub fn page_numbers(&self) -> Vec<usize> {
@@ -847,9 +945,14 @@ impl MosaicPages {
 // ── Geometry helpers ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Point { pub x: f32, pub y: f32 }
+pub struct Point {
+    pub x: f32,
+    pub y: f32,
+}
 impl Point {
-    pub fn new(x: f32, y: f32) -> Self { Self { x, y } }
+    pub fn new(x: f32, y: f32) -> Self {
+        Self { x, y }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -869,15 +972,19 @@ pub struct VoronoiCell {
 
 /// Compute polygon centroid (area-weighted). Falls back to average for degenerate.
 pub fn centroid(vertices: &[Point]) -> Point {
-    if vertices.is_empty() { return Point::new(0.0, 0.0); }
-    if vertices.len() == 1 { return vertices[0]; }
+    if vertices.is_empty() {
+        return Point::new(0.0, 0.0);
+    }
+    if vertices.len() == 1 {
+        return vertices[0];
+    }
     // Shoelace
     let mut area = 0.0f32;
     let mut cx = 0.0f32;
     let mut cy = 0.0f32;
     for i in 0..vertices.len() {
         let p0 = vertices[i];
-        let p1 = vertices[(i+1)%vertices.len()];
+        let p1 = vertices[(i + 1) % vertices.len()];
         let cross = p0.x * p1.y - p1.x * p0.y;
         area += cross;
         cx += (p0.x + p1.x) * cross;
@@ -885,9 +992,11 @@ pub fn centroid(vertices: &[Point]) -> Point {
     }
     if area.abs() < 1e-6 {
         // degenerate: average
-        let sum = vertices.iter().fold(Point::new(0.0,0.0), |a,p| Point::new(a.x+p.x, a.y+p.y));
+        let sum = vertices.iter().fold(Point::new(0.0, 0.0), |a, p| {
+            Point::new(a.x + p.x, a.y + p.y)
+        });
         let n = vertices.len() as f32;
-        return Point::new(sum.x/n, sum.y/n);
+        return Point::new(sum.x / n, sum.y / n);
     }
     area *= 0.5;
     cx /= 6.0 * area;
@@ -901,26 +1010,30 @@ pub fn centroid(vertices: &[Point]) -> Point {
 /// to (0,0)-(w,h). Uses naive approximation — closest-site partition on a
 /// coarse sample — sufficient for centroid correctness tests.
 pub fn build_tiles(count: usize, w: f32, h: f32, iterations: usize) -> Vec<VoronoiCell> {
-    if count == 0 || w <= 0.0 || h <= 0.0 { return vec![]; }
+    if count == 0 || w <= 0.0 || h <= 0.0 {
+        return vec![];
+    }
     let count = count.min(MOSAIC_WARMUP_MAX * 4); // cap large counts for CPU but >64 allowed
-    // seed sites: grid + jitter deterministic
-    let mut sites: Vec<Point> = (0..count).map(|i| {
-        let cols = (w / 200.0).max(1.0) as usize + 1;
-        let row = i / cols;
-        let col = i % cols;
-        let jitter_x = ((i as f32 * 37.0).sin() * 20.0).rem_euclid(40.0) - 20.0;
-        let jitter_y = ((i as f32 * 73.0).cos() * 20.0).rem_euclid(40.0) - 20.0;
-        let base_x = (col as f32 + 0.5) * (w / cols as f32) + jitter_x;
-        let base_y = (row as f32 + 0.5) * (h / ((count/cols.max(1)+1) as f32)) + jitter_y;
-        Point::new(base_x.clamp(0.0, w), base_y.clamp(0.0, h))
-    }).collect();
+                                                  // seed sites: grid + jitter deterministic
+    let mut sites: Vec<Point> = (0..count)
+        .map(|i| {
+            let cols = (w / 200.0).max(1.0) as usize + 1;
+            let row = i / cols;
+            let col = i % cols;
+            let jitter_x = ((i as f32 * 37.0).sin() * 20.0).rem_euclid(40.0) - 20.0;
+            let jitter_y = ((i as f32 * 73.0).cos() * 20.0).rem_euclid(40.0) - 20.0;
+            let base_x = (col as f32 + 0.5) * (w / cols as f32) + jitter_x;
+            let base_y = (row as f32 + 0.5) * (h / ((count / cols.max(1) + 1) as f32)) + jitter_y;
+            Point::new(base_x.clamp(0.0, w), base_y.clamp(0.0, h))
+        })
+        .collect();
 
     for _ in 0..iterations {
         // One Lloyd step: compute Voronoi cells via naive nearest-site on coarse grid,
         // then recompute site as centroid of its cell points.
         // Use sampling at 10px resolution for determinism.
         let step = 20.0;
-        let mut sums: Vec<Point> = vec![Point::new(0.0,0.0); count];
+        let mut sums: Vec<Point> = vec![Point::new(0.0, 0.0); count];
         let mut counts: Vec<usize> = vec![0; count];
         let mut y = 0.0;
         while y < h {
@@ -930,9 +1043,13 @@ pub fn build_tiles(count: usize, w: f32, h: f32, iterations: usize) -> Vec<Voron
                 let mut best = 0;
                 let mut best_d = f32::MAX;
                 for (idx, s) in sites.iter().enumerate() {
-                    let dx = x - s.x; let dy = y - s.y;
-                    let d = dx*dx+dy*dy;
-                    if d < best_d { best_d = d; best = idx; }
+                    let dx = x - s.x;
+                    let dy = y - s.y;
+                    let d = dx * dx + dy * dy;
+                    if d < best_d {
+                        best_d = d;
+                        best = idx;
+                    }
                 }
                 sums[best].x += x;
                 sums[best].y += y;
@@ -956,7 +1073,7 @@ pub fn build_tiles(count: usize, w: f32, h: f32, iterations: usize) -> Vec<Voron
     // Simplify: each site gets a square of size w/cols, h/rows around centroid
     let cols = (w / 200.0).max(1.0) as usize + 2;
     let cell_w = w / cols as f32;
-    let rows = (count + cols - 1)/ cols.max(1);
+    let rows = (count + cols - 1) / cols.max(1);
     let cell_h = h / rows.max(1) as f32;
     for (i, site) in sites.into_iter().enumerate().take(count) {
         // vertices: 4 corners of shard with small gap
@@ -992,16 +1109,20 @@ pub fn build_tiles(count: usize, w: f32, h: f32, iterations: usize) -> Vec<Voron
 /// Cloud opacity smoothstep: inner 0.55 → opaque, outer 1.05 → transparent.
 /// Input dist normalized: sqrt(dx²/rx² + dy²/ry²). 0 = center.
 pub fn cloud_opacity(dx: f32, dy: f32, rx: f32, ry: f32) -> f32 {
-    if rx <= 0.0 || ry <= 0.0 { return 0.0; }
+    if rx <= 0.0 || ry <= 0.0 {
+        return 0.0;
+    }
     let nx = dx / rx;
     let ny = dy / ry;
-    let dist = (nx*nx + ny*ny).sqrt();
-    if dist <= MOSAIC_CLOUD_INNER { 1.0 }
-    else if dist >= MOSAIC_CLOUD_OUTER { 0.0 }
-    else {
+    let dist = (nx * nx + ny * ny).sqrt();
+    if dist <= MOSAIC_CLOUD_INNER {
+        1.0
+    } else if dist >= MOSAIC_CLOUD_OUTER {
+        0.0
+    } else {
         // smoothstep between inner and outer
         let t = (dist - MOSAIC_CLOUD_INNER) / (MOSAIC_CLOUD_OUTER - MOSAIC_CLOUD_INNER);
-        let smooth = 1.0 - (3.0*t*t - 2.0*t*t*t);
+        let smooth = 1.0 - (3.0 * t * t - 2.0 * t * t * t);
         smooth.clamp(0.0, 1.0)
     }
 }
@@ -1068,15 +1189,33 @@ impl MosaicView {
         }
     }
 
-    pub fn count(&self) -> usize { self.count }
-    pub fn cells(&self) -> &[VoronoiCell] { &self.cells }
-    pub fn rebuilds(&self) -> usize { self.rebuilds }
-    pub fn warmup_count(&self) -> usize { self.warmup_count }
-    pub fn warmup_gen(&self) -> u64 { self.warmup_gen }
-    pub fn velocity(&self) -> f32 { self.velocity }
-    pub fn scroll_offset(&self) -> f32 { self.scroll_offset }
-    pub fn focused_index(&self) -> usize { self.focused_index }
-    pub fn stripe_offsets(&self) -> (f32, f32) { (self.stripe_a_offset, self.stripe_b_offset) }
+    pub fn count(&self) -> usize {
+        self.count
+    }
+    pub fn cells(&self) -> &[VoronoiCell] {
+        &self.cells
+    }
+    pub fn rebuilds(&self) -> usize {
+        self.rebuilds
+    }
+    pub fn warmup_count(&self) -> usize {
+        self.warmup_count
+    }
+    pub fn warmup_gen(&self) -> u64 {
+        self.warmup_gen
+    }
+    pub fn velocity(&self) -> f32 {
+        self.velocity
+    }
+    pub fn scroll_offset(&self) -> f32 {
+        self.scroll_offset
+    }
+    pub fn focused_index(&self) -> usize {
+        self.focused_index
+    }
+    pub fn stripe_offsets(&self) -> (f32, f32) {
+        (self.stripe_a_offset, self.stripe_b_offset)
+    }
 
     /// Rebuild only if filter OR count changed (spec R8 cache).
     /// Returns true if rebuild occurred.
@@ -1088,7 +1227,9 @@ impl MosaicView {
         self.filter = filter.to_string();
         self.count = count;
         // preserve focused_index clamped
-        if self.focused_index >= count.max(1) { self.focused_index = count.saturating_sub(1); }
+        if self.focused_index >= count.max(1) {
+            self.focused_index = count.saturating_sub(1);
+        }
         self.cells = build_tiles(count, self.tile_w, self.tile_h, MOSAIC_LLOYD_ITERATIONS);
         self.cache_key = Some(key);
         self.rebuilds += 1;
@@ -1103,7 +1244,10 @@ impl MosaicView {
     /// only applies if generation matches pending.
     pub fn warmup(&mut self) -> usize {
         // simulate async guard: must have pending generation
-        let gen = match self.pending_gen { Some(g) => g, None => return 0 };
+        let gen = match self.pending_gen {
+            Some(g) => g,
+            None => return 0,
+        };
         if gen != self.warmup_gen {
             return 0; // stale
         }
@@ -1122,19 +1266,29 @@ impl MosaicView {
         self.warmup_count = 0;
     }
 
-    pub fn is_warmup_pending(&self) -> bool { self.pending_gen.is_some() }
-    pub fn is_warmup_stale(&self, gen: u64) -> bool { gen != self.warmup_gen }
+    pub fn is_warmup_pending(&self) -> bool {
+        self.pending_gen.is_some()
+    }
+    pub fn is_warmup_stale(&self, gen: u64) -> bool {
+        gen != self.warmup_gen
+    }
 
-    pub fn set_has_warmup(&mut self, _pending: bool) { /* compat */ }
+    pub fn set_has_warmup(&mut self, _pending: bool) { /* compat */
+    }
 
     pub fn set_focused_index(&mut self, idx: usize) -> usize {
-        if self.count == 0 { self.focused_index = 0; return 0; }
+        if self.count == 0 {
+            self.focused_index = 0;
+            return 0;
+        }
         self.focused_index = idx.min(self.count - 1);
         self.focused_index
     }
 
     pub fn move_focus(&mut self, delta: isize) -> usize {
-        if self.count == 0 { return 0; }
+        if self.count == 0 {
+            return 0;
+        }
         let max = self.count as isize - 1;
         let next = self.focused_index as isize + delta;
         let clamped = next.clamp(0, max) as usize;
@@ -1143,14 +1297,22 @@ impl MosaicView {
 
     pub fn handle_key(&mut self, key: GalleryKey) -> bool {
         match key {
-            GalleryKey::Left => { self.move_focus(-1); true }
-            GalleryKey::Right => { self.move_focus(1); true }
+            GalleryKey::Left => {
+                self.move_focus(-1);
+                true
+            }
+            GalleryKey::Right => {
+                self.move_focus(1);
+                true
+            }
             _ => false,
         }
     }
 
     /// Kinetic scroll: set initial velocity, then tick friction 0.90 per 16ms.
-    pub fn set_velocity(&mut self, v: f32) { self.velocity = v; }
+    pub fn set_velocity(&mut self, v: f32) {
+        self.velocity = v;
+    }
     pub fn tick_kinetic(&mut self) {
         self.velocity = kinetic_step(self.velocity);
         self.scroll_offset += self.velocity;
@@ -1158,13 +1320,17 @@ impl MosaicView {
         let w = self.viewport_w;
         self.stripe_a_offset = self.scroll_offset.rem_euclid(w * 2.0);
         self.stripe_b_offset = (self.scroll_offset + w).rem_euclid(w * 2.0);
-        if self.velocity.abs() < 0.01 { self.velocity = 0.0; }
+        if self.velocity.abs() < 0.01 {
+            self.velocity = 0.0;
+        }
     }
 
     /// Cloud opacity at world point (x,y) relative to cloud center.
     pub fn cloud_opacity_at(&self, x: f32, y: f32) -> f32 {
         // use first cell's rx/ry as generic if available, else defaults
-        let (rx, ry) = self.cells.first()
+        let (rx, ry) = self
+            .cells
+            .first()
             .map(|c| (c.cloud_rx, c.cloud_ry))
             .unwrap_or((300.0, 200.0));
         let dx = x - self.cloud_center.x;
@@ -1172,7 +1338,9 @@ impl MosaicView {
         cloud_opacity(dx, dy, rx, ry)
     }
 
-    pub fn set_cloud_center(&mut self, x: f32, y: f32) { self.cloud_center = Point::new(x,y); }
+    pub fn set_cloud_center(&mut self, x: f32, y: f32) {
+        self.cloud_center = Point::new(x, y);
+    }
 
     /// Staggered reveal delay for a given cell key.
     pub fn reveal_delay_for(&self, key: usize) -> u64 {
@@ -1180,7 +1348,9 @@ impl MosaicView {
     }
 
     /// Dual-stripe scroll position for infinite tiling (returns stripe A/B offsets).
-    pub fn dual_stripe_offsets(&self) -> (f32, f32) { self.stripe_offsets() }
+    pub fn dual_stripe_offsets(&self) -> (f32, f32) {
+        self.stripe_offsets()
+    }
 
     /// Style switch helper: preserves focused index across styles (S6) with 200ms cross-fade.
     pub fn style_switch_preserves_focus(&self, new_count: usize) -> usize {
@@ -1190,15 +1360,24 @@ impl MosaicView {
     pub fn set_count(&mut self, count: usize) {
         // direct set without key rebuild — for external sync
         self.count = count;
-        if self.focused_index >= count.max(1) { self.focused_index = count.saturating_sub(1); }
+        if self.focused_index >= count.max(1) {
+            self.focused_index = count.saturating_sub(1);
+        }
     }
 
-    pub fn set_tile_size(&mut self, w: f32, h: f32) { self.tile_w = w; self.tile_h = h; }
+    pub fn set_tile_size(&mut self, w: f32, h: f32) {
+        self.tile_w = w;
+        self.tile_h = h;
+    }
 }
 
 impl GalleryView for MosaicView {
-    fn style(&self) -> GalleryStyle { GalleryStyle::Mosaic }
-    fn handle_key(&mut self, key: GalleryKey) -> bool { MosaicView::handle_key(self, key) }
+    fn style(&self) -> GalleryStyle {
+        GalleryStyle::Mosaic
+    }
+    fn handle_key(&mut self, key: GalleryKey) -> bool {
+        MosaicView::handle_key(self, key)
+    }
 }
 
 #[cfg(test)]
@@ -1210,12 +1389,21 @@ mod tests {
     fn mosaic_centroid_build_tile_lloyd3() {
         assert_eq!(MOSAIC_LLOYD_ITERATIONS, 3, "default Lloyd 3");
         // centroid of unit square
-        let sq = vec![Point::new(0.0,0.0), Point::new(2.0,0.0), Point::new(2.0,2.0), Point::new(0.0,2.0)];
+        let sq = vec![
+            Point::new(0.0, 0.0),
+            Point::new(2.0, 0.0),
+            Point::new(2.0, 2.0),
+            Point::new(0.0, 2.0),
+        ];
         let c = centroid(&sq);
         assert!((c.x - 1.0).abs() < 0.01, "square centroid x=1");
         assert!((c.y - 1.0).abs() < 0.01, "square centroid y=1");
         // centroid of triangle
-        let tri = vec![Point::new(0.0,0.0), Point::new(4.0,0.0), Point::new(0.0,3.0)];
+        let tri = vec![
+            Point::new(0.0, 0.0),
+            Point::new(4.0, 0.0),
+            Point::new(0.0, 3.0),
+        ];
         let ct = centroid(&tri);
         // area centroid of triangle: average of vertices
         assert!((ct.x - 1.333).abs() < 0.02);
@@ -1225,9 +1413,15 @@ mod tests {
         assert_eq!(cells.len(), 12, "build_tiles count preserved");
         for cell in &cells {
             assert!(!cell.vertices.is_empty(), "cell has vertices");
-            let (min_x,max_x,min_y,max_y) = cell.bbox;
-            assert!(cell.centroid.x >= min_x - 1.0 && cell.centroid.x <= max_x + 1.0, "centroid inside bbox x");
-            assert!(cell.centroid.y >= min_y - 1.0 && cell.centroid.y <= max_y + 1.0, "centroid inside bbox y");
+            let (min_x, max_x, min_y, max_y) = cell.bbox;
+            assert!(
+                cell.centroid.x >= min_x - 1.0 && cell.centroid.x <= max_x + 1.0,
+                "centroid inside bbox x"
+            );
+            assert!(
+                cell.centroid.y >= min_y - 1.0 && cell.centroid.y <= max_y + 1.0,
+                "centroid inside bbox y"
+            );
         }
         // _buildTile equivalent with 0 count → empty
         let empty = build_tiles(0, 1500.0, 800.0, 3);
@@ -1236,12 +1430,14 @@ mod tests {
 
     #[test]
     fn mosaic_centroid_degenerate_fallback() {
-        let single = vec![Point::new(5.0,7.0)];
+        let single = vec![Point::new(5.0, 7.0)];
         let c = centroid(&single);
-        assert_eq!(c.x, 5.0); assert_eq!(c.y, 7.0);
+        assert_eq!(c.x, 5.0);
+        assert_eq!(c.y, 7.0);
         let empty: Vec<Point> = vec![];
         let c2 = centroid(&empty);
-        assert_eq!(c2.x, 0.0); assert_eq!(c2.y, 0.0);
+        assert_eq!(c2.x, 0.0);
+        assert_eq!(c2.y, 0.0);
     }
 
     // ── 3.5 cache rebuild filter/count only ─────────────────────────
@@ -1307,7 +1503,10 @@ mod tests {
         view.ensure_cells("all", 30);
         let stale_gen = view.warmup_gen();
         view.cancel_pending_warmup(); // simulates filter change again before async completes
-        assert!(view.is_warmup_stale(stale_gen), "old gen stale after cancel");
+        assert!(
+            view.is_warmup_stale(stale_gen),
+            "old gen stale after cancel"
+        );
         assert!(view.is_warmup_pending(), "new pending after cancel");
         // stale warmup should not apply (simulate stale async callback with old gen)
         // Our warmup checks generation internally; calling warmup now uses new gen, so it succeeds
@@ -1326,7 +1525,10 @@ mod tests {
     // ── 3.7 kinetic 0.90 cloud 0.55/1.05 ────────────────────────────
     #[test]
     fn mosaic_cloud_kinetic_0_90_and_cloud_radii() {
-        assert!((MOSAIC_KINETIC_FRICTION - 0.90).abs() < 0.001, "friction 0.90");
+        assert!(
+            (MOSAIC_KINETIC_FRICTION - 0.90).abs() < 0.001,
+            "friction 0.90"
+        );
         assert_eq!(MOSAIC_KINETIC_INTERVAL_MS, 16);
         assert_eq!(MOSAIC_CLOUD_INNER, 0.55);
         assert_eq!(MOSAIC_CLOUD_OUTER, 1.05);
@@ -1341,10 +1543,17 @@ mod tests {
         assert_eq!(cloud_opacity(0.0, 0.0, 300.0, 200.0), 1.0);
         // at inner radius → 1.0, beyond outer → 0.0
         // dist = sqrt(dx²/rx² + dy²/ry²). For rx=300 ry=200, dx=0.55*rx=165 → dist 0.55
-        assert!((cloud_opacity(165.0, 0.0, 300.0, 200.0) - 1.0).abs() < 0.01, "inner edge opaque");
+        assert!(
+            (cloud_opacity(165.0, 0.0, 300.0, 200.0) - 1.0).abs() < 0.01,
+            "inner edge opaque"
+        );
         // outer
-        let outer_x = 1.05*300.0;
-        assert_eq!(cloud_opacity(outer_x, 0.0, 300.0, 200.0), 0.0, "outer transparent");
+        let outer_x = 1.05 * 300.0;
+        assert_eq!(
+            cloud_opacity(outer_x, 0.0, 300.0, 200.0),
+            0.0,
+            "outer transparent"
+        );
         // middle smoothed
         let mid = cloud_opacity(240.0, 0.0, 300.0, 200.0);
         assert!(mid > 0.0 && mid < 1.0, "mid between 0 and 1 smoothstep");
@@ -1354,7 +1563,7 @@ mod tests {
         view.set_cloud_center(750.0, 400.0);
         let opa_center = view.cloud_opacity_at(750.0, 400.0);
         assert_eq!(opa_center, 1.0);
-        let opa_far = view.cloud_opacity_at(750.0+ 2000.0, 400.0);
+        let opa_far = view.cloud_opacity_at(750.0 + 2000.0, 400.0);
         assert_eq!(opa_far, 0.0);
         // kinetic on view
         view.set_velocity(100.0);
@@ -1402,10 +1611,13 @@ mod tests {
         // dual stripe offsets progress with kinetic
         view.set_velocity(50.0);
         view.tick_kinetic();
-        let (a,b) = view.dual_stripe_offsets();
+        let (a, b) = view.dual_stripe_offsets();
         assert!(a >= 0.0 && a < 3000.0, "stripe A in range");
         assert!(b >= 0.0 && b < 3000.0, "stripe B in range");
-        assert!((b - a - 1500.0).abs() < 1.0 || (a - b).abs() < 3000.0, "stripes offset by viewport");
+        assert!(
+            (b - a - 1500.0).abs() < 1.0 || (a - b).abs() < 3000.0,
+            "stripes offset by viewport"
+        );
         // second tick
         let prev_a = a;
         view.tick_kinetic();
@@ -1452,7 +1664,16 @@ mod tests {
     fn justified_empty_and_degenerate_stage_are_zero() {
         let l = justified_layout(&[], 1920.0, 1040.0);
         assert!(l.tiles.is_empty(), "empty input → empty tiles");
-        assert_eq!(l, MosaicLayout { tiles: vec![], content_w: 0.0, content_h: 0.0, offset_x: 0.0, offset_y: 0.0 });
+        assert_eq!(
+            l,
+            MosaicLayout {
+                tiles: vec![],
+                content_w: 0.0,
+                content_h: 0.0,
+                offset_x: 0.0,
+                offset_y: 0.0
+            }
+        );
         // Non-positive stage cannot host a block → zeros too.
         let l0 = justified_layout(&[16.0 / 9.0], 1920.0, 0.0);
         assert_eq!(l0.tiles.len(), 0);
@@ -1477,9 +1698,9 @@ mod tests {
         approx(l.tiles[0].h, th);
         approx(l.content_w, w);
         approx(l.content_h, th);
-        approx(l.offset_x, (1920.0 - w) / 2.0, );
+        approx(l.offset_x, (1920.0 - w) / 2.0);
         approx(l.offset_y, (1040.0 - th) / 2.0);
-        approx(l.tiles[0].x, l.offset_x, );
+        approx(l.tiles[0].x, l.offset_x);
         approx(l.tiles[0].y, l.offset_y);
     }
 
@@ -1498,7 +1719,7 @@ mod tests {
         approx(l.tiles[0].y, l.offset_y);
         approx(l.tiles[0].w, big_w);
         approx(l.tiles[0].h, big_w / 2.0); // shape-preserving justify
-        // Row 1 (last): natural height, left-aligned at x=offset.
+                                           // Row 1 (last): natural height, left-aligned at x=offset.
         approx(l.tiles[1].w, th);
         approx(l.tiles[1].h, th);
         approx(l.tiles[1].x, l.offset_x);
@@ -1522,7 +1743,10 @@ mod tests {
         let nat0 = th * s0 + 2.0 * MOSAIC_GUTTER_PX;
         let nat1 = th * s1 + MOSAIC_GUTTER_PX;
         let big_w = nat0.max(nat1);
-        assert!((nat0 - nat1).abs() > 1e-4, "rows must differ for this contract");
+        assert!(
+            (nat0 - nat1).abs() > 1e-4,
+            "rows must differ for this contract"
+        );
         assert_eq!(l.tiles.len(), 5);
         // Row 0 justified shape-preservingly to W (scale 1: it is widest).
         let h0 = (big_w - 2.0 * MOSAIC_GUTTER_PX) / s0;
@@ -1544,7 +1768,7 @@ mod tests {
         approx(l.tiles[3].x, l.offset_x);
         approx(l.tiles[4].x, l.offset_x + th * a + MOSAIC_GUTTER_PX);
         let right1 = l.tiles[4].x + l.tiles[4].w - l.offset_x;
-        approx(right1, nat1, );
+        approx(right1, nat1);
         // Content box + centering: W exceeds stage width → no x offset.
         approx(l.content_w, big_w);
         approx(l.content_h, h0 + th + MOSAIC_GUTTER_PX);
@@ -1664,11 +1888,7 @@ mod tests {
         );
         // Every tile inside margins (1px float tolerance).
         for t in &l.tiles {
-            assert!(
-                t.x + 1.0 >= margin,
-                "tile x {} < margin {margin}",
-                t.x
-            );
+            assert!(t.x + 1.0 >= margin, "tile x {} < margin {margin}", t.x);
             assert!(
                 t.x + t.w - 1.0 <= stage_w - margin,
                 "tile right {} > stage_w - margin {}",
@@ -1684,7 +1904,10 @@ mod tests {
             l.tiles[0].h
         );
         // Rows still stacked with gutter.
-        approx(l.tiles[10].y, l.tiles[0].y + l.tiles[0].h + MOSAIC_GUTTER_PX);
+        approx(
+            l.tiles[10].y,
+            l.tiles[0].y + l.tiles[0].h + MOSAIC_GUTTER_PX,
+        );
     }
 
     #[test]
@@ -1866,10 +2089,19 @@ mod tests {
         let nat0 = th * s0 + MOSAIC_GUTTER_PX;
         let nat1 = th * s1 + MOSAIC_GUTTER_PX;
         let big_w = nat0.max(nat1);
-        assert!((nat0 - nat1).abs() > 1e-4, "rows differ → justification kicks in");
+        assert!(
+            (nat0 - nat1).abs() > 1e-4,
+            "rows differ → justification kicks in"
+        );
         // Variety: columns differ thanks to wide vs square/portrait spread
-        assert!((l.tiles[0].w - l.tiles[1].w).abs() > 1e-3, "row 0 varied (square vs portrait)");
-        assert!((l.tiles[2].w - l.tiles[3].w).abs() > 1e-3, "row 1 varied (wide vs portrait)");
+        assert!(
+            (l.tiles[0].w - l.tiles[1].w).abs() > 1e-3,
+            "row 0 varied (square vs portrait)"
+        );
+        assert!(
+            (l.tiles[2].w - l.tiles[3].w).abs() > 1e-3,
+            "row 1 varied (wide vs portrait)"
+        );
         // Tile shapes follow the widened pattern. Row 0 is narrow non-last → scales UP.
         let h0 = (big_w - MOSAIC_GUTTER_PX) / s0;
         approx(l.tiles[0].h, h0);
@@ -1880,7 +2112,7 @@ mod tests {
         approx(l.tiles[1].w / l.tiles[1].h, 0.72); // portrait
         approx(l.tiles[2].w / l.tiles[2].h, 1.95); // wide
         approx(l.tiles[3].w / l.tiles[3].h, 0.72); // portrait
-        // Row membership and stacking.
+                                                   // Row membership and stacking.
         approx(l.tiles[1].y, l.tiles[0].y);
         approx(l.tiles[2].y, l.tiles[0].y + l.tiles[0].h + MOSAIC_GUTTER_PX);
         approx(l.tiles[3].y, l.tiles[2].y);
@@ -1907,7 +2139,13 @@ mod mosaic_pages_tests {
     /// Expected total_pages for a given real count + capacity (guards the
     /// RED capacity==0 case so assertions fail cleanly instead of dividing).
     fn expected_pages(real: usize, cap: usize) -> usize {
-        if real == 0 { 0 } else if cap == 0 { 1 } else { (real + cap - 1) / cap }
+        if real == 0 {
+            0
+        } else if cap == 0 {
+            1
+        } else {
+            (real + cap - 1) / cap
+        }
     }
 
     #[test]
@@ -1928,14 +2166,25 @@ mod mosaic_pages_tests {
         );
         p.recompute(7, 2374.0, 1290.0);
         assert_eq!(p.capacity(), 10, "the real stage hosts the full cap");
-        assert_eq!(p.total_pages(), 1, "7 themes fit ONE page at the real stage");
+        assert_eq!(
+            p.total_pages(),
+            1,
+            "7 themes fit ONE page at the real stage"
+        );
     }
 
     #[test]
     fn mosaic_page_capacity_positive_for_valid_stage() {
         let cap = mosaic_page_capacity(STAGE_W, STAGE_H);
-        assert!(cap > 0, "capacity must be positive for a valid stage, got {cap}");
-        assert_eq!(mosaic_page_capacity(0.0, STAGE_H), 0, "degenerate stage → 0");
+        assert!(
+            cap > 0,
+            "capacity must be positive for a valid stage, got {cap}"
+        );
+        assert_eq!(
+            mosaic_page_capacity(0.0, STAGE_H),
+            0,
+            "degenerate stage → 0"
+        );
         assert_eq!(mosaic_page_capacity(STAGE_W, 0.0), 0);
     }
 
@@ -1966,10 +2215,14 @@ mod mosaic_pages_tests {
         let tp = p.total_pages();
         assert!(tp >= 2, "need >=2 pages to exercise clamp, got {tp}");
         // forward clamps at the last page, never wraps to 0
-        for _ in 0..50 { p.step(1); }
+        for _ in 0..50 {
+            p.step(1);
+        }
         assert_eq!(p.current(), tp - 1, "forward must clamp at last page");
         // backward clamps at the first page, never wraps to last
-        for _ in 0..50 { p.step(-1); }
+        for _ in 0..50 {
+            p.step(-1);
+        }
         assert_eq!(p.current(), 0, "backward must clamp at first page");
         // stays strictly within [0, total_pages)
         for d in [1, -1, 1, 1, -1, 1, 1, 1] {
@@ -1989,7 +2242,11 @@ mod mosaic_pages_tests {
         assert!(cap > real, "need capacity > real (cap={cap})");
         let p = MosaicPages::new(real, STAGE_W, STAGE_H);
         let (aspects, reals) = p.page_render();
-        assert_eq!(aspects.len(), real, "no clone padding: exactly the real themes");
+        assert_eq!(
+            aspects.len(),
+            real,
+            "no clone padding: exactly the real themes"
+        );
         assert_eq!(reals, vec![0, 1, 2], "identity mapping");
         for (k, &a) in aspects.iter().enumerate() {
             assert!(
@@ -2031,8 +2288,15 @@ mod mosaic_pages_tests {
         let mut p = MosaicPages::new(total, STAGE_W, STAGE_H);
         let before = p.geometry_rebuilds();
         // flipping pages must NOT recompute geometry/thumbs
-        for _ in 0..10 { p.step(1); p.step(-1); }
-        assert_eq!(p.geometry_rebuilds(), before, "page flip must not rebuild geometry");
+        for _ in 0..10 {
+            p.step(1);
+            p.step(-1);
+        }
+        assert_eq!(
+            p.geometry_rebuilds(),
+            before,
+            "page flip must not rebuild geometry"
+        );
         // only an explicit recompute (count/stage change) rebuilds
         p.recompute(total, STAGE_W, STAGE_H);
         assert_eq!(p.geometry_rebuilds(), before + 1, "recompute rebuilds once");
@@ -2071,7 +2335,11 @@ mod mosaic_margin_tests {
         let layout = justified_layout(&aspects, STAGE_W, STAGE_H);
         assert!(!layout.tiles.is_empty());
         let min_x = layout.tiles.iter().map(|t| t.x).fold(f32::MAX, f32::min);
-        let max_x = layout.tiles.iter().map(|t| t.x + t.w).fold(f32::MIN, f32::max);
+        let max_x = layout
+            .tiles
+            .iter()
+            .map(|t| t.x + t.w)
+            .fold(f32::MIN, f32::max);
         assert!(
             min_x + 1e-2 >= margin,
             "RED: min tile x {min_x} < margin {margin} (4% of {STAGE_W}) — wall must respect left margin"
@@ -2104,7 +2372,11 @@ mod mosaic_margin_tests {
                     continue;
                 }
                 let min_x = layout.tiles.iter().map(|t| t.x).fold(f32::MAX, f32::min);
-                let max_x = layout.tiles.iter().map(|t| t.x + t.w).fold(f32::MIN, f32::max);
+                let max_x = layout
+                    .tiles
+                    .iter()
+                    .map(|t| t.x + t.w)
+                    .fold(f32::MIN, f32::max);
                 assert!(
                     min_x + 1.0 >= margin,
                     "page {} real {real}: min x {min_x} < margin {margin}",
@@ -2133,7 +2405,11 @@ mod mosaic_margin_tests {
         let aspects4: Vec<f32> = (0..4).map(mosaic_display_aspect).collect();
         let layout4 = justified_layout(&aspects4, narrow_w, narrow_h);
         let min4 = layout4.tiles.iter().map(|t| t.x).fold(f32::MAX, f32::min);
-        let max4 = layout4.tiles.iter().map(|t| t.x + t.w).fold(f32::MIN, f32::max);
+        let max4 = layout4
+            .tiles
+            .iter()
+            .map(|t| t.x + t.w)
+            .fold(f32::MIN, f32::max);
         assert!(min4 + 1.0 >= narrow_margin);
         if layout4.content_w <= narrow_usable + 1.0 {
             assert!(max4 - 1.0 <= narrow_w - narrow_margin);
@@ -2179,12 +2455,24 @@ mod mosaic_hero_tests {
         let aspects: Vec<f32> = (0..cap).map(mosaic_display_aspect).collect();
         let reals: Vec<usize> = (0..aspects.len()).collect();
         let (layout, tile_reals) = justified_hero_layout(&aspects, &reals, STAGE_W, STAGE_H);
-        assert!(layout.tiles.len() >= aspects.len(), "hero keeps at least the page tiles (row-fill clones may add)");
-        assert_eq!(tile_reals.len(), layout.tiles.len(), "reals must map 1:1 to tiles");
+        assert!(
+            layout.tiles.len() >= aspects.len(),
+            "hero keeps at least the page tiles (row-fill clones may add)"
+        );
+        assert_eq!(
+            tile_reals.len(),
+            layout.tiles.len(),
+            "reals must map 1:1 to tiles"
+        );
         let th = band_row_h();
         let band_h = hero_band_height();
         let heroes = hero_tiles(&layout);
-        assert_eq!(heroes.len(), 1, "exactly one hero per super-band, got {:?}", heroes);
+        assert_eq!(
+            heroes.len(),
+            1,
+            "exactly one hero per super-band, got {:?}",
+            heroes
+        );
         let hero = layout.tiles[heroes[0]];
         // Hero spans EXACTLY both side rows: h_top + gutter + h_bottom ≤ the
         // nominal band, and strictly taller than one row.
@@ -2244,11 +2532,17 @@ mod mosaic_hero_tests {
         let aspects: Vec<f32> = (0..count).map(mosaic_display_aspect).collect();
         let reals: Vec<usize> = (0..count).collect();
         let (layout, tile_reals) = justified_hero_layout(&aspects, &reals, STAGE_W, STAGE_H);
-        assert!(layout.tiles.len() >= count, "every tile renders (clones may extend)");
+        assert!(
+            layout.tiles.len() >= count,
+            "every tile renders (clones may extend)"
+        );
         assert_eq!(tile_reals.len(), layout.tiles.len());
         let margin = STAGE_W * MOSAIC_SIDE_MARGIN_FRACTION;
         for t in &layout.tiles {
-            assert!(t.x + 1.0 >= margin && t.x + t.w <= STAGE_W - margin + 2.0, "tile {t:?} crosses margins");
+            assert!(
+                t.x + 1.0 >= margin && t.x + t.w <= STAGE_W - margin + 2.0,
+                "tile {t:?} crosses margins"
+            );
             assert!(t.w >= 40.0 && t.h >= 40.0, "dust tile {t:?}");
         }
     }
@@ -2283,10 +2577,17 @@ mod mosaic_hero_tests {
                 .collect();
             assert!(!top.is_empty(), "count {count}: top segments exist");
             // Top row covers [0, usable] with a gap ONLY around the hero.
-            let mut spans: Vec<(f32, f32)> = top.iter().map(|t| (t.x - ox, t.x - ox + t.w)).collect();
+            let mut spans: Vec<(f32, f32)> =
+                top.iter().map(|t| (t.x - ox, t.x - ox + t.w)).collect();
             spans.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-            assert!((spans[0].0 - 0.0).abs() < 2.0, "count {count}: top row flush left");
-            assert!((spans.last().unwrap().1 - usable).abs() < 2.0, "count {count}: top row flush right");
+            assert!(
+                (spans[0].0 - 0.0).abs() < 2.0,
+                "count {count}: top row flush left"
+            );
+            assert!(
+                (spans.last().unwrap().1 - usable).abs() < 2.0,
+                "count {count}: top row flush right"
+            );
             // Exactly ONE consecutive-pair gap wraps the hero; every other
             // gap is a plain gutter (segments are internally flush).
             let mut hero_gaps = 0;
@@ -2305,7 +2606,11 @@ mod mosaic_hero_tests {
             assert_eq!(hero_gaps, 1, "count {count}: exactly one hero gap");
             // All top tiles are row height th.
             for t in &top {
-                assert!((t.h - th).abs() < 1.5, "count {count}: segment height {} ≈ th {th}", t.h);
+                assert!(
+                    (t.h - th).abs() < 1.5,
+                    "count {count}: segment height {} ≈ th {th}",
+                    t.h
+                );
             }
             // Bottom row mirrors it below the hero.
             let bottom: Vec<_> = layout
@@ -2315,11 +2620,19 @@ mod mosaic_hero_tests {
                 .filter(|(i, t)| *i != heroes[0] && t.y - oy > (hero.y - oy) + 1.0)
                 .map(|(_, t)| *t)
                 .collect();
-            assert!(bottom.len() >= 2, "count {count}: both bottom segments exist");
+            assert!(
+                bottom.len() >= 2,
+                "count {count}: both bottom segments exist"
+            );
             let bottom_left = bottom.iter().map(|t| t.x - ox).fold(f32::MAX, f32::min);
-            let bottom_right = bottom.iter().map(|t| t.x - ox + t.w).fold(f32::MIN, f32::max);
-            assert!((bottom_left - 0.0).abs() < 2.0 && (bottom_right - usable).abs() < 2.0,
-                "count {count}: bottom row flush both edges");
+            let bottom_right = bottom
+                .iter()
+                .map(|t| t.x - ox + t.w)
+                .fold(f32::MIN, f32::max);
+            assert!(
+                (bottom_left - 0.0).abs() < 2.0 && (bottom_right - usable).abs() < 2.0,
+                "count {count}: bottom row flush both edges"
+            );
         }
     }
 
@@ -2389,15 +2702,26 @@ mod mosaic_hero_tests {
         assert_eq!(tile_reals, vec![0, 1], "identity mapping, no clones");
         // Both tiles span the band height and together fill the usable width.
         let left = layout.tiles.iter().map(|t| t.x).fold(f32::MAX, f32::min);
-        let right = layout.tiles.iter().map(|t| t.x + t.w).fold(f32::MIN, f32::max);
-        assert!((left - margin).abs() < 1.0, "left edge {left} at margin {margin}");
+        let right = layout
+            .tiles
+            .iter()
+            .map(|t| t.x + t.w)
+            .fold(f32::MIN, f32::max);
+        assert!(
+            (left - margin).abs() < 1.0,
+            "left edge {left} at margin {margin}"
+        );
         assert!(
             (right - (STAGE_W - margin)).abs() < 1.0,
             "right edge {right} at stage_w - margin {}",
             STAGE_W - margin
         );
         for t in &layout.tiles {
-            assert!(t.h >= hero_band_height() - 1.0, "tile {} must span the band", t.h);
+            assert!(
+                t.h >= hero_band_height() - 1.0,
+                "tile {} must span the band",
+                t.h
+            );
             assert!(t.x + 1.0 >= margin && t.x + t.w - 1.0 <= STAGE_W - margin);
         }
 
@@ -2408,7 +2732,10 @@ mod mosaic_hero_tests {
         assert_eq!(single_map, vec![7], "single tile keeps its real");
         let hero = single.tiles[0];
         let centre = hero.x - single.offset_x + hero.w / 2.0;
-        assert!((centre - usable / 2.0).abs() < 2.0, "lone tile must be centred");
+        assert!(
+            (centre - usable / 2.0).abs() < 2.0,
+            "lone tile must be centred"
+        );
     }
 
     #[test]
@@ -2434,10 +2761,16 @@ mod mosaic_hero_tests {
         }
         for (i, &a) in aspects.iter().enumerate() {
             let expected = mosaic_display_aspect(i);
-            assert!((a - expected).abs() < 1e-4, "page_render aspect {i} mismatch");
+            assert!(
+                (a - expected).abs() < 1e-4,
+                "page_render aspect {i} mismatch"
+            );
         }
         for r in &tile_reals {
-            assert!(*r < real, "tile real {r} must map into the {real}-theme library");
+            assert!(
+                *r < real,
+                "tile real {r} must map into the {real}-theme library"
+            );
         }
     }
 }
@@ -2484,8 +2817,14 @@ mod mosaic_capacity_tests {
         assert_eq!(tile_reals.len(), layout.tiles.len());
         let margin = sw * MOSAIC_SIDE_MARGIN_FRACTION;
         for t in &layout.tiles {
-            assert!(t.w >= 40.0 && t.h >= 40.0, "dust tile {t:?} (capacity {cap})");
-            assert!(t.x >= margin - 1.0 && t.x + t.w <= sw - margin + 1.0, "tile {t:?} crosses margins");
+            assert!(
+                t.w >= 40.0 && t.h >= 40.0,
+                "dust tile {t:?} (capacity {cap})"
+            );
+            assert!(
+                t.x >= margin - 1.0 && t.x + t.w <= sw - margin + 1.0,
+                "tile {t:?} crosses margins"
+            );
         }
     }
 
@@ -2502,7 +2841,11 @@ mod mosaic_capacity_tests {
             assert!(layout.tiles.len() >= aspects.len());
             assert_eq!(tile_reals.len(), layout.tiles.len());
             for t in &layout.tiles {
-                assert!(t.w >= 40.0 && t.h >= 40.0, "dust tile {t:?} on page {}", pg.current());
+                assert!(
+                    t.w >= 40.0 && t.h >= 40.0,
+                    "dust tile {t:?} on page {}",
+                    pg.current()
+                );
             }
             pg.step(1);
         }
@@ -2523,10 +2866,18 @@ mod mosaic_unit_a_tests {
         // single page for any non-empty library (graceful fallback).
         let p = MosaicPages::new(5, 0.0, 0.0);
         assert_eq!(p.capacity(), 0, "degenerate stage capacity 0");
-        assert_eq!(p.total_pages(), 1, "non-empty library with degenerate stage → 1 page");
+        assert_eq!(
+            p.total_pages(),
+            1,
+            "non-empty library with degenerate stage → 1 page"
+        );
         assert!(p.hidden(), "single page hidden");
         let (aspects, reals) = p.page_render();
-        assert_eq!(aspects.len(), 5, "degenerate render falls back to real entries");
+        assert_eq!(
+            aspects.len(),
+            5,
+            "degenerate render falls back to real entries"
+        );
         assert_eq!(reals, vec![0, 1, 2, 3, 4]);
     }
 
@@ -2620,11 +2971,36 @@ mod mosaic_unit_a_tests {
         // Two justified rows with DIFFERENT tile widths (the real case):
         // row 0 = three tiles 300/200/400 wide, row 1 = two tiles 400/500.
         let tiles = vec![
-            MosaicTileRect { x: 0.0, y: 0.0, w: 300.0, h: 200.0 },
-            MosaicTileRect { x: 300.0, y: 0.0, w: 200.0, h: 200.0 },
-            MosaicTileRect { x: 500.0, y: 0.0, w: 400.0, h: 200.0 },
-            MosaicTileRect { x: 0.0, y: 200.0, w: 400.0, h: 200.0 },
-            MosaicTileRect { x: 400.0, y: 200.0, w: 500.0, h: 200.0 },
+            MosaicTileRect {
+                x: 0.0,
+                y: 0.0,
+                w: 300.0,
+                h: 200.0,
+            },
+            MosaicTileRect {
+                x: 300.0,
+                y: 0.0,
+                w: 200.0,
+                h: 200.0,
+            },
+            MosaicTileRect {
+                x: 500.0,
+                y: 0.0,
+                w: 400.0,
+                h: 200.0,
+            },
+            MosaicTileRect {
+                x: 0.0,
+                y: 200.0,
+                w: 400.0,
+                h: 200.0,
+            },
+            MosaicTileRect {
+                x: 400.0,
+                y: 200.0,
+                w: 500.0,
+                h: 200.0,
+            },
         ];
         // Reading order: the model is packed row by row, so left/right are
         // the adjacent entries — including the row seam.
@@ -2657,9 +3033,21 @@ mod mosaic_unit_a_tests {
             Some(2),
             "up from centre 650 lands on the row-0 tile spanning 500..900"
         );
-        assert_eq!(mosaic_neighbor(&tiles, 1, MosaicDir::Up), None, "nothing above the first row");
-        assert_eq!(mosaic_neighbor(&tiles, 3, MosaicDir::Down), None, "nothing below the last row");
-        assert_eq!(mosaic_neighbor(&tiles, 9, MosaicDir::Right), None, "out of range is no move");
+        assert_eq!(
+            mosaic_neighbor(&tiles, 1, MosaicDir::Up),
+            None,
+            "nothing above the first row"
+        );
+        assert_eq!(
+            mosaic_neighbor(&tiles, 3, MosaicDir::Down),
+            None,
+            "nothing below the last row"
+        );
+        assert_eq!(
+            mosaic_neighbor(&tiles, 9, MosaicDir::Right),
+            None,
+            "out of range is no move"
+        );
     }
 
     #[test]
@@ -2667,11 +3055,30 @@ mod mosaic_unit_a_tests {
         // A short row under a long one: the cursor sits past the last tile's
         // right edge, so the nearest centre wins instead of "no move".
         let tiles = vec![
-            MosaicTileRect { x: 0.0, y: 0.0, w: 900.0, h: 100.0 },
-            MosaicTileRect { x: 0.0, y: 100.0, w: 100.0, h: 100.0 },
-            MosaicTileRect { x: 100.0, y: 100.0, w: 100.0, h: 100.0 },
+            MosaicTileRect {
+                x: 0.0,
+                y: 0.0,
+                w: 900.0,
+                h: 100.0,
+            },
+            MosaicTileRect {
+                x: 0.0,
+                y: 100.0,
+                w: 100.0,
+                h: 100.0,
+            },
+            MosaicTileRect {
+                x: 100.0,
+                y: 100.0,
+                w: 100.0,
+                h: 100.0,
+            },
         ];
-        assert_eq!(mosaic_neighbor(&tiles, 0, MosaicDir::Down), Some(2), "centre 450: nearest is 150 (index 2)");
+        assert_eq!(
+            mosaic_neighbor(&tiles, 0, MosaicDir::Down),
+            Some(2),
+            "centre 450: nearest is 150 (index 2)"
+        );
     }
 }
 
@@ -2754,7 +3161,11 @@ mod mosaic_elastic_tests {
         let mut pages = MosaicPages::new(20, STAGE_W, STAGE_H);
         let (_, reals) = pages.page_render();
         pages.set_cursor_theme(Some(4));
-        assert_eq!(pages.anchor_cursor(&reals), Some(4), "theme 4 sits at position 4");
+        assert_eq!(
+            pages.anchor_cursor(&reals),
+            Some(4),
+            "theme 4 sits at position 4"
+        );
         // Recompute with the same stage: the theme is re-anchored, not the
         // stale position.
         pages.recompute(20, STAGE_W, STAGE_H);
@@ -2766,7 +3177,11 @@ mod mosaic_elastic_tests {
         );
         // A theme that is no longer on the page lands on the first tile.
         pages.set_cursor_theme(Some(999));
-        assert_eq!(pages.anchor_cursor(&reals2), Some(0), "gone theme → first tile");
+        assert_eq!(
+            pages.anchor_cursor(&reals2),
+            Some(0),
+            "gone theme → first tile"
+        );
         // No cursor → no anchor (the ring stays hidden).
         pages.set_cursor_theme(None);
         assert_eq!(pages.anchor_cursor(&reals2), None);
@@ -2809,9 +3224,14 @@ mod mosaic_elastic_tests {
             }
         }
         let top = (0..n).map(|i| local(i).1).fold(f32::MAX, f32::min);
-        let bottom = (0..n).map(|i| local(i).1 + local(i).3).fold(f32::MIN, f32::max);
+        let bottom = (0..n)
+            .map(|i| local(i).1 + local(i).3)
+            .fold(f32::MIN, f32::max);
         assert!((top - 0.0).abs() < 1e-2, "n={n}: band top {top} must be 0");
-        assert!((bottom - band).abs() < 1e-2, "n={n}: band bottom {bottom} must be {band}");
+        assert!(
+            (bottom - band).abs() < 1e-2,
+            "n={n}: band bottom {bottom} must be {band}"
+        );
         for i in 0..n {
             let h = local(i).3;
             assert!(
@@ -2863,7 +3283,11 @@ mod mosaic_elastic_tests {
         for n in 1..=20 {
             let (layout, reals) = hero_layout(n);
             assert_eq!(layout.tiles.len(), n, "n={n}: exactly one tile per theme");
-            assert_eq!(reals, (0..n).collect::<Vec<_>>(), "n={n}: identity real mapping");
+            assert_eq!(
+                reals,
+                (0..n).collect::<Vec<_>>(),
+                "n={n}: identity real mapping"
+            );
             let mut distinct = reals.clone();
             distinct.sort_unstable();
             distinct.dedup();
@@ -2886,7 +3310,11 @@ mod mosaic_elastic_tests {
             assert_eq!(reals, (0..n).collect::<Vec<_>>());
             assert_band_partition(&layout, n);
             let left = layout.tiles.iter().map(|t| t.x).fold(f32::MAX, f32::min);
-            let right = layout.tiles.iter().map(|t| t.x + t.w).fold(f32::MIN, f32::max);
+            let right = layout
+                .tiles
+                .iter()
+                .map(|t| t.x + t.w)
+                .fold(f32::MIN, f32::max);
             let centre = (left + right) / 2.0;
             assert!(
                 (centre - STAGE_W / 2.0).abs() < 2.0,
@@ -2899,7 +3327,10 @@ mod mosaic_elastic_tests {
     fn elastic_pages_cap_at_ten_and_page_two_mirrors_page_one() {
         assert_eq!(MOSAIC_PAGE_MAX_TILES, 10, "the keeper's cap is 10");
         let cap = mosaic_page_capacity(STAGE_W, STAGE_H);
-        assert!(cap <= MOSAIC_PAGE_MAX_TILES, "capacity {cap} exceeds the cap");
+        assert!(
+            cap <= MOSAIC_PAGE_MAX_TILES,
+            "capacity {cap} exceeds the cap"
+        );
         assert_eq!(cap, 10, "the keeper's stage holds the full cap of 10");
         // 7 themes → one page, 7 distinct, hero centred (the keeper's case).
         let seven = MosaicPages::new(7, STAGE_W, STAGE_H);
@@ -2916,7 +3347,11 @@ mod mosaic_elastic_tests {
         let mut eleven = MosaicPages::new(11, STAGE_W, STAGE_H);
         assert_eq!(eleven.total_pages(), 2);
         let (a1, r1) = eleven.page_render();
-        assert_eq!(r1, (0..10).collect::<Vec<_>>(), "page 1: 10 distinct themes");
+        assert_eq!(
+            r1,
+            (0..10).collect::<Vec<_>>(),
+            "page 1: 10 distinct themes"
+        );
         let (l1, _) = justified_hero_layout(&a1, &r1, STAGE_W, STAGE_H);
         assert!(
             (local_hero_centre(&l1) - usable_w() / 2.0).abs() < 2.0,
@@ -3005,7 +3440,11 @@ mod mosaic_active_hero_tests {
     #[test]
     fn the_active_theme_is_the_hero_of_its_page() {
         let mut pages = MosaicPages::new(12, STAGE_W, STAGE_H);
-        assert_eq!(pages.capacity(), MOSAIC_PAGE_MAX_TILES, "keeper's stage hosts a full page");
+        assert_eq!(
+            pages.capacity(),
+            MOSAIC_PAGE_MAX_TILES,
+            "keeper's stage hosts a full page"
+        );
         assert_eq!(pages.total_pages(), 2, "12 themes → 2 pages");
         // The active theme sits INSIDE page 1, not first, so nothing but the
         // reorder can move it onto the hero slot.
@@ -3064,12 +3503,19 @@ mod mosaic_active_hero_tests {
         pages.set_active_theme(Some(13));
         assert_eq!(pages.page_of(13), Some(1), "theme 13 lives on page 2");
         assert!(pages.open_on_active(), "the open must move the page");
-        assert_eq!(pages.current(), 1, "the Mosaic opens on the active theme's page");
+        assert_eq!(
+            pages.current(),
+            1,
+            "the Mosaic opens on the active theme's page"
+        );
         let (aspects, reals) = pages.page_render();
         assert_eq!(reals[0], 13, "the opened page leads with the active theme");
         let (_, tile_reals) = justified_hero_layout(&aspects, &reals, STAGE_W, STAGE_H);
         assert_eq!(tile_reals[0], 13, "and renders it as the hero");
-        assert!(!pages.open_on_active(), "already there: the open is idempotent");
+        assert!(
+            !pages.open_on_active(),
+            "already there: the open is idempotent"
+        );
         // A 2-page library: the active theme on the LAST (partial) page.
         let mut two = MosaicPages::new(12, STAGE_W, STAGE_H);
         two.set_active_theme(Some(11));
@@ -3077,7 +3523,11 @@ mod mosaic_active_hero_tests {
         assert!(two.open_on_active());
         assert_eq!(two.current(), 1);
         let (aspects2, reals2) = two.page_render();
-        assert_eq!(reals2, vec![11, 10], "the partial page leads with the active theme");
+        assert_eq!(
+            reals2,
+            vec![11, 10],
+            "the partial page leads with the active theme"
+        );
         let (_, reals2_layout) = justified_hero_layout(&aspects2, &reals2, STAGE_W, STAGE_H);
         assert_eq!(reals2_layout[0], 11);
     }
@@ -3110,7 +3560,11 @@ mod mosaic_active_hero_tests {
     #[test]
     fn without_an_active_theme_every_page_keeps_the_first_of_page_hero() {
         let mut pages = MosaicPages::new(23, STAGE_W, STAGE_H);
-        assert_eq!(pages.active_theme(), None, "a fresh model has no active theme");
+        assert_eq!(
+            pages.active_theme(),
+            None,
+            "a fresh model has no active theme"
+        );
         assert!(!pages.open_on_active(), "nothing to open on");
         for _ in 0..pages.total_pages() {
             let start = pages.current() * pages.capacity();
@@ -3123,7 +3577,8 @@ mod mosaic_active_hero_tests {
             );
             let (_, tile_reals) = justified_hero_layout(&aspects, &reals, STAGE_W, STAGE_H);
             assert_eq!(
-                tile_reals[0], start,
+                tile_reals[0],
+                start,
                 "page {} keeps its FIRST theme as the hero",
                 pages.current()
             );
@@ -3137,9 +3592,16 @@ mod mosaic_active_hero_tests {
             None,
             "no page holds a theme that is not in the library"
         );
-        assert!(!pages.open_on_active(), "an out-of-range active theme moves nothing");
+        assert!(
+            !pages.open_on_active(),
+            "an out-of-range active theme moves nothing"
+        );
         let (_, reals) = pages.page_render();
-        assert_eq!(reals, identity_slice(0, 10), "out-of-range active: identity");
+        assert_eq!(
+            reals,
+            identity_slice(0, 10),
+            "out-of-range active: identity"
+        );
     }
 
     #[test]
@@ -3188,8 +3650,7 @@ mod mosaic_active_hero_tests {
                         identity_slice(start, reals.len()),
                         "{sw}x{sh} / {count} themes / active {active}: page themes changed"
                     );
-                    let (layout, tile_reals) =
-                        justified_hero_layout(&aspects, &reals, sw, sh);
+                    let (layout, tile_reals) = justified_hero_layout(&aspects, &reals, sw, sh);
                     assert_eq!(
                         tile_reals[0], active,
                         "{sw}x{sh} / {count} themes / active {active}: hero maps elsewhere"
@@ -3246,7 +3707,10 @@ mod mosaic_active_hero_tests {
         for (sw, sh) in [(STAGE_W, STAGE_H), (1280.0, 720.0)] {
             for count in [3usize, 11, 23] {
                 let plain = MosaicPages::new(count, sw, sh);
-                assert!(plain.capacity() >= 3, "stage {sw}x{sh} must host a hero band");
+                assert!(
+                    plain.capacity() >= 3,
+                    "stage {sw}x{sh} must host a hero band"
+                );
                 for page in 0..plain.total_pages() {
                     let start = page * plain.capacity();
                     let end = (start + plain.capacity()).min(count);
@@ -3366,7 +3830,11 @@ mod mosaic_active_hero_tests {
             "the open must land on the active theme's page"
         );
         assert_eq!(pages.total_pages(), 3, "the real stage repartitions");
-        assert_eq!(pages.current(), 1, "page 2 of the real partition holds theme 13");
+        assert_eq!(
+            pages.current(),
+            1,
+            "page 2 of the real partition holds theme 13"
+        );
     }
 
     #[test]
@@ -3388,7 +3856,10 @@ mod mosaic_active_hero_tests {
         let mut pages = MosaicPages::new(23, 800.0, 600.0);
         pages.set_active_theme(Some(13));
         assert!(pages.go_to(3), "the keeper flips away from the active page");
-        assert!(!pages.sync(23, STAGE_W, STAGE_H, true), "a flip never re-anchors");
+        assert!(
+            !pages.sync(23, STAGE_W, STAGE_H, true),
+            "a flip never re-anchors"
+        );
         assert_ne!(
             pages.current(),
             pages.page_of(13).unwrap(),
@@ -3436,13 +3907,21 @@ mod mosaic_active_hero_tests {
         // The save: the applied theme slides one slot down the list.
         pages.set_active_theme(Some(20));
         let re_anchored = pages.sync(22, STAGE_W, STAGE_H, false);
-        assert_eq!(pages.capacity(), MOSAIC_PAGE_MAX_TILES, "the capacity is unchanged");
+        assert_eq!(
+            pages.capacity(),
+            MOSAIC_PAGE_MAX_TILES,
+            "the capacity is unchanged"
+        );
         assert_eq!(pages.total_pages(), 3, "the page count is unchanged");
         assert!(
             re_anchored,
             "a library change must re-anchor even when the partition is unchanged"
         );
-        assert_eq!(pages.current(), 2, "index 20 of a 10-per-page library is page 3");
+        assert_eq!(
+            pages.current(),
+            2,
+            "index 20 of a 10-per-page library is page 3"
+        );
         assert_eq!(pages.current(), pages.page_of(20).unwrap());
     }
 
@@ -3466,7 +3945,11 @@ mod mosaic_active_hero_tests {
             re_anchored,
             "the delete pulled the applied theme back across the boundary"
         );
-        assert_eq!(pages.current(), 1, "index 19 of a 10-per-page library is page 2");
+        assert_eq!(
+            pages.current(),
+            1,
+            "index 19 of a 10-per-page library is page 2"
+        );
     }
 
     #[test]
@@ -3481,14 +3964,30 @@ mod mosaic_active_hero_tests {
         assert_eq!(pages.total_pages(), 3, "21 themes → 3 pages of 10/10/1");
         pages.set_active_theme(Some(3));
         assert_eq!(pages.page_of(3), Some(0), "the applied theme is on page 1");
-        assert_eq!(pages.current(), 0, "the keeper is on the applied theme's page");
+        assert_eq!(
+            pages.current(),
+            0,
+            "the keeper is on the applied theme's page"
+        );
         assert!(
             !pages.sync(22, STAGE_W, STAGE_H, false),
             "the applied theme is already on screen: the re-anchor is a no-op"
         );
-        assert_eq!(pages.page_of(3), Some(0), "the applied theme's page did not move");
-        assert_eq!(pages.total_pages(), 3, "and the keeper's page is still valid");
+        assert_eq!(
+            pages.page_of(3),
+            Some(0),
+            "the applied theme's page did not move"
+        );
+        assert_eq!(
+            pages.total_pages(),
+            3,
+            "and the keeper's page is still valid"
+        );
         assert_eq!(pages.current(), 0, "the keeper keeps the page he was on");
-        assert_eq!(pages.geometry_rebuilds(), 1, "the library change did rebuild the geometry");
+        assert_eq!(
+            pages.geometry_rebuilds(),
+            1,
+            "the library change did rebuild the geometry"
+        );
     }
 }

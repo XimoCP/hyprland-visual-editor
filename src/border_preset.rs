@@ -181,8 +181,7 @@ fn is_ident(s: &str) -> bool {
 fn strip_quotes(s: &str) -> &str {
     let b = s.as_bytes();
     if b.len() >= 2
-        && ((b[0] == b'"' && b[b.len() - 1] == b'"')
-            || (b[0] == b'\'' && b[b.len() - 1] == b'\''))
+        && ((b[0] == b'"' && b[b.len() - 1] == b'"') || (b[0] == b'\'' && b[b.len() - 1] == b'\''))
     {
         &s[1..s.len() - 1]
     } else {
@@ -228,7 +227,11 @@ fn parse_rrggbb(hex: &str) -> Option<BorderColor> {
 /// (including `error` per A2 — display resolution lives elsewhere, the
 /// reader preserves the token), `rgba()`, `0xff…`, and `#…` literals.
 /// Anything else resolves to `fallback` (D2) — never panics.
-fn classify_color(item: &str, aliases: &HashMap<String, String>, fallback: BorderColor) -> BorderColor {
+fn classify_color(
+    item: &str,
+    aliases: &HashMap<String, String>,
+    fallback: BorderColor,
+) -> BorderColor {
     let mut candidate = strip_quotes(item.trim()).trim();
     // Resolve local aliases (one level; alias values are literals).
     if let Some(resolved) = aliases.get(candidate) {
@@ -410,7 +413,10 @@ fn cut_top_level_comma(s: &str) -> &str {
 /// Extract an integer `key = N` assignment. `None` when absent or
 /// unparseable (never panics).
 fn extract_int_value(text: &str, key: &str) -> Option<i32> {
-    extract_assignment_value(text, key)?.trim().parse::<i32>().ok()
+    extract_assignment_value(text, key)?
+        .trim()
+        .parse::<i32>()
+        .ok()
 }
 
 /// Locate the `decoration.shadow` block. Comment prose may mention the word
@@ -506,7 +512,10 @@ fn find_rule_block(text: &str) -> bool {
             None => return false,
         };
         let abs = text.len() - search.len() + rel;
-        if text[abs + "windowrulev2".len()..].trim_start().starts_with('=') {
+        if text[abs + "windowrulev2".len()..]
+            .trim_start()
+            .starts_with('=')
+        {
             return true;
         }
         search = &search[rel + 1..];
@@ -637,15 +646,35 @@ mod tests {
         assert_eq!(
             p.active_colors,
             vec![
-                BorderColor::Custom { r: 0x39, g: 0xff, b: 0x14, a: 0xff },
-                BorderColor::Custom { r: 0x1a, g: 0x00, b: 0x26, a: 0xff },
-                BorderColor::Custom { r: 0x9d, g: 0x00, b: 0xff, a: 0xff },
+                BorderColor::Custom {
+                    r: 0x39,
+                    g: 0xff,
+                    b: 0x14,
+                    a: 0xff
+                },
+                BorderColor::Custom {
+                    r: 0x1a,
+                    g: 0x00,
+                    b: 0x26,
+                    a: 0xff
+                },
+                BorderColor::Custom {
+                    r: 0x9d,
+                    g: 0x00,
+                    b: 0xff,
+                    a: 0xff
+                },
             ]
         );
         assert_eq!(p.angle, 45);
         assert_eq!(
             p.inactive,
-            BorderColor::Custom { r: 0x1a, g: 0x00, b: 0x26, a: 0x55 }
+            BorderColor::Custom {
+                r: 0x1a,
+                g: 0x00,
+                b: 0x26,
+                a: 0x55
+            }
         );
     }
 
@@ -660,11 +689,21 @@ mod tests {
         assert_eq!(glow.render_power, 4);
         assert_eq!(
             glow.color,
-            BorderColor::Custom { r: 0x9d, g: 0x00, b: 0xff, a: 0x88 }
+            BorderColor::Custom {
+                r: 0x9d,
+                g: 0x00,
+                b: 0xff,
+                a: 0x88
+            }
         );
         assert_eq!(
             glow.color_inactive,
-            BorderColor::Custom { r: 0x9d, g: 0x00, b: 0xff, a: 0x00 }
+            BorderColor::Custom {
+                r: 0x9d,
+                g: 0x00,
+                b: 0xff,
+                a: 0x00
+            }
         );
         assert_eq!(glow.offset, (0, 0));
     }
@@ -676,11 +715,36 @@ mod tests {
         assert_eq!(
             p.active_colors,
             vec![
-                BorderColor::Custom { r: 0xc5, g: 0xa0, b: 0x00, a: 0xff },
-                BorderColor::Custom { r: 0xff, g: 0xd7, b: 0x00, a: 0xff },
-                BorderColor::Custom { r: 0xff, g: 0xff, b: 0xff, a: 0xff },
-                BorderColor::Custom { r: 0xff, g: 0xd7, b: 0x00, a: 0xff },
-                BorderColor::Custom { r: 0xc5, g: 0xa0, b: 0x00, a: 0xff },
+                BorderColor::Custom {
+                    r: 0xc5,
+                    g: 0xa0,
+                    b: 0x00,
+                    a: 0xff
+                },
+                BorderColor::Custom {
+                    r: 0xff,
+                    g: 0xd7,
+                    b: 0x00,
+                    a: 0xff
+                },
+                BorderColor::Custom {
+                    r: 0xff,
+                    g: 0xff,
+                    b: 0xff,
+                    a: 0xff
+                },
+                BorderColor::Custom {
+                    r: 0xff,
+                    g: 0xd7,
+                    b: 0x00,
+                    a: 0xff
+                },
+                BorderColor::Custom {
+                    r: 0xc5,
+                    g: 0xa0,
+                    b: 0x00,
+                    a: 0xff
+                },
             ]
         );
         assert_eq!(p.angle, 45);
@@ -702,7 +766,12 @@ mod tests {
         // `#1a002655`: RRGGBBAA with alpha 0x55.
         assert_eq!(
             p.inactive,
-            BorderColor::Custom { r: 0x1a, g: 0x00, b: 0x26, a: 0x55 }
+            BorderColor::Custom {
+                r: 0x1a,
+                g: 0x00,
+                b: 0x26,
+                a: 0x55
+            }
         );
         // Like the joker, looper carries no `border_size` key.
         assert_eq!(p.border_size, None);
@@ -754,15 +823,35 @@ mod tests {
         assert_eq!(
             p.active_colors,
             vec![
-                BorderColor::Custom { r: 0x00, g: 0xff, b: 0xf7, a: 0xff },
-                BorderColor::Custom { r: 0x1a, g: 0x00, b: 0x26, a: 0xff },
-                BorderColor::Custom { r: 0xff, g: 0x00, b: 0xff, a: 0xff },
+                BorderColor::Custom {
+                    r: 0x00,
+                    g: 0xff,
+                    b: 0xf7,
+                    a: 0xff
+                },
+                BorderColor::Custom {
+                    r: 0x1a,
+                    g: 0x00,
+                    b: 0x26,
+                    a: 0xff
+                },
+                BorderColor::Custom {
+                    r: 0xff,
+                    g: 0x00,
+                    b: 0xff,
+                    a: 0xff
+                },
             ]
         );
         assert_eq!(p.angle, 45);
         assert_eq!(
             p.inactive,
-            BorderColor::Custom { r: 0x0f, g: 0x0f, b: 0x26, a: 0x55 }
+            BorderColor::Custom {
+                r: 0x0f,
+                g: 0x0f,
+                b: 0x26,
+                a: 0x55
+            }
         );
         assert_eq!(p.border_size, Some(2));
         let glow = p.glow.as_ref().expect("cyberpunk has a shadow block");
@@ -771,11 +860,21 @@ mod tests {
         assert_eq!(glow.render_power, 4);
         assert_eq!(
             glow.color,
-            BorderColor::Custom { r: 0xff, g: 0xff, b: 0xff, a: 0x44 }
+            BorderColor::Custom {
+                r: 0xff,
+                g: 0xff,
+                b: 0xff,
+                a: 0x44
+            }
         );
         assert_eq!(
             glow.color_inactive,
-            BorderColor::Custom { r: 0xff, g: 0xff, b: 0xff, a: 0x00 }
+            BorderColor::Custom {
+                r: 0xff,
+                g: 0xff,
+                b: 0xff,
+                a: 0x00
+            }
         );
         assert_eq!(glow.offset, (0, 0));
         assert!(p.rule_enabled);
@@ -845,19 +944,74 @@ mod tests {
     #[test]
     fn all_fixtures_pin_slots_angle_and_size() {
         let cases: &[(&str, usize, i32, Option<i32>)] = &[
-            (include_str!("../assets/borders/01_cascade.lua"), 2, 90, Some(1)),
-            (include_str!("../assets/borders/02_diagonal.lua"), 2, 45, Some(1)),
+            (
+                include_str!("../assets/borders/01_cascade.lua"),
+                2,
+                90,
+                Some(1),
+            ),
+            (
+                include_str!("../assets/borders/02_diagonal.lua"),
+                2,
+                45,
+                Some(1),
+            ),
             (include_str!("../assets/borders/03_duo.lua"), 2, 90, Some(1)),
             (include_str!("../assets/borders/04_tri.lua"), 3, 90, Some(1)),
-            (include_str!("../assets/borders/05_spectrum.lua"), 4, 45, Some(1)),
-            (include_str!("../assets/borders/06_pulse.lua"), 4, 45, Some(1)),
-            (include_str!("../assets/borders/07_infinity.lua"), 8, 45, Some(1)),
-            (include_str!("../assets/borders/08_neon.lua"), 6, 45, Some(1)),
-            (include_str!("../assets/borders/09_glitch.lua"), 4, 90, Some(1)),
-            (include_str!("../assets/borders/10_golden.lua"), 5, 45, Some(1)),
-            (include_str!("../assets/borders/11_toxic.lua"), 3, 30, Some(2)),
-            (include_str!("../assets/borders/12_neon_cyberpunk.lua"), 3, 45, Some(2)),
-            (include_str!("../assets/borders/13_the_joker.lua"), 3, 45, None),
+            (
+                include_str!("../assets/borders/05_spectrum.lua"),
+                4,
+                45,
+                Some(1),
+            ),
+            (
+                include_str!("../assets/borders/06_pulse.lua"),
+                4,
+                45,
+                Some(1),
+            ),
+            (
+                include_str!("../assets/borders/07_infinity.lua"),
+                8,
+                45,
+                Some(1),
+            ),
+            (
+                include_str!("../assets/borders/08_neon.lua"),
+                6,
+                45,
+                Some(1),
+            ),
+            (
+                include_str!("../assets/borders/09_glitch.lua"),
+                4,
+                90,
+                Some(1),
+            ),
+            (
+                include_str!("../assets/borders/10_golden.lua"),
+                5,
+                45,
+                Some(1),
+            ),
+            (
+                include_str!("../assets/borders/11_toxic.lua"),
+                3,
+                30,
+                Some(2),
+            ),
+            (
+                include_str!("../assets/borders/12_neon_cyberpunk.lua"),
+                3,
+                45,
+                Some(2),
+            ),
+            (
+                include_str!("../assets/borders/13_the_joker.lua"),
+                3,
+                45,
+                None,
+            ),
             (include_str!("../assets/borders/14_looper.lua"), 3, 45, None),
         ];
         assert_eq!(cases.len(), 14);
@@ -928,7 +1082,12 @@ hl.config({
         assert_eq!(glow.render_power, 4);
         assert_eq!(
             glow.color,
-            BorderColor::Custom { r: 0x9d, g: 0x00, b: 0xff, a: 0x88 }
+            BorderColor::Custom {
+                r: 0x9d,
+                g: 0x00,
+                b: 0xff,
+                a: 0x88
+            }
         );
     }
 

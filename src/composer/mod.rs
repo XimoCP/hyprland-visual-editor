@@ -278,7 +278,8 @@ impl Controller {
         self.composer.focus();
         {
             use slint::platform::WindowEvent;
-            win.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
+            win.window()
+                .dispatch_event(WindowEvent::WindowActiveChanged(true));
             win.window().request_redraw();
         }
         // Theme fade owns the single invisible cycle — skip settle's
@@ -717,7 +718,10 @@ pub(crate) mod tests {
         let (fake, _calls) = FakeComposer::new();
         let controller = Controller::new(Box::new(fake));
 
-        assert!(!controller.window_hidden(), "should not be hidden initially");
+        assert!(
+            !controller.window_hidden(),
+            "should not be hidden initially"
+        );
         assert!(!controller.tray_mode(), "should not be in tray mode");
         assert!(controller.prev_workspace().is_none(), "no prev workspace");
     }
@@ -731,7 +735,10 @@ pub(crate) mod tests {
         assert!(controller.window_hidden(), "should be hidden after set");
 
         controller.set_window_hidden(false);
-        assert!(!controller.window_hidden(), "should not be hidden after set false");
+        assert!(
+            !controller.window_hidden(),
+            "should not be hidden after set false"
+        );
     }
 
     #[test]
@@ -760,7 +767,11 @@ pub(crate) mod tests {
         // Hide path records the active workspace via the composer.
         controller.toggle_tray(&win);
         assert!(controller.window_hidden(), "hide marks window hidden");
-        assert_eq!(controller.prev_workspace(), Some("2"), "hide records prev workspace");
+        assert_eq!(
+            controller.prev_workspace(),
+            Some("2"),
+            "hide records prev workspace"
+        );
     }
 
     #[test]
@@ -775,7 +786,10 @@ pub(crate) mod tests {
         let mut controller = Controller::new(Box::new(fake));
 
         let fast = controller.toggle_tray(&win);
-        assert!(fast, "hide path returns fast (special workspace transition)");
+        assert!(
+            fast,
+            "hide path returns fast (special workspace transition)"
+        );
         assert!(controller.window_hidden(), "hide marks the window hidden");
         assert_eq!(
             *calls.lock().unwrap(),
@@ -808,7 +822,10 @@ pub(crate) mod tests {
 
         // Toggle again from hidden → show path (fast, show_fast=true).
         let fast = controller.toggle_tray(&win);
-        assert!(fast, "fast path taken because the window is in the special workspace");
+        assert!(
+            fast,
+            "fast path taken because the window is in the special workspace"
+        );
         assert!(!controller.window_hidden(), "show marks the window visible");
         assert_eq!(
             *calls.lock().unwrap(),
@@ -835,7 +852,10 @@ pub(crate) mod tests {
 
         // Toggle again from hidden → show path (slow, show_fast=false).
         let fast = controller.toggle_tray(&win);
-        assert!(!fast, "slow path taken because the window is not in the special workspace");
+        assert!(
+            !fast,
+            "slow path taken because the window is not in the special workspace"
+        );
         assert!(!controller.window_hidden(), "show marks the window visible");
         assert_eq!(
             *calls.lock().unwrap(),
@@ -880,7 +900,10 @@ pub(crate) mod tests {
         let controller = Controller::new(Box::new(fake));
 
         assert!(!controller.window_hidden());
-        assert!(calls.lock().unwrap().is_empty(), "no calls before interaction");
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "no calls before interaction"
+        );
 
         // Access composer() returns a working trait object
         let _c = controller.composer();
@@ -1100,7 +1123,10 @@ pub(crate) mod tests {
         let mut controller = Controller::new(Box::new(fake));
         controller.set_window_hidden(true);
         let _ = controller.toggle_tray(&win);
-        assert_eq!(controller.show_state(), crate::show_state::ShowState::Entering);
+        assert_eq!(
+            controller.show_state(),
+            crate::show_state::ShowState::Entering
+        );
         // Simulate rapid second toggle while still Entering but window_hidden
         // was externally set to hidden again (e.g. IPC debounce edge).
         controller.set_window_hidden(true);
@@ -1124,10 +1150,16 @@ pub(crate) mod tests {
         let mut controller = Controller::new(Box::new(fake));
         controller.set_window_hidden(true);
         let _ = controller.toggle_tray(&win);
-        assert_eq!(controller.show_state(), crate::show_state::ShowState::Entering);
+        assert_eq!(
+            controller.show_state(),
+            crate::show_state::ShowState::Entering
+        );
         // Confirm focus → Visible, then hide → Hidden
         assert!(controller.confirm_focus_machine());
-        assert_eq!(controller.show_state(), crate::show_state::ShowState::Visible);
+        assert_eq!(
+            controller.show_state(),
+            crate::show_state::ShowState::Visible
+        );
         // Hide via toggle_tray
         let _ = controller.toggle_tray(&win);
         assert_eq!(
@@ -1161,19 +1193,32 @@ pub(crate) mod tests {
         if did_settle {
             controller.run_settle(&win);
         }
-        let first_count = calls.lock().unwrap().iter().filter(|c| c.contains("set_fullscreen")).count();
+        let first_count = calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.contains("set_fullscreen"))
+            .count();
         // Second transition via timeout must be no-op and must NOT re-run settle
         let did_timeout = controller.entry_timed_out_machine(Duration::from_millis(0));
         assert!(!did_timeout, "timeout after confirm must be no-op");
         if did_timeout {
             controller.run_settle(&win);
         }
-        let second_count = calls.lock().unwrap().iter().filter(|c| c.contains("set_fullscreen")).count();
+        let second_count = calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.contains("set_fullscreen"))
+            .count();
         assert_eq!(
             first_count, second_count,
             "settle must run exactly once: timeout after confirm must not re-dispatch fullscreen"
         );
-        assert_eq!(first_count, 1, "first settle must have dispatched fullscreen exactly once");
+        assert_eq!(
+            first_count, 1,
+            "first settle must have dispatched fullscreen exactly once"
+        );
     }
 
     #[test]
@@ -1207,7 +1252,10 @@ pub(crate) mod tests {
         let mut controller = Controller::new(Box::new(fake));
         controller.set_window_hidden(true);
         let _ = controller.toggle_tray(&win);
-        assert!(controller.confirm_focus_machine(), "confirm must transition Entering→Visible");
+        assert!(
+            controller.confirm_focus_machine(),
+            "confirm must transition Entering→Visible"
+        );
         controller.run_settle(&win);
         let fs = calls
             .lock()
@@ -1215,7 +1263,10 @@ pub(crate) mod tests {
             .iter()
             .filter(|c| c.contains("set_fullscreen"))
             .count();
-        assert_eq!(fs, 0, "settle must NOT fullscreen while the settings panel floats");
+        assert_eq!(
+            fs, 0,
+            "settle must NOT fullscreen while the settings panel floats"
+        );
     }
 
     // ── show_window: idempotent raise (single-instance handoff) ────────
@@ -1230,11 +1281,20 @@ pub(crate) mod tests {
         let (fake, calls) = FakeComposer::new();
         let mut controller = Controller::new(Box::new(fake));
 
-        assert!(!controller.window_hidden(), "precondition: the window is visible");
+        assert!(
+            !controller.window_hidden(),
+            "precondition: the window is visible"
+        );
 
         let fast = controller.show_window(&win);
-        assert!(!fast, "an already-visible show reports the no-dispatch path");
-        assert!(!controller.window_hidden(), "show must never hide a visible window");
+        assert!(
+            !fast,
+            "an already-visible show reports the no-dispatch path"
+        );
+        assert!(
+            !controller.window_hidden(),
+            "show must never hide a visible window"
+        );
         assert_eq!(
             *calls.lock().unwrap(),
             vec!["focus"],
@@ -1243,16 +1303,25 @@ pub(crate) mod tests {
 
         // A second raise is the same no-op refresh, never a hide.
         let _ = controller.show_window(&win);
-        assert!(!controller.window_hidden(), "repeated show must keep the window visible");
+        assert!(
+            !controller.window_hidden(),
+            "repeated show must keep the window visible"
+        );
         let recorded = calls.lock().unwrap().clone();
         assert!(
             !recorded.iter().any(|c| {
-                c.contains("move_to_special") || c.contains("close_special") || c.contains("record_workspace")
+                c.contains("move_to_special")
+                    || c.contains("close_special")
+                    || c.contains("record_workspace")
             }),
             "show must never dispatch the hide sequence, got: {:?}",
             recorded
         );
-        assert_eq!(recorded, vec!["focus", "focus"], "repeated show stays a focus refresh");
+        assert_eq!(
+            recorded,
+            vec!["focus", "focus"],
+            "repeated show stays a focus refresh"
+        );
     }
 
     /// The handoff path: a hidden window (tray mode, never mapped) must be
@@ -1272,8 +1341,14 @@ pub(crate) mod tests {
 
         let fast = controller.show_window(&win);
 
-        assert!(fast, "a hidden window is in the special workspace: fast path");
-        assert!(!controller.window_hidden(), "show must clear the hidden state");
+        assert!(
+            fast,
+            "a hidden window is in the special workspace: fast path"
+        );
+        assert!(
+            !controller.window_hidden(),
+            "show must clear the hidden state"
+        );
         assert_eq!(
             controller.show_state(),
             crate::show_state::ShowState::Entering,
@@ -1284,7 +1359,10 @@ pub(crate) mod tests {
             vec!["move_to_workspace", "focus"],
             "show must dispatch move-then-focus exactly like toggle_tray's show path"
         );
-        assert!(controller.tray_mode(), "show must not change the tray-mode decision");
+        assert!(
+            controller.tray_mode(),
+            "show must not change the tray-mode decision"
+        );
     }
 
     /// A show that is already in flight (Entering) must not re-dispatch the
@@ -1299,7 +1377,10 @@ pub(crate) mod tests {
 
         controller.set_window_hidden(true);
         let _ = controller.show_window(&win);
-        assert_eq!(controller.show_state(), crate::show_state::ShowState::Entering);
+        assert_eq!(
+            controller.show_state(),
+            crate::show_state::ShowState::Entering
+        );
 
         // IPC edge: the hidden flag is forced back while the show is in flight.
         controller.set_window_hidden(true);
@@ -1338,7 +1419,10 @@ pub(crate) mod tests {
         let fast = controller.show_window(&win);
 
         assert!(fast, "a hidden window takes the show fast path");
-        assert!(!controller.window_hidden(), "show must clear the hidden state");
+        assert!(
+            !controller.window_hidden(),
+            "show must clear the hidden state"
+        );
         assert_eq!(
             hits.load(Ordering::SeqCst),
             1,
@@ -1362,7 +1446,10 @@ pub(crate) mod tests {
             hits_hook.fetch_add(1, Ordering::SeqCst);
         }));
 
-        assert!(!controller.window_hidden(), "precondition: the window is visible");
+        assert!(
+            !controller.window_hidden(),
+            "precondition: the window is visible"
+        );
         let _ = controller.show_window(&win);
         let _ = controller.show_window(&win);
 
@@ -1390,8 +1477,15 @@ pub(crate) mod tests {
 
         controller.set_window_hidden(true);
         let _ = controller.show_window(&win);
-        assert_eq!(controller.show_state(), crate::show_state::ShowState::Entering);
-        assert_eq!(hits.load(Ordering::SeqCst), 1, "the first show runs the hook once");
+        assert_eq!(
+            controller.show_state(),
+            crate::show_state::ShowState::Entering
+        );
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "the first show runs the hook once"
+        );
 
         // IPC edge: the hidden flag is forced back while the show is in flight.
         controller.set_window_hidden(true);
@@ -1421,11 +1515,20 @@ pub(crate) mod tests {
             hits_hook.fetch_add(1, Ordering::SeqCst);
         }));
 
-        assert!(!controller.window_hidden(), "precondition: the window is visible");
+        assert!(
+            !controller.window_hidden(),
+            "precondition: the window is visible"
+        );
         let toggled = controller.toggle_tray(&win);
 
-        assert!(toggled, "toggle_tray takes the hide path on a visible window");
-        assert!(controller.window_hidden(), "toggle_tray must hide the visible window");
+        assert!(
+            toggled,
+            "toggle_tray takes the hide path on a visible window"
+        );
+        assert!(
+            controller.window_hidden(),
+            "toggle_tray must hide the visible window"
+        );
         assert_eq!(
             hits.load(Ordering::SeqCst),
             0,
@@ -1444,9 +1547,15 @@ pub(crate) mod tests {
         let (fake, calls) = FakeComposer::with_query_answer(Some(payload.to_string()));
         let controller = Controller::new(Box::new(fake));
 
-        let got = controller.composer().query_json(CompositorQuery::Workspaces);
+        let got = controller
+            .composer()
+            .query_json(CompositorQuery::Workspaces);
 
-        assert_eq!(got.as_deref(), Some(payload), "the raw JSON must pass through untouched");
+        assert_eq!(
+            got.as_deref(),
+            Some(payload),
+            "the raw JSON must pass through untouched"
+        );
         assert_eq!(
             *calls.lock().unwrap(),
             vec!["query_json(Workspaces)"],
@@ -1461,9 +1570,14 @@ pub(crate) mod tests {
         let (fake, calls) = FakeComposer::with_query_answer(None);
         let controller = Controller::new(Box::new(fake));
 
-        let got = controller.composer().query_json(CompositorQuery::Workspaces);
+        let got = controller
+            .composer()
+            .query_json(CompositorQuery::Workspaces);
 
-        assert!(got.is_none(), "an unanswered query must be None, got: {got:?}");
+        assert!(
+            got.is_none(),
+            "an unanswered query must be None, got: {got:?}"
+        );
         assert_eq!(*calls.lock().unwrap(), vec!["query_json(Workspaces)"]);
     }
 
@@ -1478,7 +1592,11 @@ pub(crate) mod tests {
 
         let got = controller.composer().read_option("decoration:blur:enabled");
 
-        assert_eq!(got.as_deref(), Some(payload), "the raw option JSON must pass through untouched");
+        assert_eq!(
+            got.as_deref(),
+            Some(payload),
+            "the raw option JSON must pass through untouched"
+        );
         assert_eq!(
             *calls.lock().unwrap(),
             vec!["read_option(decoration:blur:enabled)"],
@@ -1495,8 +1613,14 @@ pub(crate) mod tests {
 
         let got = controller.composer().read_option("decoration:blur:enabled");
 
-        assert!(got.is_none(), "an unreadable option must be None, got: {got:?}");
-        assert_eq!(*calls.lock().unwrap(), vec!["read_option(decoration:blur:enabled)"]);
+        assert!(
+            got.is_none(),
+            "an unreadable option must be None, got: {got:?}"
+        );
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["read_option(decoration:blur:enabled)"]
+        );
     }
 
     // ── Command verbs (capability-routing Phase 3) ────────────────────
@@ -1552,7 +1676,11 @@ pub(crate) mod tests {
             Some(judged),
             "the judged error string must pass through untouched, got: {got:?}"
         );
-        assert_eq!(calls.lock().unwrap().len(), 1, "the failed attempt is still recorded");
+        assert_eq!(
+            calls.lock().unwrap().len(),
+            1,
+            "the failed attempt is still recorded"
+        );
     }
 
     /// The reload verb must REACH the composer — `reload-config` is the

@@ -7,7 +7,8 @@
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
 use crate::shell::gallery::model::{
-    effective_duration, ThemeCard, ThemeGalleryModel, ThumbnailCache, MIT_FOOTER, THUMBNAIL_CACHE_CAPACITY,
+    effective_duration, ThemeCard, ThemeGalleryModel, ThumbnailCache, MIT_FOOTER,
+    THUMBNAIL_CACHE_CAPACITY,
 };
 use crate::shell::nav::Screen;
 use crate::shell::slots::Slot;
@@ -19,9 +20,9 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     Arc, Mutex,
 };
-use std::time::Instant;
 #[cfg(test)]
 use std::time::Duration;
+use std::time::Instant;
 
 /// Shader flicker overlay duration ~3s (Hyprland #15067, S21).
 pub const SHADER_FLICKER_MS: u64 = 3000;
@@ -178,7 +179,10 @@ impl GallerySlot {
         let is_active = {
             let tm = self.theme_manager.lock().unwrap();
             let list = tm.list().unwrap_or_default();
-            list.iter().find(|t| t.name == name).map(|t| t.is_active).unwrap_or(false)
+            list.iter()
+                .find(|t| t.name == name)
+                .map(|t| t.is_active)
+                .unwrap_or(false)
         };
         if is_active {
             self.pulse_count.fetch_add(1, Ordering::SeqCst);
@@ -213,7 +217,12 @@ impl GallerySlot {
         *self.last_applied_name.lock().unwrap() = name.to_string();
         // Update model active flag to match new theme
         {
-            let infos = self.theme_manager.lock().unwrap().list().unwrap_or_default();
+            let infos = self
+                .theme_manager
+                .lock()
+                .unwrap()
+                .list()
+                .unwrap_or_default();
             self.model.lock().unwrap().refresh(&infos);
         }
         // Shader flicker detection S21: if theme name contains shader hint or card has shader, show overlay ~3s
@@ -257,7 +266,10 @@ impl GallerySlot {
     pub fn should_pulse(&self, name: &str) -> bool {
         let tm = self.theme_manager.lock().unwrap();
         let list = tm.list().unwrap_or_default();
-        list.iter().find(|t| t.name == name).map(|t| t.is_active).unwrap_or(false)
+        list.iter()
+            .find(|t| t.name == name)
+            .map(|t| t.is_active)
+            .unwrap_or(false)
     }
 
     // ── Settings mutation S9 / 4.4 (behavior verified headlessly; the
@@ -325,7 +337,12 @@ impl GallerySlot {
         tm.delete(name)?;
         self.delete_calls.fetch_add(1, Ordering::SeqCst);
         drop(tm);
-        let infos = self.theme_manager.lock().unwrap().list().unwrap_or_default();
+        let infos = self
+            .theme_manager
+            .lock()
+            .unwrap()
+            .list()
+            .unwrap_or_default();
         self.model.lock().unwrap().refresh(&infos);
         Ok(())
     }
@@ -336,7 +353,12 @@ impl GallerySlot {
         tm.rename(old, new)?;
         self.rename_calls.fetch_add(1, Ordering::SeqCst);
         drop(tm);
-        let infos = self.theme_manager.lock().unwrap().list().unwrap_or_default();
+        let infos = self
+            .theme_manager
+            .lock()
+            .unwrap()
+            .list()
+            .unwrap_or_default();
         self.model.lock().unwrap().refresh(&infos);
         Ok(())
     }
@@ -435,13 +457,20 @@ impl GallerySlot {
     }
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn refresh_from_manager(&self) {
-        let infos = self.theme_manager.lock().unwrap().list().unwrap_or_default();
+        let infos = self
+            .theme_manager
+            .lock()
+            .unwrap()
+            .list()
+            .unwrap_or_default();
         self.model.lock().unwrap().refresh(&infos);
     }
 }
 
 impl Slot for GallerySlot {
-    fn screen(&self) -> Screen { Screen::Gallery }
+    fn screen(&self) -> Screen {
+        Screen::Gallery
+    }
     fn on_mount(&self) {
         self.mount_count.fetch_add(1, Ordering::SeqCst);
         self.prewarm();
@@ -460,7 +489,7 @@ mod tests {
     use super::*;
     use crate::shell::nav::Screen;
     use crate::shell::slots::Slot;
-    use crate::theme_manager::{ThemeManager, ThemeProvider, ProviderCapabilities};
+    use crate::theme_manager::{ProviderCapabilities, ThemeManager, ThemeProvider};
     use crate::tr::Tr;
     use slint::ComponentHandle;
     use std::path::{Path, PathBuf};
@@ -469,12 +498,24 @@ mod tests {
 
     struct DummyProvider;
     impl ThemeProvider for DummyProvider {
-        fn id(&self) -> &str { "dummy" }
-        fn display_name_key(&self) -> &str { "dummy" }
-        fn icon(&self) -> &str { "dummy" }
-        fn save(&self, _theme_dir: &Path) -> Result<(), String> { Ok(()) }
-        fn apply(&self, _theme_dir: &Path) -> Result<(), String> { Ok(()) }
-        fn capabilities(&self) -> ProviderCapabilities { ProviderCapabilities::empty() }
+        fn id(&self) -> &str {
+            "dummy"
+        }
+        fn display_name_key(&self) -> &str {
+            "dummy"
+        }
+        fn icon(&self) -> &str {
+            "dummy"
+        }
+        fn save(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn apply(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities::empty()
+        }
     }
 
     fn temp_manager() -> (Arc<Mutex<ThemeManager>>, TempDir) {
@@ -532,7 +573,11 @@ mod tests {
         // Cyber is not active → should apply two-pass
         let outcome = slot.apply_theme("Cyber");
         assert_eq!(outcome, ApplyOutcome::Applied, "Cyber not active → Applied");
-        assert_eq!(slot.apply_calls(), 1, "apply_calls increments on two-pass 4.2");
+        assert_eq!(
+            slot.apply_calls(),
+            1,
+            "apply_calls increments on two-pass 4.2"
+        );
         // Verify TM last_applied updated via two passes
         assert_eq!(tm.lock().unwrap().last_applied, "Cyber");
         // Active indicator moved: Cyber is now active
@@ -556,7 +601,10 @@ mod tests {
         assert_eq!(outcome, ApplyOutcome::Applied);
         // Perceived latency <200ms (R4)
         let ms = slot.last_apply_ms();
-        assert!(ms < APPLY_PERCEIVED_MS, "watcher reload <200ms, got {ms}ms S7");
+        assert!(
+            ms < APPLY_PERCEIVED_MS,
+            "watcher reload <200ms, got {ms}ms S7"
+        );
         assert_eq!(slot.last_applied_name(), "Cyber");
         // Indicator updates immediately via model refresh
         let themes = slot.model_themes_snapshot();
@@ -575,10 +623,26 @@ mod tests {
         // Nord is already active: clicking its card must APPLY it again so a
         // changed theme can rewrite itself, while the click still pulses.
         let outcome = slot.apply_theme("Nord");
-        assert_eq!(outcome, ApplyOutcome::Applied, "active theme re-applies, not no-op");
-        assert_eq!(slot.pulse_count(), 1, "click on the active card still pulses");
-        assert_eq!(slot.apply_calls(), 1, "active theme runs the real apply path (incl. reload)");
-        assert_eq!(slot.last_applied_name(), "Nord", "active theme stays applied");
+        assert_eq!(
+            outcome,
+            ApplyOutcome::Applied,
+            "active theme re-applies, not no-op"
+        );
+        assert_eq!(
+            slot.pulse_count(),
+            1,
+            "click on the active card still pulses"
+        );
+        assert_eq!(
+            slot.apply_calls(),
+            1,
+            "active theme runs the real apply path (incl. reload)"
+        );
+        assert_eq!(
+            slot.last_applied_name(),
+            "Nord",
+            "active theme stays applied"
+        );
         assert_eq!(tm.lock().unwrap().last_applied, "Nord");
         assert!(slot.should_pulse("Nord"), "Nord still the active theme");
         assert!(!slot.should_pulse("Cyber"));
@@ -595,10 +659,10 @@ mod tests {
         // Verify sizes
         use crate::shell::size::SizePolicy;
         let policy = SizePolicy::new();
-        assert_eq!(policy.target(false), (900.0,680.0));
+        assert_eq!(policy.target(false), (900.0, 680.0));
         assert_eq!(policy.target(true), GALLERY_EXPANDED_SIZE);
         assert_eq!(policy.target_for_settings(true), SETTINGS_SIZE);
-        assert_eq!(SETTINGS_SIZE, (1300.0,900.0));
+        assert_eq!(SETTINGS_SIZE, (1300.0, 900.0));
         // The size animation did not trigger extra applies or pulses
         assert_eq!(slot.pulse_count(), 1);
         assert_eq!(slot.apply_calls(), 1);
@@ -615,9 +679,15 @@ mod tests {
     }
 
     impl ThemeProvider for RewriteProvider {
-        fn id(&self) -> &str { &self.id }
-        fn display_name_key(&self) -> &str { "rewrite" }
-        fn icon(&self) -> &str { "rewrite" }
+        fn id(&self) -> &str {
+            &self.id
+        }
+        fn display_name_key(&self) -> &str {
+            "rewrite"
+        }
+        fn icon(&self) -> &str {
+            "rewrite"
+        }
         fn save(&self, theme_dir: &Path) -> Result<(), String> {
             let dir = theme_dir.join("providers").join(&self.id);
             std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -625,13 +695,14 @@ mod tests {
         }
         fn apply(&self, theme_dir: &Path) -> Result<(), String> {
             self.apply_calls.fetch_add(1, Ordering::SeqCst);
-            let state = std::fs::read_to_string(
-                theme_dir.join("providers").join(&self.id).join("state"),
-            )
-            .map_err(|e| e.to_string())?;
+            let state =
+                std::fs::read_to_string(theme_dir.join("providers").join(&self.id).join("state"))
+                    .map_err(|e| e.to_string())?;
             std::fs::write(&self.live_path, state).map_err(|e| e.to_string())
         }
-        fn capabilities(&self) -> ProviderCapabilities { ProviderCapabilities::empty() }
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities::empty()
+        }
     }
 
     #[test]
@@ -650,7 +721,11 @@ mod tests {
 
         // First apply writes the theme's own state to the live file.
         assert_eq!(slot.apply_theme("Nord"), ApplyOutcome::Applied);
-        assert_eq!(apply_calls.load(Ordering::SeqCst), 1, "provider ran on first apply");
+        assert_eq!(
+            apply_calls.load(Ordering::SeqCst),
+            1,
+            "provider ran on first apply"
+        );
         assert_eq!(std::fs::read_to_string(&live).unwrap(), "theme-original");
 
         // The user changes something of the theme (e.g. its background).
@@ -702,16 +777,35 @@ mod tests {
         let shell = crate::shell::Shell::new(win.as_weak());
         crate::shell::Shell::set_global(shell.clone());
         // Register slot and expand
-        crate::shell::Shell::register_slot(&shell, Box::new(crate::shell::slots::StubSlot::new(Screen::Gallery)));
-        crate::shell::Shell::dispatch(&shell, crate::shell::nav::NavCommand::Expand(Screen::Gallery));
-        for _ in 0..30 { i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(16)); }
+        crate::shell::Shell::register_slot(
+            &shell,
+            Box::new(crate::shell::slots::StubSlot::new(Screen::Gallery)),
+        );
+        crate::shell::Shell::dispatch(
+            &shell,
+            crate::shell::nav::NavCommand::Expand(Screen::Gallery),
+        );
+        for _ in 0..30 {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(16));
+        }
         let phys = win.window().size();
-        assert_eq!((phys.width as f32, phys.height as f32), (1200.0,800.0), "precondition expanded");
+        assert_eq!(
+            (phys.width as f32, phys.height as f32),
+            (1200.0, 800.0),
+            "precondition expanded"
+        );
         // Simulate hide/show cycle
-        win.window().set_size(slint::WindowSize::Logical(slint::LogicalSize::new(1.0,1.0)));
+        win.window()
+            .set_size(slint::WindowSize::Logical(slint::LogicalSize::new(
+                1.0, 1.0,
+            )));
         crate::shell::Shell::sync_global_after_show();
         let phys2 = win.window().size();
-        assert_eq!((phys2.width as f32, phys2.height as f32), (1200.0,800.0), "sync_global_after_show S11 restores 1200x800");
+        assert_eq!(
+            (phys2.width as f32, phys2.height as f32),
+            (1200.0, 800.0),
+            "sync_global_after_show S11 restores 1200x800"
+        );
     }
 
     // ── 4.6 Register GallerySlot replace StubSlot i18n test register_slot ──
@@ -727,7 +821,10 @@ mod tests {
         crate::shell::Shell::register_slot(&shell, Box::new(gallery_slot));
         {
             let s = shell.borrow();
-            let slot = s.slots.get(Screen::Gallery).expect("gallery registered 4.6");
+            let slot = s
+                .slots
+                .get(Screen::Gallery)
+                .expect("gallery registered 4.6");
             assert_eq!(slot.screen(), Screen::Gallery);
             let tr = Tr::with_lang("en");
             assert_eq!(slot.label(&tr).as_str(), "Gallery", "i18n Gallery 4.6");
@@ -761,15 +858,24 @@ mod tests {
             let shellc = shell.clone();
             win.on_card_activated(move |idx| {
                 if let Some(screen) = Screen::from_card_index(idx as usize) {
-                    crate::shell::Shell::dispatch(&shellc, crate::shell::nav::NavCommand::Expand(screen));
+                    crate::shell::Shell::dispatch(
+                        &shellc,
+                        crate::shell::nav::NavCommand::Expand(screen),
+                    );
                 }
             });
         }
         {
             let shellc = shell.clone();
             win.on_nav_move(move |dir| {
-                let delta = match dir.as_str() { "down"|"right" => 1, "up"|"left" => -1, _ => 0 };
-                if delta != 0 { crate::shell::Shell::move_focus(&shellc, delta); }
+                let delta = match dir.as_str() {
+                    "down" | "right" => 1,
+                    "up" | "left" => -1,
+                    _ => 0,
+                };
+                if delta != 0 {
+                    crate::shell::Shell::move_focus(&shellc, delta);
+                }
             });
         }
         // S1: Home → Expand Gallery via Enter on card 0
@@ -782,7 +888,11 @@ mod tests {
         let focused = crate::shell::Shell::with_nav(&shell, |n| n.focused_card());
         assert_eq!(focused, 1);
         // Map focused card → gallery focus (sorted alphabetically Cyber=0 Nord=1)
-        let idx_cyber = slot.model_themes_snapshot().iter().position(|c| c.name == "Cyber").unwrap();
+        let idx_cyber = slot
+            .model_themes_snapshot()
+            .iter()
+            .position(|c| c.name == "Cyber")
+            .unwrap();
         {
             let mut model = slot.model.lock().unwrap();
             model.set_focused_index(idx_cyber);
@@ -790,7 +900,11 @@ mod tests {
         let theme_name = slot.model_themes_snapshot()[idx_cyber].name.clone();
         assert_eq!(theme_name, "Cyber");
         let outcome = slot.apply_theme(&theme_name);
-        assert_eq!(outcome, ApplyOutcome::Applied, "S12 apply via keyboard Enter");
+        assert_eq!(
+            outcome,
+            ApplyOutcome::Applied,
+            "S12 apply via keyboard Enter"
+        );
         assert_eq!(tm.lock().unwrap().last_applied, "Cyber");
     }
 
@@ -802,7 +916,10 @@ mod tests {
         let slot_empty = GallerySlot::new(tm_empty);
         assert!(slot_empty.is_empty(), "empty S18");
         assert_eq!(slot_empty.len(), 0);
-        assert_eq!(slot_empty.empty_message(), "No themes yet. Save your current setup as a theme.");
+        assert_eq!(
+            slot_empty.empty_message(),
+            "No themes yet. Save your current setup as a theme."
+        );
         assert!(slot_empty.mitigates_empty());
         // Delete S19
         let (tm, _dir2) = temp_manager();
@@ -818,7 +935,11 @@ mod tests {
         assert_eq!(slot.rename_calls(), 1);
         let themes = slot.model_themes_snapshot();
         assert_eq!(themes[0].name, "Polished", "rename refreshes S20");
-        assert_eq!(tm.lock().unwrap().last_applied, "Polished", "active indicator updates on rename if was active");
+        assert_eq!(
+            tm.lock().unwrap().last_applied,
+            "Polished",
+            "active indicator updates on rename if was active"
+        );
         // Empty after deleting last
         slot.delete_theme("Polished").unwrap();
         assert!(slot.is_empty(), "empty after deleting all");
@@ -844,12 +965,18 @@ mod tests {
             // Our apply checks lowercase contains shader
             assert_eq!(outcome, ApplyOutcome::Applied);
         }
-        assert!(slot.is_shader_overlay_visible(), "shader flicker overlay visible S21");
+        assert!(
+            slot.is_shader_overlay_visible(),
+            "shader flicker overlay visible S21"
+        );
         assert_eq!(slot.shader_flicker_duration_ms(), SHADER_FLICKER_MS);
         assert_eq!(slot.shader_flicker_duration_ms(), 3000);
         // Dismiss after ~3s (simulate timer)
         slot.dismiss_shader_overlay();
-        assert!(!slot.is_shader_overlay_visible(), "overlay dismissed after 3s");
+        assert!(
+            !slot.is_shader_overlay_visible(),
+            "overlay dismissed after 3s"
+        );
     }
 
     // ── Phase-4 guard (odd/tasks/hve-capability-routing.md): the `yield to
@@ -897,7 +1024,11 @@ mod tests {
         assert_eq!(slot.effective_anim_duration(200), 200);
         slot.set_reduced_motion(true);
         assert!(slot.is_reduced_motion());
-        assert_eq!(slot.effective_anim_duration(350), 0, "reduced-motion disables S23");
+        assert_eq!(
+            slot.effective_anim_duration(350),
+            0,
+            "reduced-motion disables S23"
+        );
         assert_eq!(slot.effective_anim_duration(200), 0);
         assert_eq!(slot.effective_anim_duration(400), 0);
         // Mit footer R7
@@ -905,7 +1036,10 @@ mod tests {
         assert!(slot.mit_footer().contains("skwd-wall"));
         assert!(slot.mit_footer().contains("MIT"));
         assert!(slot.mit_footer().contains("liixini"));
-        assert_eq!(crate::shell::gallery::model::MIT_FOOTER_LINK, "https://github.com/liixini/skwd-wall");
+        assert_eq!(
+            crate::shell::gallery::model::MIT_FOOTER_LINK,
+            "https://github.com/liixini/skwd-wall"
+        );
         // LRU200 R8
         assert_eq!(slot.thumb_cache_capacity(), 200);
         assert_eq!(slot.thumb_cache_capacity(), THUMBNAIL_CACHE_CAPACITY);
@@ -921,7 +1055,9 @@ mod tests {
         // Check model ThumbnailCache directly also 200
         let mut cache = ThumbnailCache::new();
         assert_eq!(cache.capacity(), 200);
-        for i in 0..210 { cache.insert(format!("c{i}"), PathBuf::from(format!("/tmp/{i}"))); }
+        for i in 0..210 {
+            cache.insert(format!("c{i}"), PathBuf::from(format!("/tmp/{i}")));
+        }
         assert_eq!(cache.len(), 200);
     }
 
@@ -936,14 +1072,28 @@ mod tests {
         let (tm, _dir) = temp_manager();
         let gallery_slot = GallerySlot::new(tm);
         crate::shell::Shell::register_slot(&shell, Box::new(gallery_slot));
-        crate::shell::Shell::register_slot(&shell, Box::new(crate::shell::slots::StubSlot::new(Screen::Workshop)));
+        crate::shell::Shell::register_slot(
+            &shell,
+            Box::new(crate::shell::slots::StubSlot::new(Screen::Workshop)),
+        );
         // Headless mount Expand verify 22steps 350ms OutCubic (S1)
         assert_eq!(crate::shell::ANIM_STEPS, 22, "22 steps 5.4");
         assert_eq!(crate::shell::ANIM_STEP_MS, 16, "16ms per step");
         assert_eq!(crate::shell::ANIM_DURATION_MS, 352, "≈350ms OutCubic");
-        assert_eq!(crate::shell::ANIM_EASING, (0.215,0.61,0.355,1.0), "OutCubic bezier");
-        assert_eq!(win.window().size().width as f32, 900.0, "starts at base 900x680");
-        crate::shell::Shell::dispatch(&shell, crate::shell::nav::NavCommand::Expand(Screen::Gallery));
+        assert_eq!(
+            crate::shell::ANIM_EASING,
+            (0.215, 0.61, 0.355, 1.0),
+            "OutCubic bezier"
+        );
+        assert_eq!(
+            win.window().size().width as f32,
+            900.0,
+            "starts at base 900x680"
+        );
+        crate::shell::Shell::dispatch(
+            &shell,
+            crate::shell::nav::NavCommand::Expand(Screen::Gallery),
+        );
         // Verify slot mounted
         assert_eq!(win.get_mounted_screen(), 1, "Gallery mounted via Slot");
         assert!(win.get_expanded(), "expanded mirror true");
@@ -952,16 +1102,32 @@ mod tests {
             i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(16));
         }
         let phys = win.window().size();
-        assert_eq!((phys.width as f32, phys.height as f32), (1200.0,800.0), "after 22 steps at 1200x800 5.4");
+        assert_eq!(
+            (phys.width as f32, phys.height as f32),
+            (1200.0, 800.0),
+            "after 22 steps at 1200x800 5.4"
+        );
         // Additional ticks stay at target (no drift)
-        for _ in 0..8 { i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(16)); }
+        for _ in 0..8 {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(16));
+        }
         let phys2 = win.window().size();
-        assert_eq!((phys2.width as f32, phys2.height as f32), (1200.0,800.0), "holds at target");
+        assert_eq!(
+            (phys2.width as f32, phys2.height as f32),
+            (1200.0, 800.0),
+            "holds at target"
+        );
         // ExpandToSettings then verifies same animator (1300x900)
         crate::shell::Shell::expand_to_settings(&shell);
-        for _ in 0..22 { i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(16)); }
+        for _ in 0..22 {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(16));
+        }
         let phys3 = win.window().size();
-        assert_eq!((phys3.width as f32, phys3.height as f32), (1300.0,900.0), "settings mutation 1300x900 via same 22steps");
+        assert_eq!(
+            (phys3.width as f32, phys3.height as f32),
+            (1300.0, 900.0),
+            "settings mutation 1300x900 via same 22steps"
+        );
     }
 
     // helper for empty test

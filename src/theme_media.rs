@@ -65,9 +65,7 @@ pub fn theme_file_is_regular(path: &Path) -> bool {
 /// wrapper or calls the bounded readers directly). A refusal — over-bound
 /// OR non-regular — is a warning plus an `Err`; callers skip gracefully
 /// exactly like a missing file.
-pub fn read_theme_record(
-    path: &Path,
-) -> Result<String, crate::theme_package::ThemeReadError> {
+pub fn read_theme_record(path: &Path) -> Result<String, crate::theme_package::ThemeReadError> {
     crate::theme_package::read_theme_text(path)
 }
 
@@ -351,7 +349,9 @@ pub fn package_theme_video(theme_dir: &Path, source: &Path, max_bytes: u64) -> O
         );
         return None;
     }
-    let size = std::fs::metadata(source).map(|m| m.len()).unwrap_or(u64::MAX);
+    let size = std::fs::metadata(source)
+        .map(|m| m.len())
+        .unwrap_or(u64::MAX);
     if !video_fits_for_packaging(size, max_bytes) {
         tracing::warn!(
             "[theme-media] video {} is {} bytes, over the {} byte packaging bound; not copied",
@@ -686,7 +686,10 @@ mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         let video = dir.path().join("clip.mp4");
-        assert!(synth_video(&video), "failed to synthesize the fixture video");
+        assert!(
+            synth_video(&video),
+            "failed to synthesize the fixture video"
+        );
 
         let theme = dir.path().join("theme");
         let rel = write_theme_poster(&theme, &video).expect("a video must yield a poster");
@@ -878,7 +881,10 @@ mod tests {
             !media.join("poster.png").exists(),
             "a successful write must drop the stale poster of another format"
         );
-        assert_eq!(std::fs::read(theme.join(&rel)).unwrap(), b"fresh jpeg bytes");
+        assert_eq!(
+            std::fs::read(theme.join(&rel)).unwrap(),
+            b"fresh jpeg bytes"
+        );
     }
 
     // ── Theme packages T3: the video is optional and size-aware ───────
@@ -1164,12 +1170,22 @@ mod tests {
         .unwrap();
         let wallpaper = dir.path().join("fallback.png");
         std::fs::write(&wallpaper, b"\x89PNG").unwrap();
-        std::fs::write(provider.join("wallpaper.txt"), wallpaper.display().to_string()).unwrap();
+        std::fs::write(
+            provider.join("wallpaper.txt"),
+            wallpaper.display().to_string(),
+        )
+        .unwrap();
 
         let declared = declared_backgrounds(&theme, &provider);
 
-        assert!(declared.contains(&poster.display().to_string()), "{declared:?}");
-        assert!(declared.contains(&video.display().to_string()), "{declared:?}");
+        assert!(
+            declared.contains(&poster.display().to_string()),
+            "{declared:?}"
+        );
+        assert!(
+            declared.contains(&video.display().to_string()),
+            "{declared:?}"
+        );
         assert!(
             declared.contains(&wallpaper.display().to_string()),
             "{declared:?}"
@@ -1254,7 +1270,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("poster.txt");
         let mut content = b"poster=/home/someone/secret.png\n".to_vec();
-        content.resize(crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1, b'x');
+        content.resize(
+            crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1,
+            b'x',
+        );
         std::fs::write(&file, content).unwrap();
 
         let err = read_theme_record(&file).expect_err("an over-bound record must be refused");
@@ -1276,7 +1295,10 @@ mod tests {
             theme_file_is_regular(&link),
             "a symlink to a regular file must still be accepted"
         );
-        assert_eq!(read_theme_record(&link).unwrap(), "poster=media/poster.jpg\n");
+        assert_eq!(
+            read_theme_record(&link).unwrap(),
+            "poster=media/poster.jpg\n"
+        );
     }
 
     #[test]

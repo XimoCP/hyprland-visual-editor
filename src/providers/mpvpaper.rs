@@ -62,15 +62,15 @@ use crate::providers::noctalia_runtime::{
 // neutral `bg_info` module, so `noctalia.rs` can read it without naming
 // this backend (capability routing: a backend never calls another one).
 // These are re-exports of the ONE implementation, which sits in `bg_info`.
-pub use crate::providers::bg_info::{MANIFEST_FILE, MpvpaperManifest, MpvpaperVideo};
+pub use crate::providers::bg_info::{MpvpaperManifest, MpvpaperVideo, MANIFEST_FILE};
 // Compatibility re-exports: the historical `mpvpaper::save_manifest` and
 // `mpvpaper::notify_plugin_required` paths must keep resolving (pinned by
 // the `bg_info` compatibility tests), while production code reaches them
 // through `bg_info`. Nothing in the binary calls them through THIS path,
 // hence the allow — the one implementation still lives in `bg_info`.
+pub(crate) use crate::providers::bg_info::{live_assignments_path, LiveAssignments};
 #[allow(unused_imports)]
 pub use crate::providers::bg_info::{notify_plugin_required, save_manifest};
-pub(crate) use crate::providers::bg_info::{live_assignments_path, LiveAssignments};
 
 /// How long to wait after `clear-all` for the plugin to extract the static
 /// frame (async ffmpeg) before HVE applies its own static wallpaper.
@@ -149,7 +149,10 @@ fn resolve_real_path(path: &Path) -> Result<PathBuf, String> {
                 ancestor.pop();
             }
             _ => {
-                return Err(format!("cannot resolve '{}' to a real path", path.display()));
+                return Err(format!(
+                    "cannot resolve '{}' to a real path",
+                    path.display()
+                ));
             }
         }
     }
@@ -315,7 +318,10 @@ fn resolve_video(video: &MpvpaperVideo, video_dir: &Path) -> Result<PathBuf, Str
         }
     }
 
-    Err(format!("video '{}' not found locally and has no usable url", video.filename))
+    Err(format!(
+        "video '{}' not found locally and has no usable url",
+        video.filename
+    ))
 }
 
 /// SECURITY (W5): hard byte cap for a theme-supplied video download. The
@@ -387,8 +393,8 @@ fn download_video(url: &str, dest: &Path, expected_sha: &str) -> Result<PathBuf,
     // SECURITY: claim a unique temp path with O_EXCL so a pre-existing
     // symlink at a predictable temp name cannot be followed.
     let tmp = unique_tmp_path(dest)?;
-    let created = fs::File::create_new(&tmp)
-        .map_err(|e| format!("Cannot create unique temp file: {}", e))?;
+    let created =
+        fs::File::create_new(&tmp).map_err(|e| format!("Cannot create unique temp file: {}", e))?;
     drop(created);
 
     let status = curl_command(&tmp, url)
@@ -452,8 +458,8 @@ pub fn apply_manifest(theme_dir: &Path) -> Result<(), String> {
     // every caller. A refusal keeps the ordinary `Err` shape below.
     let raw = crate::theme_media::read_theme_record(&manifest_path)
         .map_err(|e| format!("Cannot read manifest: {}", e))?;
-    let manifest: MpvpaperManifest = serde_json::from_str(&raw)
-        .map_err(|e| format!("Cannot parse manifest: {}", e))?;
+    let manifest: MpvpaperManifest =
+        serde_json::from_str(&raw).map_err(|e| format!("Cannot parse manifest: {}", e))?;
 
     // settings.toml was already restored → video_directory reflects the theme.
     // SECURITY (W4): that value is UNTRUSTED theme input — confine it to the
@@ -500,7 +506,11 @@ pub fn apply_manifest(theme_dir: &Path) -> Result<(), String> {
     if resolved.is_empty() {
         return Err(format!(
             "No mpvpaper videos could be resolved{}",
-            if failures.is_empty() { String::new() } else { format!(" ({} failed)", failures.len()) }
+            if failures.is_empty() {
+                String::new()
+            } else {
+                format!(" ({} failed)", failures.len())
+            }
         ));
     }
 
@@ -518,8 +528,7 @@ pub fn apply_manifest(theme_dir: &Path) -> Result<(), String> {
     };
     let json = serde_json::to_string(&live)
         .map_err(|e| format!("Live assignments serialization error: {}", e))?;
-    fs::write(&state_file, json)
-        .map_err(|e| format!("Cannot write live assignments: {}", e))?;
+    fs::write(&state_file, json).map_err(|e| format!("Cannot write live assignments: {}", e))?;
 
     // Kill every current instance BEFORE bouncing. Without this, the plugin's
     // async kill/start race (triggered by onConfigChanged -> applyAll during
@@ -625,15 +634,23 @@ video_directory = "~/Videos"
             expand_home("~/x/y.mp4", "/home/ximo"),
             Some(PathBuf::from("/home/ximo/x/y.mp4"))
         );
-        assert_eq!(expand_home("~", "/home/ximo"), Some(PathBuf::from("/home/ximo")));
-        assert_eq!(expand_home("/abs/path.mp4", "/home/ximo"), Some(PathBuf::from("/abs/path.mp4")));
+        assert_eq!(
+            expand_home("~", "/home/ximo"),
+            Some(PathBuf::from("/home/ximo"))
+        );
+        assert_eq!(
+            expand_home("/abs/path.mp4", "/home/ximo"),
+            Some(PathBuf::from("/abs/path.mp4"))
+        );
     }
 
     /// Sandbox home for the confinement tests: the three media roots exist,
     /// nothing else does. Never touches the real HOME.
     fn confine_sandbox(tag: &str) -> PathBuf {
-        let sandbox =
-            std::env::temp_dir().join(format!("mpvpaper-test-confine-{tag}-{}", std::process::id()));
+        let sandbox = std::env::temp_dir().join(format!(
+            "mpvpaper-test-confine-{tag}-{}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&sandbox);
         let home = sandbox.join("home");
         for dir in ["Pictures", "Videos", "Downloads"] {
@@ -663,7 +680,10 @@ video_directory = "~/Videos"
         // and the check itself creates nothing (download creates it later).
         let fresh = real_live.join("new-loop");
         assert_eq!(confine_video_dir(&fresh, &home_s).unwrap(), fresh);
-        assert!(!fresh.exists(), "the confinement check must not create directories");
+        assert!(
+            !fresh.exists(),
+            "the confinement check must not create directories"
+        );
 
         let _ = fs::remove_dir_all(&sandbox);
     }
@@ -783,10 +803,8 @@ video_directory = "~/Videos"
 
     #[test]
     fn enforce_size_cap_keeps_small_files_and_deletes_oversized_ones() {
-        let dir = std::env::temp_dir().join(format!(
-            "mpvpaper-test-sizecap-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("mpvpaper-test-sizecap-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("create sizecap sandbox");
 
@@ -800,7 +818,8 @@ video_directory = "~/Videos"
         // a real GiB to disk.
         let big = dir.join("big.mp4");
         let f = fs::File::create_new(&big).expect("create big fixture");
-        f.set_len(MAX_VIDEO_DOWNLOAD_BYTES + 1).expect("grow sparse fixture");
+        f.set_len(MAX_VIDEO_DOWNLOAD_BYTES + 1)
+            .expect("grow sparse fixture");
         drop(f);
         let err = enforce_size_cap(&big).unwrap_err();
         assert!(err.contains("size cap"), "unexpected error: {err}");
@@ -886,7 +905,10 @@ video_directory = "~/Videos"
                 sha256: Some("a".repeat(64)),
             };
             let err = resolve_video(&video, &dir).unwrap_err();
-            assert!(err.contains("filename"), "unexpected error for {bad:?}: {err}");
+            assert!(
+                err.contains("filename"),
+                "unexpected error for {bad:?}: {err}"
+            );
         }
 
         // A safe filename with spaces is accepted by the validator, and a
@@ -1023,13 +1045,17 @@ video_directory = "~/Videos"
             .filter(|l| !l.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
             .join("\n");
-        let bounce_at = code.find("fn bounce_plugin").expect("bounce_plugin must exist");
+        let bounce_at = code
+            .find("fn bounce_plugin")
+            .expect("bounce_plugin must exist");
         let after_bounce = &code[bounce_at..];
         let delegate = ["plugin", "_bounce("].concat();
         after_bounce
             .find(&delegate)
             .expect("bounce_plugin must delegate to the guarded bounce in the runtime seam");
-        let apply_at = code.find("pub fn apply_manifest").expect("apply_manifest must exist");
+        let apply_at = code
+            .find("pub fn apply_manifest")
+            .expect("apply_manifest must exist");
         let after_apply = &code[apply_at..];
         let apply_guard = after_apply
             .find("mpvpaper_enabled")

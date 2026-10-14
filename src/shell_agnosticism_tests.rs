@@ -101,7 +101,8 @@ fn the_core_backfills_the_active_theme_through_a_fake_shell() {
     let mut tm = ThemeManager::new(&config_dir);
     tm.register_provider(Box::new(FakeProvider));
     for name in ["Alpha", "Beta"] {
-        tm.save(name, &["fake".to_string()]).expect("save fake theme");
+        tm.save(name, &["fake".to_string()])
+            .expect("save fake theme");
     }
 
     let mut shell = FakeShell::default();

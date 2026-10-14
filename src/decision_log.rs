@@ -218,7 +218,8 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_write_never_panics_and_never_aborts_the_decision() {        let _env = TempEnv::new();
+    fn a_failed_write_never_panics_and_never_aborts_the_decision() {
+        let _env = TempEnv::new();
         // Make the cache dir itself a FILE: creating or writing the log must
         // fail, and `record` must swallow it instead of panicking.
         let cache = hve_cache_dir();

@@ -1,8 +1,8 @@
 use crate::app_state::{AppState, SharedState};
 use crate::config::Config;
 use crate::settings::{set_autostart, set_tiling_window_rules};
-use crate::shell::nav::{NavCommand, Screen};
 use crate::shell::gallery::views::mosaic::MosaicPages;
+use crate::shell::nav::{NavCommand, Screen};
 use crate::shell::Shell;
 use slint::ComponentHandle;
 use std::cell::RefCell;
@@ -31,7 +31,11 @@ macro_rules! make_toggle_callback {
             let (is_deactivate, result) = {
                 let mut state = lock_state(&$state);
                 let is_deact = state.cfg().$active_field == file_str;
-                let new = if is_deact { String::new() } else { file_str.clone() };
+                let new = if is_deact {
+                    String::new()
+                } else {
+                    file_str.clone()
+                };
                 state.cfg_mut().$active_field = new.clone();
                 let _ = state.cfg().save();
                 let arg = if is_deact { "none" } else { &new };
@@ -51,8 +55,7 @@ macro_rules! make_toggle_callback {
 
 /// The project's online manual: the GitHub wiki. A compile-time constant, so
 /// no user input ever reaches the command line.
-pub(crate) const ABOUT_DOCS_URL: &str =
-    "https://github.com/XimoCP/hyprland-visual-editor/wiki";
+pub(crate) const ABOUT_DOCS_URL: &str = "https://github.com/XimoCP/hyprland-visual-editor/wiki";
 
 /// The argv the About link runs. Pure, so the contract — the About link opens
 /// the online manual, never a local file — is testable without spawning.
@@ -87,11 +90,15 @@ pub fn setup_callbacks(
     {
         let shell = shell.clone();
         window.on_card_activated(move |card_idx| {
-            tracing::debug!("{}", mouse_trace(&format!("card-activated idx={card_idx} (home card click)")));
+            tracing::debug!(
+                "{}",
+                mouse_trace(&format!("card-activated idx={card_idx} (home card click)"))
+            );
             // If already in Gallery expanded, card click is GallerySlot action:
             // current card → ExpandToSettings (S9) 1200x800→1300x900, non-current → instant apply via state (handled below via gallery apply path)
             let is_gallery = Shell::with_nav(&shell, |n| {
-                n.screen() == Screen::Gallery && n.expansion() != crate::shell::nav::ExpansionState::Collapsed
+                n.screen() == Screen::Gallery
+                    && n.expansion() != crate::shell::nav::ExpansionState::Collapsed
             });
             if is_gallery {
                 // Check if window already at settings size — if so, ignore
@@ -116,8 +123,12 @@ pub fn setup_callbacks(
             // Controller::toggle_tray hide path → composer.hide). Idempotent:
             // if already hidden, do nothing. Supersedes spec Settings Mutation
             // & Esc Collapse — gallery/settings no longer collapses via Esc.
-            let Some(win) = weak.upgrade() else { return; };
-            let Some(mut ctrl) = crate::composer::global_controller() else { return; };
+            let Some(win) = weak.upgrade() else {
+                return;
+            };
+            let Some(mut ctrl) = crate::composer::global_controller() else {
+                return;
+            };
             if ctrl.window_hidden() {
                 return;
             }
@@ -161,8 +172,12 @@ pub fn setup_callbacks(
                 "left" => -1,
                 "down" | "up" if !is_gallery => {
                     // In Home, Up/Down keep moving the vertical focus
-                    if direction.as_str() == "down" { 1 } else { -1 }
-                },
+                    if direction.as_str() == "down" {
+                        1
+                    } else {
+                        -1
+                    }
+                }
                 _ => 0,
             };
             if delta == 0 {
@@ -170,7 +185,10 @@ pub fn setup_callbacks(
             }
             if is_gallery {
                 // If a drawer is open, Left/Right navigates it — do not move the carousel
-                let drawer_open = weak.upgrade().map(|w| w.get_gallery_top_open() || w.get_gallery_bottom_open()).unwrap_or(false);
+                let drawer_open = weak
+                    .upgrade()
+                    .map(|w| w.get_gallery_top_open() || w.get_gallery_bottom_open())
+                    .unwrap_or(false);
                 if drawer_open {
                     return;
                 }
@@ -252,7 +270,10 @@ pub fn setup_callbacks(
         let state = state.clone();
         let weak = window.as_weak();
         window.on_toggle_system(move |active| {
-            tracing::debug!("[system][mouse|kbd] toggle-system active={} (row 0)", active);
+            tracing::debug!(
+                "[system][mouse|kbd] toggle-system active={} (row 0)",
+                active
+            );
             tray_active.store(active, Ordering::Relaxed);
             let result = {
                 let mut state = lock_state(&state);
@@ -312,7 +333,10 @@ pub fn setup_callbacks(
         let state = state.clone();
         let weak = window.as_weak();
         window.on_toggle_auto_minimize(move |enabled| {
-            tracing::debug!("[system][mouse|kbd] toggle-auto-minimize enabled={} (row 1)", enabled);
+            tracing::debug!(
+                "[system][mouse|kbd] toggle-auto-minimize enabled={} (row 1)",
+                enabled
+            );
             lock_state(&state).update_cfg(|c| c.auto_minimize_enabled = enabled);
             if let Some(w) = weak.upgrade() {
                 w.set_auto_minimize(enabled);
@@ -324,7 +348,10 @@ pub fn setup_callbacks(
         let state = state.clone();
         let weak = window.as_weak();
         window.on_change_minimize_seconds(move |secs| {
-            tracing::debug!("[system][mouse|kbd] change-minimize-seconds {} (row 2 chips)", secs);
+            tracing::debug!(
+                "[system][mouse|kbd] change-minimize-seconds {} (row 2 chips)",
+                secs
+            );
             lock_state(&state).update_cfg(|c| c.minimize_seconds = secs);
             if let Some(w) = weak.upgrade() {
                 w.set_minimize_seconds(secs);
@@ -509,10 +536,7 @@ pub fn setup_callbacks(
 /// After applying a theme, sync the GUI preset indices (anim, border, shader, border-size)
 /// so they reflect what the theme restored, not the stale values from before apply.
 #[allow(dead_code)]
-fn sync_preset_indices(
-    window: &crate::MainWindow,
-    cfg: &Config,
-) {
+fn sync_preset_indices(window: &crate::MainWindow, cfg: &Config) {
     use slint::Model;
 
     let find = |files: &slint::ModelRc<slint::SharedString>, target: &str| -> i32 {
@@ -634,7 +658,11 @@ pub fn handle_panel_rename(
     }
     if let Err(e) = tm_main.rename(old, new) {
         let (old_t, new_t) = (old.trim(), new.trim());
-        let converged = tm_main.list().unwrap_or_default().iter().any(|t| t.name == new_t);
+        let converged = tm_main
+            .list()
+            .unwrap_or_default()
+            .iter()
+            .any(|t| t.name == new_t);
         if !converged {
             *error_out = e;
             return false;
@@ -661,7 +689,11 @@ pub fn handle_panel_delete(
         return false;
     }
     if let Err(e) = tm_main.delete(name) {
-        let gone = !tm_main.list().unwrap_or_default().iter().any(|t| t.name == name.trim());
+        let gone = !tm_main
+            .list()
+            .unwrap_or_default()
+            .iter()
+            .any(|t| t.name == name.trim());
         if !gone {
             *error_out = e;
             return false;
@@ -742,9 +774,17 @@ pub fn save_nav_step(current: i32, delta: i32, len: usize) -> i32 {
     }
     let last = len as i32 - 1;
     if delta > 0 {
-        if current >= last { 0 } else { current + 1 }
+        if current >= last {
+            0
+        } else {
+            current + 1
+        }
     } else if delta < 0 {
-        if current <= 0 { last } else { current - 1 }
+        if current <= 0 {
+            last
+        } else {
+            current - 1
+        }
     } else {
         current
     }
@@ -758,7 +798,10 @@ pub fn handle_borders_scan(engine: &crate::engine::Engine) -> Vec<crate::engine:
     engine.scan("borders").unwrap_or_default()
 }
 #[allow(dead_code)]
-pub fn handle_borders_apply(engine: &crate::engine::Engine, file: &str) -> Result<String, crate::engine::EngineError> {
+pub fn handle_borders_apply(
+    engine: &crate::engine::Engine,
+    file: &str,
+) -> Result<String, crate::engine::EngineError> {
     let arg = if file.is_empty() { "none" } else { file };
     engine.apply_border(arg)
 }
@@ -771,8 +814,15 @@ pub fn handle_motion_scan(engine: &crate::engine::Engine) -> Vec<crate::engine::
     engine.scan("animations").unwrap_or_default()
 }
 #[allow(dead_code)]
-pub fn handle_motion_apply(engine: &crate::engine::Engine, file: &str) -> Result<String, crate::engine::EngineError> {
-    let arg = if file.is_empty() || file == "none" { "none" } else { file };
+pub fn handle_motion_apply(
+    engine: &crate::engine::Engine,
+    file: &str,
+) -> Result<String, crate::engine::EngineError> {
+    let arg = if file.is_empty() || file == "none" {
+        "none"
+    } else {
+        file
+    };
     engine.apply_animation(arg)
 }
 
@@ -784,8 +834,15 @@ pub fn handle_filters_scan(engine: &crate::engine::Engine) -> Vec<crate::engine:
     engine.scan("shaders").unwrap_or_default()
 }
 #[allow(dead_code)]
-pub fn handle_filters_apply(engine: &crate::engine::Engine, file: &str) -> Result<String, crate::engine::EngineError> {
-    let arg = if file.is_empty() || file == "none" { "none" } else { file };
+pub fn handle_filters_apply(
+    engine: &crate::engine::Engine,
+    file: &str,
+) -> Result<String, crate::engine::EngineError> {
+    let arg = if file.is_empty() || file == "none" {
+        "none"
+    } else {
+        file
+    };
     engine.apply_shader(arg)
 }
 
@@ -802,7 +859,12 @@ pub struct MotionBezier {
 
 impl Default for MotionBezier {
     fn default() -> Self {
-        Self { a: 0.25, b: 0.1, c: 0.25, d: 1.0 }
+        Self {
+            a: 0.25,
+            b: 0.1,
+            c: 0.25,
+            d: 1.0,
+        }
     }
 }
 
@@ -817,16 +879,32 @@ impl MotionBezier {
         }
     }
     pub fn step_a(self, delta: f32) -> Self {
-        Self { a: (self.a + delta).clamp(0.0, 1.0), ..self }.clamped()
+        Self {
+            a: (self.a + delta).clamp(0.0, 1.0),
+            ..self
+        }
+        .clamped()
     }
     pub fn step_b(self, delta: f32) -> Self {
-        Self { b: (self.b + delta).clamp(-1.0, 2.0), ..self }.clamped()
+        Self {
+            b: (self.b + delta).clamp(-1.0, 2.0),
+            ..self
+        }
+        .clamped()
     }
     pub fn step_c(self, delta: f32) -> Self {
-        Self { c: (self.c + delta).clamp(0.0, 1.0), ..self }.clamped()
+        Self {
+            c: (self.c + delta).clamp(0.0, 1.0),
+            ..self
+        }
+        .clamped()
     }
     pub fn step_d(self, delta: f32) -> Self {
-        Self { d: (self.d + delta).clamp(-1.0, 2.0), ..self }.clamped()
+        Self {
+            d: (self.d + delta).clamp(-1.0, 2.0),
+            ..self
+        }
+        .clamped()
     }
 }
 
@@ -841,7 +919,12 @@ pub struct BorderGeometry {
 
 impl Default for BorderGeometry {
     fn default() -> Self {
-        Self { size: 2, radius: 32, gap_in: 5, gap_out: 5 }
+        Self {
+            size: 2,
+            radius: 32,
+            gap_in: 5,
+            gap_out: 5,
+        }
     }
 }
 
@@ -878,7 +961,11 @@ pub struct GeometryDebouncer {
 #[allow(dead_code)]
 impl GeometryDebouncer {
     pub fn new(initial: BorderGeometry) -> Self {
-        Self { last_applied: initial, pending: None, init_done: false }
+        Self {
+            last_applied: initial,
+            pending: None,
+            init_done: false,
+        }
     }
     /// Push a new slider value. Returns true if a debounce should be scheduled.
     /// First call is skipped (Slider init), compare-then-apply skips no-ops.
@@ -989,12 +1076,24 @@ mod panel_save_tests {
 
     struct DummyProvider;
     impl ThemeProvider for DummyProvider {
-        fn id(&self) -> &str { "dummy" }
-        fn display_name_key(&self) -> &str { "dummy" }
-        fn icon(&self) -> &str { "dummy" }
-        fn save(&self, _theme_dir: &Path) -> Result<(), String> { Ok(()) }
-        fn apply(&self, _theme_dir: &Path) -> Result<(), String> { Ok(()) }
-        fn capabilities(&self) -> ProviderCapabilities { ProviderCapabilities::empty() }
+        fn id(&self) -> &str {
+            "dummy"
+        }
+        fn display_name_key(&self) -> &str {
+            "dummy"
+        }
+        fn icon(&self) -> &str {
+            "dummy"
+        }
+        fn save(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn apply(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities::empty()
+        }
     }
 
     fn two_managers() -> (ThemeManager, ThemeManager, TempDir, TempDir) {
@@ -1017,18 +1116,36 @@ mod panel_save_tests {
             "MyMix",
             &mut tm1,
             &mut tm2,
-            || { sync.fetch_add(1, Ordering::SeqCst); },
-            || { refresh.fetch_add(1, Ordering::SeqCst); },
+            || {
+                sync.fetch_add(1, Ordering::SeqCst);
+            },
+            || {
+                refresh.fetch_add(1, Ordering::SeqCst);
+            },
             &mut err,
         );
         assert!(ok, "save should succeed");
         assert!(err.is_empty(), "no error on success, got {err}");
-        assert_eq!(sync.load(Ordering::SeqCst), 1, "sync_cards must be called once");
-        assert_eq!(refresh.load(Ordering::SeqCst), 1, "refresh_mosaic_page must be called once");
+        assert_eq!(
+            sync.load(Ordering::SeqCst),
+            1,
+            "sync_cards must be called once"
+        );
+        assert_eq!(
+            refresh.load(Ordering::SeqCst),
+            1,
+            "refresh_mosaic_page must be called once"
+        );
         let list1 = tm1.list().unwrap();
-        assert!(list1.iter().any(|t| t.name == "MyMix"), "tm_main must contain MyMix");
+        assert!(
+            list1.iter().any(|t| t.name == "MyMix"),
+            "tm_main must contain MyMix"
+        );
         let list2 = tm2.list().unwrap();
-        assert!(list2.iter().any(|t| t.name == "MyMix"), "gallery_tm must contain MyMix — dual-sync");
+        assert!(
+            list2.iter().any(|t| t.name == "MyMix"),
+            "gallery_tm must contain MyMix — dual-sync"
+        );
     }
 
     #[test]
@@ -1041,8 +1158,12 @@ mod panel_save_tests {
             "   ",
             &mut tm1,
             &mut tm2,
-            || { sync.fetch_add(1, Ordering::SeqCst); },
-            || { refresh.fetch_add(1, Ordering::SeqCst); },
+            || {
+                sync.fetch_add(1, Ordering::SeqCst);
+            },
+            || {
+                refresh.fetch_add(1, Ordering::SeqCst);
+            },
             &mut err,
         );
         assert!(!ok, "empty name must not save");
@@ -1054,7 +1175,8 @@ mod panel_save_tests {
     }
 
     #[test]
-    fn test_save_overwrite_confirms() {        let (mut tm1, mut tm2, _d1, _d2) = two_managers();
+    fn test_save_overwrite_confirms() {
+        let (mut tm1, mut tm2, _d1, _d2) = two_managers();
         // pre-seed MyMix as last_applied
         tm1.save("MyMix", &["dummy".to_string()]).unwrap();
         tm1.last_applied = "MyMix".to_string();
@@ -1068,8 +1190,12 @@ mod panel_save_tests {
             "MyMix",
             &mut tm1,
             &mut tm2,
-            || { sync.fetch_add(1, Ordering::SeqCst); },
-            || { refresh.fetch_add(1, Ordering::SeqCst); },
+            || {
+                sync.fetch_add(1, Ordering::SeqCst);
+            },
+            || {
+                refresh.fetch_add(1, Ordering::SeqCst);
+            },
             &mut err,
         );
         assert!(ok, "overwrite should succeed");
@@ -1114,9 +1240,17 @@ pub fn borders_nav_step(current: i32, delta: i32, total: usize) -> i32 {
     }
     let t = total as i32;
     if delta > 0 {
-        if current >= t - 1 { 0 } else { current + 1 }
+        if current >= t - 1 {
+            0
+        } else {
+            current + 1
+        }
     } else if delta < 0 {
-        if current <= 0 { t - 1 } else { current - 1 }
+        if current <= 0 {
+            t - 1
+        } else {
+            current - 1
+        }
     } else {
         current.clamp(0, t - 1)
     }
@@ -1130,8 +1264,16 @@ mod keyboard_nav_tests {
     fn test_save_nav_step_clamps_and_starts() {
         assert_eq!(save_nav_step(-1, 1, 3), 0, "unfocused starts at first");
         assert_eq!(save_nav_step(0, 1, 3), 1, "down steps forward");
-        assert_eq!(save_nav_step(2, 1, 3), 0, "forward wraps last -> 0 (1:1 legacy)");
-        assert_eq!(save_nav_step(0, -1, 3), 2, "backward wraps 0 -> last (1:1 legacy)");
+        assert_eq!(
+            save_nav_step(2, 1, 3),
+            0,
+            "forward wraps last -> 0 (1:1 legacy)"
+        );
+        assert_eq!(
+            save_nav_step(0, -1, 3),
+            2,
+            "backward wraps 0 -> last (1:1 legacy)"
+        );
         assert_eq!(save_nav_step(2, -1, 3), 1, "up steps backward");
         assert_eq!(save_nav_step(1, 1, 0), -1, "empty list has no focus");
     }
@@ -1151,8 +1293,16 @@ mod keyboard_nav_tests {
     #[test]
     fn test_borders_nav_wraps_over_full_sequence() {
         assert_eq!(borders_nav_step(0, 1, 16), 1);
-        assert_eq!(borders_nav_step(15, 1, 16), 0, "last tune wraps to first card");
-        assert_eq!(borders_nav_step(0, -1, 16), 15, "first card wraps to last tune");
+        assert_eq!(
+            borders_nav_step(15, 1, 16),
+            0,
+            "last tune wraps to first card"
+        );
+        assert_eq!(
+            borders_nav_step(0, -1, 16),
+            15,
+            "first card wraps to last tune"
+        );
         assert_eq!(borders_nav_step(5, -1, 16), 4);
         assert_eq!(borders_nav_step(0, 0, 0), 0, "empty stays 0");
     }
@@ -1167,12 +1317,24 @@ mod save_list_tests {
 
     struct DummyProvider;
     impl ThemeProvider for DummyProvider {
-        fn id(&self) -> &str { "dummy" }
-        fn display_name_key(&self) -> &str { "dummy" }
-        fn icon(&self) -> &str { "dummy" }
-        fn save(&self, _theme_dir: &Path) -> Result<(), String> { Ok(()) }
-        fn apply(&self, _theme_dir: &Path) -> Result<(), String> { Ok(()) }
-        fn capabilities(&self) -> ProviderCapabilities { ProviderCapabilities::empty() }
+        fn id(&self) -> &str {
+            "dummy"
+        }
+        fn display_name_key(&self) -> &str {
+            "dummy"
+        }
+        fn icon(&self) -> &str {
+            "dummy"
+        }
+        fn save(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn apply(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities::empty()
+        }
     }
 
     #[test]
@@ -1185,10 +1347,16 @@ mod save_list_tests {
         tm.last_applied = "Beta".to_string();
         let rows = save_list_rows(&tm);
         assert_eq!(rows.len(), 2, "list must show both saved themes");
-        assert!(rows.iter().any(|(n, d, a)| *n == "Alpha" && !d.is_empty() && !a),
-            "Alpha shows name + date, not active");
-        assert!(rows.iter().any(|(n, d, a)| *n == "Beta" && !d.is_empty() && *a),
-            "Beta shows name + date + active mark");
+        assert!(
+            rows.iter()
+                .any(|(n, d, a)| *n == "Alpha" && !d.is_empty() && !a),
+            "Alpha shows name + date, not active"
+        );
+        assert!(
+            rows.iter()
+                .any(|(n, d, a)| *n == "Beta" && !d.is_empty() && *a),
+            "Beta shows name + date + active mark"
+        );
         let active_idx = rows.iter().position(|(_, _, a)| *a).unwrap();
         assert_eq!(rows[active_idx].0, "Beta");
     }
@@ -1224,14 +1392,21 @@ mod backfill_tests {
             row("Bor3", Some("/w/joker.png")),
         ];
         let got = backfill_active_candidate(&themes, "/w/joker.png");
-        assert_eq!(got.as_deref(), Some("Bor1"), "first of an identical group wins");
+        assert_eq!(
+            got.as_deref(),
+            Some("Bor1"),
+            "first of an identical group wins"
+        );
     }
 
     #[test]
     fn test_backfill_no_match_returns_none() {
         let themes = vec![row("Alpha", Some("/w/a.png")), row("Beta", None)];
         assert_eq!(backfill_active_candidate(&themes, "/w/other.png"), None);
-        assert_eq!(backfill_active_candidate(&themes, "/w/a.png").as_deref(), Some("Alpha"));
+        assert_eq!(
+            backfill_active_candidate(&themes, "/w/a.png").as_deref(),
+            Some("Alpha")
+        );
         assert_eq!(
             backfill_active_candidate(&themes, "").is_none(),
             true,
@@ -1242,7 +1417,10 @@ mod backfill_tests {
 
 #[cfg(test)]
 mod save_tranche_b_tests {
-    use super::{filter_saved_rows, focus_after_delete, handle_panel_delete, handle_panel_refresh, handle_panel_rename};
+    use super::{
+        filter_saved_rows, focus_after_delete, handle_panel_delete, handle_panel_refresh,
+        handle_panel_rename,
+    };
     use crate::shell::gallery::GallerySlot;
     use crate::theme_manager::{ProviderCapabilities, ThemeManager, ThemeProvider};
     use std::path::Path;
@@ -1251,19 +1429,33 @@ mod save_tranche_b_tests {
 
     struct DummyProvider;
     impl ThemeProvider for DummyProvider {
-        fn id(&self) -> &str { "dummy" }
-        fn display_name_key(&self) -> &str { "dummy" }
-        fn icon(&self) -> &str { "dummy" }
-        fn save(&self, _theme_dir: &Path) -> Result<(), String> { Ok(()) }
-        fn apply(&self, _theme_dir: &Path) -> Result<(), String> { Ok(()) }
-        fn capabilities(&self) -> ProviderCapabilities { ProviderCapabilities::empty() }
+        fn id(&self) -> &str {
+            "dummy"
+        }
+        fn display_name_key(&self) -> &str {
+            "dummy"
+        }
+        fn icon(&self) -> &str {
+            "dummy"
+        }
+        fn save(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn apply(&self, _theme_dir: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities::empty()
+        }
     }
 
     fn main_plus_slot(dir: &TempDir) -> (ThemeManager, GallerySlot, Arc<Mutex<ThemeManager>>) {
         let mut tm = ThemeManager::new(dir.path());
         tm.register_provider(Box::new(DummyProvider));
         let gtm = Arc::new(Mutex::new(ThemeManager::new(dir.path())));
-        gtm.lock().unwrap().register_provider(Box::new(DummyProvider));
+        gtm.lock()
+            .unwrap()
+            .register_provider(Box::new(DummyProvider));
         let slot = GallerySlot::new(gtm.clone());
         (tm, slot, gtm)
     }
@@ -1277,14 +1469,24 @@ mod save_tranche_b_tests {
         tm.last_applied = "Old".to_string();
         gtm.lock().unwrap().last_applied = "Old".to_string();
         let mut err = String::new();
-        assert!(handle_panel_rename("Old", "New", &mut tm, &slot, &mut err), "rename must succeed");
+        assert!(
+            handle_panel_rename("Old", "New", &mut tm, &slot, &mut err),
+            "rename must succeed"
+        );
         assert!(err.is_empty());
         assert_eq!(slot.rename_calls(), 1, "gallery side goes through the slot");
         for names in [tm.list().unwrap(), gtm.lock().unwrap().list().unwrap()] {
-            assert!(names.iter().any(|t| t.name == "New"), "renamed on shared storage");
+            assert!(
+                names.iter().any(|t| t.name == "New"),
+                "renamed on shared storage"
+            );
         }
         assert_eq!(tm.last_applied, "New", "main active follows rename");
-        assert_eq!(gtm.lock().unwrap().last_applied, "New", "gallery active follows rename");
+        assert_eq!(
+            gtm.lock().unwrap().last_applied,
+            "New",
+            "gallery active follows rename"
+        );
     }
 
     #[test]
@@ -1294,7 +1496,10 @@ mod save_tranche_b_tests {
         tm.save("A", &["dummy".to_string()]).unwrap();
         tm.save("B", &["dummy".to_string()]).unwrap();
         let mut err = String::new();
-        assert!(!handle_panel_rename("A", "B", &mut tm, &slot, &mut err), "collision must fail");
+        assert!(
+            !handle_panel_rename("A", "B", &mut tm, &slot, &mut err),
+            "collision must fail"
+        );
         assert!(!err.is_empty(), "error message surfaces to UI");
     }
 
@@ -1306,12 +1511,18 @@ mod save_tranche_b_tests {
         tm.last_applied = "Gone".to_string();
         gtm.lock().unwrap().last_applied = "Gone".to_string();
         let mut err = String::new();
-        assert!(handle_panel_delete("Gone", &mut tm, &slot, &mut err), "delete must succeed");
+        assert!(
+            handle_panel_delete("Gone", &mut tm, &slot, &mut err),
+            "delete must succeed"
+        );
         assert!(err.is_empty());
         assert_eq!(slot.delete_calls(), 1, "gallery side goes through the slot");
         assert!(tm.list().unwrap().is_empty(), "deleted from shared storage");
         assert!(tm.last_applied.is_empty(), "main active cleared");
-        assert!(gtm.lock().unwrap().last_applied.is_empty(), "gallery active cleared");
+        assert!(
+            gtm.lock().unwrap().last_applied.is_empty(),
+            "gallery active cleared"
+        );
     }
 
     #[test]
@@ -1327,10 +1538,16 @@ mod save_tranche_b_tests {
             tm.last_applied = "Live".to_string();
         }
         let mut err = String::new();
-        assert!(handle_panel_refresh(&mut tm1, &mut tm2, &mut err), "refresh must succeed");
+        assert!(
+            handle_panel_refresh(&mut tm1, &mut tm2, &mut err),
+            "refresh must succeed"
+        );
         assert!(err.is_empty());
         for tm in [&tm1, &tm2] {
-            assert!(tm.list().unwrap().iter().any(|t| t.name == "Live"), "active rewritten in both");
+            assert!(
+                tm.list().unwrap().iter().any(|t| t.name == "Live"),
+                "active rewritten in both"
+            );
         }
     }
 
@@ -1342,7 +1559,11 @@ mod save_tranche_b_tests {
             ("Alpine".to_string(), "d3".to_string(), false),
         ];
         let out = filter_saved_rows("alp", &rows);
-        assert_eq!(out.len(), 2, "live filter matches substring, case-insensitive");
+        assert_eq!(
+            out.len(),
+            2,
+            "live filter matches substring, case-insensitive"
+        );
         let out_all = filter_saved_rows("", &rows);
         assert_eq!(out_all.len(), 3, "empty query restores full list");
     }
@@ -1413,7 +1634,11 @@ exit 0
     fn test_apply_border_calls_engine() {
         let (engine, _dir) = temp_engine_with_borders();
         let res = handle_borders_apply(&engine, "thin-rounded.ron");
-        assert!(res.is_ok(), "apply_border should succeed, got {:?}", res.err());
+        assert!(
+            res.is_ok(),
+            "apply_border should succeed, got {:?}",
+            res.err()
+        );
         assert!(res.unwrap().contains("thin-rounded.ron"));
     }
 }
@@ -1421,8 +1646,8 @@ exit 0
 #[cfg(test)]
 mod geometry_tune_tests {
     use super::{
-        geometry_lua_chunk, BorderGeometry, GeometryDebouncer,
-        GeometryPersistCoalescer, should_apply_geometry,
+        geometry_lua_chunk, should_apply_geometry, BorderGeometry, GeometryDebouncer,
+        GeometryPersistCoalescer,
     };
 
     // ── Geometry source of truth: persisted state, never a preset lookup ──
@@ -1439,7 +1664,12 @@ mod geometry_tune_tests {
         cfg.gaps_out = 10;
         assert_eq!(
             BorderGeometry::from_config(&cfg),
-            BorderGeometry { size: 5, radius: 20, gap_in: 10, gap_out: 10 }
+            BorderGeometry {
+                size: 5,
+                radius: 20,
+                gap_in: 10,
+                gap_out: 10
+            }
         );
     }
 
@@ -1451,8 +1681,18 @@ mod geometry_tune_tests {
 
     #[test]
     fn hot_chunk_size_only() {
-        let prev = BorderGeometry { size: 2, radius: 32, gap_in: 5, gap_out: 5 };
-        let next = BorderGeometry { size: 3, radius: 32, gap_in: 5, gap_out: 5 };
+        let prev = BorderGeometry {
+            size: 2,
+            radius: 32,
+            gap_in: 5,
+            gap_out: 5,
+        };
+        let next = BorderGeometry {
+            size: 3,
+            radius: 32,
+            gap_in: 5,
+            gap_out: 5,
+        };
         assert_eq!(
             geometry_lua_chunk(&prev, &next).as_deref(),
             Some("hl.config({ general = { border_size = 3 } })")
@@ -1461,8 +1701,18 @@ mod geometry_tune_tests {
 
     #[test]
     fn hot_chunk_radius_only() {
-        let prev = BorderGeometry { size: 2, radius: 32, gap_in: 5, gap_out: 5 };
-        let next = BorderGeometry { size: 2, radius: 40, gap_in: 5, gap_out: 5 };
+        let prev = BorderGeometry {
+            size: 2,
+            radius: 32,
+            gap_in: 5,
+            gap_out: 5,
+        };
+        let next = BorderGeometry {
+            size: 2,
+            radius: 40,
+            gap_in: 5,
+            gap_out: 5,
+        };
         assert_eq!(
             geometry_lua_chunk(&prev, &next).as_deref(),
             Some("hl.config({ decoration = { rounding = 40 } })")
@@ -1471,8 +1721,18 @@ mod geometry_tune_tests {
 
     #[test]
     fn hot_chunk_gaps_only() {
-        let prev = BorderGeometry { size: 2, radius: 32, gap_in: 5, gap_out: 5 };
-        let next = BorderGeometry { size: 2, radius: 32, gap_in: 8, gap_out: 10 };
+        let prev = BorderGeometry {
+            size: 2,
+            radius: 32,
+            gap_in: 5,
+            gap_out: 5,
+        };
+        let next = BorderGeometry {
+            size: 2,
+            radius: 32,
+            gap_in: 8,
+            gap_out: 10,
+        };
         assert_eq!(
             geometry_lua_chunk(&prev, &next).as_deref(),
             Some("hl.config({ general = { gaps_in = 8, gaps_out = 10 } })")
@@ -1481,14 +1741,33 @@ mod geometry_tune_tests {
 
     #[test]
     fn hot_chunk_nothing_changed_is_no_call() {
-        let same = BorderGeometry { size: 2, radius: 32, gap_in: 5, gap_out: 5 };
-        assert_eq!(geometry_lua_chunk(&same, &same), None, "no change must not push");
+        let same = BorderGeometry {
+            size: 2,
+            radius: 32,
+            gap_in: 5,
+            gap_out: 5,
+        };
+        assert_eq!(
+            geometry_lua_chunk(&same, &same),
+            None,
+            "no change must not push"
+        );
     }
 
     #[test]
     fn hot_chunk_mixed_fields_one_merged_call() {
-        let prev = BorderGeometry { size: 2, radius: 32, gap_in: 5, gap_out: 5 };
-        let next = BorderGeometry { size: 4, radius: 40, gap_in: 5, gap_out: 5 };
+        let prev = BorderGeometry {
+            size: 2,
+            radius: 32,
+            gap_in: 5,
+            gap_out: 5,
+        };
+        let next = BorderGeometry {
+            size: 4,
+            radius: 40,
+            gap_in: 5,
+            gap_out: 5,
+        };
         assert_eq!(
             geometry_lua_chunk(&prev, &next).as_deref(),
             Some("hl.config({ decoration = { rounding = 40 }, general = { border_size = 4 } })")
@@ -1505,11 +1784,19 @@ mod geometry_tune_tests {
     fn persist_burst_drains_once() {
         let mut c = GeometryPersistCoalescer::default();
         for size in [3, 4, 5, 5, 4] {
-            c.request(BorderGeometry { size, radius: 32, gap_in: 5, gap_out: 5 });
+            c.request(BorderGeometry {
+                size,
+                radius: 32,
+                gap_in: 5,
+                gap_out: 5,
+            });
         }
         assert!(c.has_pending(), "a burst owes exactly one persist");
         let drained = c.take().expect("one persist for the whole burst");
-        assert_eq!(drained.size, 4, "last-wins: the drag's final value persists");
+        assert_eq!(
+            drained.size, 4,
+            "last-wins: the drag's final value persists"
+        );
         assert_eq!(c.take(), None, "the burst must not drain a second time");
         assert!(!c.has_pending());
     }
@@ -1517,39 +1804,96 @@ mod geometry_tune_tests {
     #[test]
     fn persist_second_burst_drains_again() {
         let mut c = GeometryPersistCoalescer::default();
-        c.request(BorderGeometry { size: 3, radius: 32, gap_in: 5, gap_out: 5 });
+        c.request(BorderGeometry {
+            size: 3,
+            radius: 32,
+            gap_in: 5,
+            gap_out: 5,
+        });
         assert_eq!(c.take().map(|g| g.size), Some(3));
         // Draining clears the slot; a later drag must still be owed a persist.
-        c.request(BorderGeometry { size: 5, radius: 32, gap_in: 5, gap_out: 5 });
-        assert_eq!(c.take().map(|g| g.size), Some(5), "a second burst is not swallowed");
+        c.request(BorderGeometry {
+            size: 5,
+            radius: 32,
+            gap_in: 5,
+            gap_out: 5,
+        });
+        assert_eq!(
+            c.take().map(|g| g.size),
+            Some(5),
+            "a second burst is not swallowed"
+        );
     }
 
     #[test]
     fn test_geometry_debounce_last_wins() {
-        let initial = BorderGeometry { size: 2, radius: 32, gap_in: 5, gap_out: 5 };
+        let initial = BorderGeometry {
+            size: 2,
+            radius: 32,
+            gap_in: 5,
+            gap_out: 5,
+        };
         let mut d = GeometryDebouncer::new(initial);
         // first event is init and must be skipped — prime the debouncer
         d.push(initial);
         assert!(!d.has_pending(), "init event must not schedule");
         // rapid 60Hz drag: 5 quick pushes, last-wins after 80ms idle
         let seq = [
-            BorderGeometry { size: 2, radius: 10, gap_in: 5, gap_out: 5 },
-            BorderGeometry { size: 2, radius: 20, gap_in: 5, gap_out: 5 },
-            BorderGeometry { size: 2, radius: 30, gap_in: 5, gap_out: 5 },
-            BorderGeometry { size: 2, radius: 40, gap_in: 5, gap_out: 5 },
-            BorderGeometry { size: 2, radius: 80, gap_in: 5, gap_out: 5 },
+            BorderGeometry {
+                size: 2,
+                radius: 10,
+                gap_in: 5,
+                gap_out: 5,
+            },
+            BorderGeometry {
+                size: 2,
+                radius: 20,
+                gap_in: 5,
+                gap_out: 5,
+            },
+            BorderGeometry {
+                size: 2,
+                radius: 30,
+                gap_in: 5,
+                gap_out: 5,
+            },
+            BorderGeometry {
+                size: 2,
+                radius: 40,
+                gap_in: 5,
+                gap_out: 5,
+            },
+            BorderGeometry {
+                size: 2,
+                radius: 80,
+                gap_in: 5,
+                gap_out: 5,
+            },
         ];
         for g in seq {
             assert!(d.push(g), "each distinct change should schedule debounce");
         }
         // only one flush after 80ms idle, last-wins
         let flushed = d.flush().expect("must flush pending after debounce");
-        assert_eq!(flushed.radius, 80, "debounce last-wins: only last radius survives");
+        assert_eq!(
+            flushed.radius, 80,
+            "debounce last-wins: only last radius survives"
+        );
         assert!(!d.has_pending(), "no pending after flush");
-        assert_eq!(d.flush(), None, "second flush without new push is None (no stall)");
-        assert!(should_apply_geometry(&initial, &flushed), "flushed differs from initial so should apply");
+        assert_eq!(
+            d.flush(),
+            None,
+            "second flush without new push is None (no stall)"
+        );
+        assert!(
+            should_apply_geometry(&initial, &flushed),
+            "flushed differs from initial so should apply"
+        );
         // same value again → compare-then-apply skips
-        assert!(!d.push(flushed), "pushing same as last_applied must not schedule");
+        assert!(
+            !d.push(flushed),
+            "pushing same as last_applied must not schedule"
+        );
     }
 
     #[test]
@@ -1557,11 +1901,24 @@ mod geometry_tune_tests {
         let initial = BorderGeometry::default();
         let mut d = GeometryDebouncer::new(initial);
         // very first push is the Slider init event — must be skipped
-        assert!(!d.push(BorderGeometry { size: 3, radius: 10, gap_in: 5, gap_out: 5 }), "first event ignored");
+        assert!(
+            !d.push(BorderGeometry {
+                size: 3,
+                radius: 10,
+                gap_in: 5,
+                gap_out: 5
+            }),
+            "first event ignored"
+        );
         assert!(!d.has_pending(), "init skip must leave no pending");
         assert_eq!(d.flush(), None, "flush after only init is None");
         // second push is real user interaction — must schedule
-        assert!(d.push(BorderGeometry { size: 3, radius: 10, gap_in: 5, gap_out: 5 }));
+        assert!(d.push(BorderGeometry {
+            size: 3,
+            radius: 10,
+            gap_in: 5,
+            gap_out: 5
+        }));
         assert!(d.has_pending());
     }
 }
@@ -1634,7 +1991,11 @@ exit 0
         let (engine, _dir) = temp_engine_with_motions();
         // active off → none: empty file maps to "none"
         let res = handle_motion_apply(&engine, "");
-        assert!(res.is_ok(), "apply_animation off (none) should succeed, got {:?}", res.err());
+        assert!(
+            res.is_ok(),
+            "apply_animation off (none) should succeed, got {:?}",
+            res.err()
+        );
         assert!(res.unwrap().contains("none"), "empty file must map to none");
         // also explicit "none"
         let res2 = handle_motion_apply(&engine, "none");
@@ -1705,7 +2066,11 @@ exit 0
         let (engine, _dir) = temp_engine_with_shaders();
         // active off → none: empty file maps to "none"
         let res = handle_filters_apply(&engine, "");
-        assert!(res.is_ok(), "apply_shader off (none) should succeed, got {:?}", res.err());
+        assert!(
+            res.is_ok(),
+            "apply_shader off (none) should succeed, got {:?}",
+            res.err()
+        );
         assert!(res.unwrap().contains("none"), "empty file must map to none");
         // also explicit "none"
         let res2 = handle_filters_apply(&engine, "none");
@@ -1720,18 +2085,30 @@ exit 0
     #[test]
     fn test_shader_overlay_suppressed_3s() {
         use crate::shell::gallery::slot::{GallerySlot, SHADER_FLICKER_MS};
-        use crate::theme_manager::{ThemeManager, ThemeProvider, ProviderCapabilities};
+        use crate::theme_manager::{ProviderCapabilities, ThemeManager, ThemeProvider};
         use std::path::Path;
         use std::sync::{Arc, Mutex};
         use std::time::Duration;
         struct DummyProvider;
         impl ThemeProvider for DummyProvider {
-            fn id(&self) -> &str { "dummy" }
-            fn display_name_key(&self) -> &str { "dummy" }
-            fn icon(&self) -> &str { "dummy" }
-            fn save(&self, _theme_dir: &Path) -> Result<(), String> { Ok(()) }
-            fn apply(&self, _theme_dir: &Path) -> Result<(), String> { Ok(()) }
-            fn capabilities(&self) -> ProviderCapabilities { ProviderCapabilities::empty() }
+            fn id(&self) -> &str {
+                "dummy"
+            }
+            fn display_name_key(&self) -> &str {
+                "dummy"
+            }
+            fn icon(&self) -> &str {
+                "dummy"
+            }
+            fn save(&self, _theme_dir: &Path) -> Result<(), String> {
+                Ok(())
+            }
+            fn apply(&self, _theme_dir: &Path) -> Result<(), String> {
+                Ok(())
+            }
+            fn capabilities(&self) -> ProviderCapabilities {
+                ProviderCapabilities::empty()
+            }
         }
         let dir = TempDir::new().unwrap();
         let mut tm = ThemeManager::new(dir.path());
@@ -1744,22 +2121,34 @@ exit 0
         // Simulate PanelState != Closed → suppressed
         slot.set_panel_closed(false);
         slot.trigger_shader_overlay();
-        assert!(!slot.is_shader_overlay_visible(), "overlay must be SUPPRESSED while PanelState != Closed");
+        assert!(
+            !slot.is_shader_overlay_visible(),
+            "overlay must be SUPPRESSED while PanelState != Closed"
+        );
         // Simulate PanelState == Closed but within 3s after Mutating
         slot.set_panel_closed(true);
         slot.notify_panel_mutation_finished();
         slot.trigger_shader_overlay();
-        assert!(!slot.is_shader_overlay_visible(), "overlay must be suppressed for 3s after Mutating");
+        assert!(
+            !slot.is_shader_overlay_visible(),
+            "overlay must be suppressed for 3s after Mutating"
+        );
         // After 3s + 100ms, should trigger normally
         std::thread::sleep(Duration::from_millis(SHADER_FLICKER_MS + 100));
         slot.trigger_shader_overlay();
-        assert!(slot.is_shader_overlay_visible(), "overlay should appear after 3s window");
+        assert!(
+            slot.is_shader_overlay_visible(),
+            "overlay should appear after 3s window"
+        );
         // Dismiss and verify not 300ms (the old wrong duration) — ensure 300ms is not enough
         slot.dismiss_shader_overlay();
         slot.notify_panel_mutation_finished();
         std::thread::sleep(Duration::from_millis(400));
         slot.trigger_shader_overlay();
-        assert!(!slot.is_shader_overlay_visible(), "300ms must NOT be enough — requires 3000ms");
+        assert!(
+            !slot.is_shader_overlay_visible(),
+            "300ms must NOT be enough — requires 3000ms"
+        );
     }
 }
 
@@ -1823,7 +2212,11 @@ mod mouse_verbose_tests {
             "card-activated idx=0 (home card click)",
         ] {
             let msg = mouse_trace(reason);
-            assert_eq!(msg, format!("[panel][mouse] {reason}"), "trace shape for {reason}");
+            assert_eq!(
+                msg,
+                format!("[panel][mouse] {reason}"),
+                "trace shape for {reason}"
+            );
         }
     }
 

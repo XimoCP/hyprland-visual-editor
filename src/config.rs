@@ -144,7 +144,11 @@ fn migrate(mut cfg: Config) -> Config {
 impl Config {
     pub fn config_path() -> PathBuf {
         let config_dir = dirs::config_dir()
-            .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")))
+            .or_else(|| {
+                std::env::var("HOME")
+                    .ok()
+                    .map(|h| PathBuf::from(h).join(".config"))
+            })
             .unwrap_or_else(|| PathBuf::from("/tmp/hve-config"));
         config_dir.join("hve").join("config.json")
     }
@@ -182,8 +186,13 @@ impl Config {
                         cfg.config_version, CONFIG_VERSION
                     );
                     let migrated = migrate(cfg);
-                    tracing::info!("[config] Migrated config: version={}, theme={:?}, tiling={}, keybinds={}",
-                        migrated.config_version, migrated.theme, migrated.tiling_mode, migrated.keybinds_enabled);
+                    tracing::info!(
+                        "[config] Migrated config: version={}, theme={:?}, tiling={}, keybinds={}",
+                        migrated.config_version,
+                        migrated.theme,
+                        migrated.tiling_mode,
+                        migrated.keybinds_enabled
+                    );
                     migrated
                 } else {
                     cfg
@@ -216,16 +225,10 @@ impl Config {
                 )
             })?;
         }
-        let data = serde_json::to_string_pretty(self).map_err(|e| {
-            format!(
-                "Failed to serialize config to '{}': {}",
-                path.display(),
-                e
-            )
-        })?;
-        fs::write(&path, data).map_err(|e| {
-            format!("Failed to write config to '{}': {}", path.display(), e)
-        })?;
+        let data = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("Failed to serialize config to '{}': {}", path.display(), e))?;
+        fs::write(&path, data)
+            .map_err(|e| format!("Failed to write config to '{}': {}", path.display(), e))?;
         tracing::info!(
             "[config] Saved config: version={}, theme={:?}, tiling={}, keybinds={}, active={}, disabled_providers={:?}",
             self.config_version, self.theme, self.tiling_mode, self.keybinds_enabled, self.is_system_active, self.disabled_providers
@@ -282,14 +285,23 @@ mod tests {
     #[test]
     fn test_default_config_values() {
         let cfg = Config::default();
-        assert!(!cfg.is_system_active, "system_active should default to false");
+        assert!(
+            !cfg.is_system_active,
+            "system_active should default to false"
+        );
         assert_eq!(cfg.border_size, 2, "border_size should default to 2");
         assert_eq!(cfg.border_radius, 32, "border_radius should default to 32");
         assert_eq!(cfg.gaps_in, 5, "gaps_in should default to 5");
         assert_eq!(cfg.gaps_out, 5, "gaps_out should default to 5");
         assert!(!cfg.auto_start, "auto_start should default to false");
-        assert!(cfg.auto_minimize_enabled, "auto_minimize_enabled should default to true");
-        assert_eq!(cfg.minimize_seconds, 4, "minimize_seconds should default to 4");
+        assert!(
+            cfg.auto_minimize_enabled,
+            "auto_minimize_enabled should default to true"
+        );
+        assert_eq!(
+            cfg.minimize_seconds, 4,
+            "minimize_seconds should default to 4"
+        );
         assert_eq!(cfg.theme, "system", "theme should default to system");
         assert!(!cfg.tiling_mode, "tiling_mode should default to false");
         assert_eq!(
@@ -300,7 +312,10 @@ mod tests {
             !cfg.keybinds_enabled,
             "keybinds_enabled should default to false"
         );
-        assert!(cfg.language.is_empty(), "language should default to empty (auto-detect)");
+        assert!(
+            cfg.language.is_empty(),
+            "language should default to empty (auto-detect)"
+        );
         assert_eq!(
             cfg.config_version, CONFIG_VERSION,
             "config_version should match CONFIG_VERSION"
@@ -318,7 +333,10 @@ mod tests {
         let path = Config::config_path();
         let s = path.to_string_lossy();
         assert!(s.contains(".config"), "path should contain .config: {s}");
-        assert!(s.ends_with("hve/config.json"), "path should end with hve/config.json: {s}");
+        assert!(
+            s.ends_with("hve/config.json"),
+            "path should end with hve/config.json: {s}"
+        );
     }
 
     // ── save + load roundtrip ────────────────────────────────────────
@@ -547,7 +565,10 @@ mod tests {
         let cfg = Config::load();
         // Because of #[serde(deny_unknown_fields)] the parse should fail
         // and load() should fall back to defaults.
-        assert!(!cfg.is_system_active, "unknown field should cause fallback to defaults");
+        assert!(
+            !cfg.is_system_active,
+            "unknown field should cause fallback to defaults"
+        );
         assert_eq!(cfg.border_size, 2);
     }
 
@@ -583,7 +604,10 @@ mod tests {
             cfg.config_version, CONFIG_VERSION,
             "v4 config should be migrated to v{CONFIG_VERSION}"
         );
-        assert!(cfg.disabled_providers.is_empty(), "disabled_providers should default to empty");
+        assert!(
+            cfg.disabled_providers.is_empty(),
+            "disabled_providers should default to empty"
+        );
     }
 
     // ── migration from v4 → v5 (disabled_providers) ───────────────────
@@ -618,7 +642,10 @@ mod tests {
             cfg.config_version, CONFIG_VERSION,
             "v4 config should be migrated to v{CONFIG_VERSION}"
         );
-        assert!(cfg.disabled_providers.is_empty(), "disabled_providers should default to empty after migration");
+        assert!(
+            cfg.disabled_providers.is_empty(),
+            "disabled_providers should default to empty after migration"
+        );
     }
 
     // ── migration from v5 → v6 (border_radius) ───────────────────────
@@ -698,8 +725,14 @@ mod tests {
             cfg.border_radius, 20,
             "border_radius should be preserved after migration"
         );
-        assert_eq!(cfg.gaps_in, 5, "gaps_in should default to 5 after migration");
-        assert_eq!(cfg.gaps_out, 5, "gaps_out should default to 5 after migration");
+        assert_eq!(
+            cfg.gaps_in, 5,
+            "gaps_in should default to 5 after migration"
+        );
+        assert_eq!(
+            cfg.gaps_out, 5,
+            "gaps_out should default to 5 after migration"
+        );
     }
 
     // ── old config (pre-v6) loads with border_radius default ─────────

@@ -47,10 +47,7 @@ mod tests {
 
     #[test]
     fn hve_block_markers_exact_strings() {
-        assert_eq!(
-            HVE_BLOCK_START,
-            "-- >>> HYPRLAND VISUAL EDITOR START <<<"
-        );
+        assert_eq!(HVE_BLOCK_START, "-- >>> HYPRLAND VISUAL EDITOR START <<<");
         assert_eq!(HVE_BLOCK_END, "-- >>> HYPRLAND VISUAL EDITOR END <<<");
     }
 

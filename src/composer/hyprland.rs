@@ -23,7 +23,10 @@ impl HyprlandComposer {
                     return HyprMode::V5;
                 }
             }
-            if let Ok(out) = std::process::Command::new("hyprctl").arg("version").output() {
+            if let Ok(out) = std::process::Command::new("hyprctl")
+                .arg("version")
+                .output()
+            {
                 if String::from_utf8_lossy(&out.stdout).contains("Hyprland") {
                     return HyprMode::V4;
                 }
@@ -150,7 +153,9 @@ impl HyprlandComposer {
     fn active_workspace(&self) -> Option<String> {
         let text = hyprctl_json(&["activeworkspace", "-j"])?;
         let v: serde_json::Value = serde_json::from_str(&text).ok()?;
-        v.get("name").and_then(|n| n.as_str()).map(|s| s.to_string())
+        v.get("name")
+            .and_then(|n| n.as_str())
+            .map(|s| s.to_string())
     }
 
     fn show_and_sync(&self, win: &crate::MainWindow) {
@@ -170,7 +175,10 @@ impl HyprlandComposer {
 /// query verb in this module routes through here, so there is exactly ONE
 /// `Command::new("hyprctl")` per query shape instead of one per verb.
 fn hyprctl_json(args: &[&str]) -> Option<String> {
-    let out = std::process::Command::new("hyprctl").args(args).output().ok()?;
+    let out = std::process::Command::new("hyprctl")
+        .args(args)
+        .output()
+        .ok()?;
     String::from_utf8(out.stdout).ok()
 }
 
@@ -294,8 +302,10 @@ impl Composer for HyprlandComposer {
                     // — must focus-by-title first; this pattern is required and
                     // forbidden to remove (movetoworkspacesilent acts on focused window).
                     let did_focus = self.hypr_dispatch_v4(&["focuswindow", HVE_TITLE]);
-                    let did_move4 =
-                        self.hypr_dispatch_v4(&["movetoworkspacesilent", &format!("special:{SPECIAL}")]);
+                    let did_move4 = self.hypr_dispatch_v4(&[
+                        "movetoworkspacesilent",
+                        &format!("special:{SPECIAL}"),
+                    ]);
                     if did_focus && did_move4 {
                         let _ = self.hypr_dispatch_v4(&["togglespecialworkspace", SPECIAL]);
                         return true;
@@ -306,9 +316,14 @@ impl Composer for HyprlandComposer {
                 // Verify with a FRESH query that the scratchpad ended closed — never
                 // trust the toggle blindly. Still open: exactly ONE bounded corrective
                 // close (never a loop), then log the outcome.
-                if self.monitors_json().is_some_and(|text| scratchpad_open(&text)) {
+                if self
+                    .monitors_json()
+                    .is_some_and(|text| scratchpad_open(&text))
+                {
                     let _ = self.hypr_dispatch_v5(&v5_toggle_special());
-                    let still_open = self.monitors_json().is_some_and(|text| scratchpad_open(&text));
+                    let still_open = self
+                        .monitors_json()
+                        .is_some_and(|text| scratchpad_open(&text));
                     tracing::warn!(
                         still_open,
                         "[hide] scratchpad still open after planned close — corrective close dispatched"
@@ -322,8 +337,8 @@ impl Composer for HyprlandComposer {
                 // required and forbidden to remove. Without it a concurrent
                 // click in another window would hijack that window to special.
                 let did_focus = self.hypr_dispatch_v4(&["focuswindow", HVE_TITLE]);
-                let did_move =
-                    self.hypr_dispatch_v4(&["movetoworkspacesilent", &format!("special:{SPECIAL}")]);
+                let did_move = self
+                    .hypr_dispatch_v4(&["movetoworkspacesilent", &format!("special:{SPECIAL}")]);
                 if did_focus && did_move {
                     let _ = self.hypr_dispatch_v4(&["togglespecialworkspace", SPECIAL]);
                     true
@@ -398,8 +413,7 @@ impl Composer for HyprlandComposer {
                     // 1) Focus HVE first (movetoworkspacesilent acts on focused window — V4 has no window selector).
                     let did_focus = self.hypr_dispatch_v4(&["focuswindow", HVE_TITLE]);
                     // 2) Bring it back to the real workspace.
-                    let did_move =
-                        self.hypr_dispatch_v4(&["movetoworkspacesilent", &target]);
+                    let did_move = self.hypr_dispatch_v4(&["movetoworkspacesilent", &target]);
                     if !(did_focus && did_move) {
                         self.show_and_sync(win);
                         return false;
@@ -649,9 +663,7 @@ pub(crate) fn v5_move_to_special() -> String {
 }
 
 pub(crate) fn v5_move_to_workspace(workspace: &str) -> String {
-    format!(
-        "hl.dsp.window.move({{ window = \"title:{HVE_TITLE}\", workspace = \"{workspace}\" }})"
-    )
+    format!("hl.dsp.window.move({{ window = \"title:{HVE_TITLE}\", workspace = \"{workspace}\" }})")
 }
 
 pub(crate) fn v5_toggle_special() -> String {
@@ -891,8 +903,6 @@ pub(crate) fn hide_plan(parked: bool, scratchpad_open: bool) -> Vec<HideStep> {
     plan
 }
 
-
-
 // ── Tests (gallery-immersive-redesign 1.4) ─────────────────────────────
 
 #[cfg(test)]
@@ -947,7 +957,8 @@ mod tests {
 
     /// Healthy (floating, windowed) or absent HVE needs no repair at all.
     #[test]
-    fn sanity_healthy_or_absent_hve_needs_nothing() {        let healthy = parse_stuck_state(
+    fn sanity_healthy_or_absent_hve_needs_nothing() {
+        let healthy = parse_stuck_state(
             r#"[{"title": "Hyprland Visual Editor", "fullscreen": 0, "fullscreenClient": 0, "floating": true}]"#,
         );
         assert!(healthy.present && !healthy.needs_repair());
@@ -1142,7 +1153,11 @@ mod tests {
     /// The reload keeps the moved `settings.rs` argv: `hyprctl reload`.
     #[test]
     fn reload_args_keep_the_reload_argv_shape() {
-        assert_eq!(reload_args(), ["reload"], "reload must stay `hyprctl reload`");
+        assert_eq!(
+            reload_args(),
+            ["reload"],
+            "reload must stay `hyprctl reload`"
+        );
     }
 
     /// The eval judgement moves here with the verb (was `main.rs`): the
@@ -1252,14 +1267,28 @@ mod targeting_tests {
     /// no-op.
     #[test]
     fn v5_settings_float_actions_are_not_toggle() {
-        assert!(!v5_float_on().contains("toggle"), "float on must be `on`, got: {}", v5_float_on());
-        assert!(!v5_float_off().contains("toggle"), "float off must be `off`, got: {}", v5_float_off());
-        assert!(v5_float_off().contains("action = \"off\""), "float off spelling");
+        assert!(
+            !v5_float_on().contains("toggle"),
+            "float on must be `on`, got: {}",
+            v5_float_on()
+        );
+        assert!(
+            !v5_float_off().contains("toggle"),
+            "float off must be `off`, got: {}",
+            v5_float_off()
+        );
+        assert!(
+            v5_float_off().contains("action = \"off\""),
+            "float off spelling"
+        );
     }
 
     #[test]
     fn v5_move_to_workspace_preserves_workspace_param() {
         let s = v5_move_to_workspace("3");
-        assert!(s.contains("workspace = \"3\""), "workspace param must be interpolated, got: {s}");
+        assert!(
+            s.contains("workspace = \"3\""),
+            "workspace param must be interpolated, got: {s}"
+        );
     }
 }

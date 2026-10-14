@@ -61,7 +61,11 @@ pub(crate) struct LiveAssignments {
 
 /// Live `assignments.json` the running plugin supervises.
 pub(crate) fn live_assignments_path() -> Option<PathBuf> {
-    Some(noctalia_state_dir()?.join("mpvpaper").join("assignments.json"))
+    Some(
+        noctalia_state_dir()?
+            .join("mpvpaper")
+            .join("assignments.json"),
+    )
 }
 
 // ── Save ────────────────────────────────────────────────────────────────
@@ -79,10 +83,10 @@ pub fn save_manifest(provider_dir: &Path) -> Result<(), String> {
         return Ok(());
     }
 
-    let raw = fs::read_to_string(&src)
-        .map_err(|e| format!("Cannot read live assignments: {}", e))?;
-    let live: LiveAssignments = serde_json::from_str(&raw)
-        .map_err(|e| format!("Cannot parse live assignments: {}", e))?;
+    let raw =
+        fs::read_to_string(&src).map_err(|e| format!("Cannot read live assignments: {}", e))?;
+    let live: LiveAssignments =
+        serde_json::from_str(&raw).map_err(|e| format!("Cannot parse live assignments: {}", e))?;
 
     let mut assignments = HashMap::new();
     for (connector, path) in live.assignments {
@@ -101,15 +105,20 @@ pub fn save_manifest(provider_dir: &Path) -> Result<(), String> {
         );
     }
 
-    let manifest = MpvpaperManifest { version: 1, assignments };
-    fs::create_dir_all(provider_dir)
-        .map_err(|e| format!("Cannot create provider dir: {}", e))?;
+    let manifest = MpvpaperManifest {
+        version: 1,
+        assignments,
+    };
+    fs::create_dir_all(provider_dir).map_err(|e| format!("Cannot create provider dir: {}", e))?;
     let json = serde_json::to_string_pretty(&manifest)
         .map_err(|e| format!("Manifest serialization error: {}", e))?;
     fs::write(provider_dir.join(MANIFEST_FILE), json)
         .map_err(|e| format!("Cannot write mpvpaper manifest: {}", e))?;
 
-    tracing::info!("[mpvpaper] Saved manifest with {} assignment(s)", manifest.assignments.len());
+    tracing::info!(
+        "[mpvpaper] Saved manifest with {} assignment(s)",
+        manifest.assignments.len()
+    );
     Ok(())
 }
 
@@ -184,7 +193,12 @@ pub fn video_url_for(provider_dir: &Path, source: &Path) -> Option<VideoUrl> {
         if !matches {
             continue;
         }
-        if let Some(url) = video.url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+        if let Some(url) = video
+            .url
+            .as_deref()
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+        {
             return Some(VideoUrl {
                 url: url.to_string(),
                 filename: Some(video.filename.trim().to_string()).filter(|f| !f.is_empty()),
@@ -258,11 +272,15 @@ pub fn ensure_url_manifest(
                 .map(str::to_string),
         },
     );
-    let manifest = MpvpaperManifest { version: 1, assignments };
+    let manifest = MpvpaperManifest {
+        version: 1,
+        assignments,
+    };
     fs::create_dir_all(provider_dir).map_err(|e| format!("Cannot create provider dir: {}", e))?;
     let json = serde_json::to_string_pretty(&manifest)
         .map_err(|e| format!("Manifest serialization error: {}", e))?;
-    fs::write(&manifest_path, json).map_err(|e| format!("Cannot write mpvpaper manifest: {}", e))?;
+    fs::write(&manifest_path, json)
+        .map_err(|e| format!("Cannot write mpvpaper manifest: {}", e))?;
     tracing::info!("[mpvpaper] Recorded a url assignment for an over-bound theme video");
     Ok(UrlManifestOutcome::Written)
 }
@@ -445,9 +463,12 @@ mod tests {
         crate::providers::mpvpaper::save_manifest(dir_legacy.path())
             .expect("mpvpaper::save_manifest (re-export) must succeed on the same state");
 
-        let bytes_neutral =
-            fs::read(dir_neutral.path().join(crate::providers::bg_info::MANIFEST_FILE))
-                .expect("bg_info must write the manifest under its shared name");
+        let bytes_neutral = fs::read(
+            dir_neutral
+                .path()
+                .join(crate::providers::bg_info::MANIFEST_FILE),
+        )
+        .expect("bg_info must write the manifest under its shared name");
         let bytes_legacy = read_manifest(dir_legacy.path());
 
         assert_eq!(
@@ -531,7 +552,10 @@ mod tests {
                 sha256: sha256.map(str::to_string),
             },
         );
-        let manifest = crate::providers::mpvpaper::MpvpaperManifest { version: 1, assignments };
+        let manifest = crate::providers::mpvpaper::MpvpaperManifest {
+            version: 1,
+            assignments,
+        };
         let json = serde_json::to_string_pretty(&manifest).unwrap();
         fs::write(dir.join(crate::providers::bg_info::MANIFEST_FILE), json).unwrap();
     }
@@ -621,7 +645,10 @@ mod tests {
         let parsed: crate::providers::mpvpaper::MpvpaperManifest =
             serde_json::from_str(&text).unwrap();
         let video = &parsed.assignments["*"];
-        assert_eq!(video.url.as_deref(), Some("https://example.com/slugcat.mp4"));
+        assert_eq!(
+            video.url.as_deref(),
+            Some("https://example.com/slugcat.mp4")
+        );
         assert_eq!(video.filename, "slugcat.mp4");
     }
 
@@ -849,7 +876,9 @@ mod tests {
         );
         assert!(
             exact.body.contains("póster")
-                && exact.body.contains(crate::providers::bg_info::VIDEO_BACKEND_WIKI_URL),
+                && exact
+                    .body
+                    .contains(crate::providers::bg_info::VIDEO_BACKEND_WIKI_URL),
             "the exact-path copy must keep the poster sentence and the wiki link, got: {}",
             exact.body
         );
@@ -870,7 +899,9 @@ mod tests {
         );
         assert!(
             url.body.contains("póster")
-                && url.body.contains(crate::providers::bg_info::VIDEO_BACKEND_WIKI_URL),
+                && url
+                    .body
+                    .contains(crate::providers::bg_info::VIDEO_BACKEND_WIKI_URL),
             "the url copy must keep the poster sentence and the wiki link, got: {}",
             url.body
         );
@@ -978,7 +1009,10 @@ mod tests {
     fn preview_candidates_refuse_an_oversized_manifest() {
         let dir = tempfile::tempdir().unwrap();
         let mut content = br#"{"version":1,"assignments":{"*":{"filename":"x.mp4","local_path":"/videos/x.mp4","url":"https://example.com/x.mp4"}}}"#.to_vec();
-        content.resize(crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1, b' ');
+        content.resize(
+            crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1,
+            b' ',
+        );
         fs::write(
             dir.path().join(crate::providers::bg_info::MANIFEST_FILE),
             content,
@@ -997,7 +1031,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source = Path::new("/videos/x.mp4");
         let mut content = br#"{"version":1,"assignments":{"*":{"filename":"x.mp4","local_path":"/videos/x.mp4","url":"https://example.com/x.mp4"}}}"#.to_vec();
-        content.resize(crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1, b' ');
+        content.resize(
+            crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1,
+            b' ',
+        );
         fs::write(
             dir.path().join(crate::providers::bg_info::MANIFEST_FILE),
             content,

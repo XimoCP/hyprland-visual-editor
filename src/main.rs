@@ -1,5 +1,7 @@
 mod animation_preset;
 mod app_state;
+#[cfg(test)]
+mod architecture_contract;
 mod border_preset;
 mod callbacks;
 mod color_authority;
@@ -13,12 +15,20 @@ mod engine;
 mod hypr_ipc;
 mod ipc;
 mod panel_i18n;
-mod presets;
 mod preset_store;
+mod presets;
 mod providers;
+#[cfg(test)]
+mod reload_coalescer;
+#[cfg(test)]
+mod scripts_contract;
 mod settings;
 mod shell;
+#[cfg(test)]
+mod shell_agnosticism_tests;
 mod show_state;
+#[cfg(test)]
+mod test_utils;
 mod theme;
 mod theme_manager;
 mod theme_media;
@@ -30,16 +40,6 @@ mod tr;
 mod tray;
 mod utils;
 mod watcher;
-#[cfg(test)]
-mod architecture_contract;
-#[cfg(test)]
-mod scripts_contract;
-#[cfg(test)]
-mod reload_coalescer;
-#[cfg(test)]
-mod test_utils;
-#[cfg(test)]
-mod shell_agnosticism_tests;
 
 use app_state::AppState;
 use clap::Parser;
@@ -49,8 +49,8 @@ use settings::{ensure_settings_file, set_autostart, set_keybinds, set_tiling_win
 use slint::{Color, ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing_subscriber::EnvFilter;
 use tr::Tr;
+use tracing_subscriber::EnvFilter;
 
 slint::include_modules!();
 
@@ -71,7 +71,9 @@ pub(crate) fn project_dir() -> PathBuf {
     // Check: current dir, parent of exe, CARGO_MANIFEST_DIR fallback
     let candidates = [
         std::env::current_dir().ok(),
-        std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())),
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf())),
         std::env::current_exe().ok().and({
             // For NixOS/macOS where the binary is in a store path,
             // try the original source tree
@@ -135,7 +137,11 @@ fn teardown_border_draft(
     crate::preset_store::PresetStore::remove_draft(proj);
     let st = state.lock().unwrap_or_else(|e| e.into_inner());
     let active = st.cfg().active_border_file.clone();
-    let arg = if active.is_empty() { "none".to_string() } else { active };
+    let arg = if active.is_empty() {
+        "none".to_string()
+    } else {
+        active
+    };
     if let Err(e) = st.engine().apply_border(&arg) {
         tracing::error!("[panel] re-apply after draft cleanup failed: {}", e);
         drop(st);
@@ -207,9 +213,18 @@ fn refresh_resolved_colors(w: &crate::MainWindow) {
             None => transparent,
         });
     }
-    out.push(resolve_encoded_color(w, &w.get_tune_inactive_color().to_string()));
-    out.push(resolve_encoded_color(w, &w.get_tune_glow_color().to_string()));
-    out.push(resolve_encoded_color(w, &w.get_tune_glow_color_inactive().to_string()));
+    out.push(resolve_encoded_color(
+        w,
+        &w.get_tune_inactive_color().to_string(),
+    ));
+    out.push(resolve_encoded_color(
+        w,
+        &w.get_tune_glow_color().to_string(),
+    ));
+    out.push(resolve_encoded_color(
+        w,
+        &w.get_tune_glow_color_inactive().to_string(),
+    ));
     w.set_tune_colors_resolved(slint::ModelRc::from(out.as_slice()));
 }
 
@@ -290,20 +305,30 @@ pub(crate) fn sync_border_tune_pane(
         use crate::preset_store::PresetStore;
         let count = params.active_colors.len() as i32;
         w.set_tune_color_count(count);
-        let color_entries: Vec<slint::SharedString> = params.active_colors.iter().map(|c| {
-            slint::SharedString::from(PresetStore::encode_colors(&[c.clone()]).as_str())
-        }).collect();
+        let color_entries: Vec<slint::SharedString> = params
+            .active_colors
+            .iter()
+            .map(|c| slint::SharedString::from(PresetStore::encode_colors(&[c.clone()]).as_str()))
+            .collect();
         w.set_tune_active_colors(slint::ModelRc::from(color_entries.as_slice()));
         w.set_tune_angle(params.angle);
-        w.set_tune_inactive_color(slint::SharedString::from(PresetStore::encode_inactive(&params.inactive).as_str()));
-        w.set_tune_glow(slint::SharedString::from(PresetStore::encode_glow(params.glow.as_ref()).as_str()));
+        w.set_tune_inactive_color(slint::SharedString::from(
+            PresetStore::encode_inactive(&params.inactive).as_str(),
+        ));
+        w.set_tune_glow(slint::SharedString::from(
+            PresetStore::encode_glow(params.glow.as_ref()).as_str(),
+        ));
         // Set individual glow properties for the UI
         if let Some(ref glow) = params.glow {
             w.set_tune_glow_enabled(glow.enabled);
             w.set_tune_glow_range(glow.range);
             w.set_tune_glow_render_power(glow.render_power);
-            w.set_tune_glow_color(slint::SharedString::from(PresetStore::encode_colors(&[glow.color.clone()]).as_str()));
-            w.set_tune_glow_color_inactive(slint::SharedString::from(PresetStore::encode_colors(&[glow.color_inactive.clone()]).as_str()));
+            w.set_tune_glow_color(slint::SharedString::from(
+                PresetStore::encode_colors(&[glow.color.clone()]).as_str(),
+            ));
+            w.set_tune_glow_color_inactive(slint::SharedString::from(
+                PresetStore::encode_colors(&[glow.color_inactive.clone()]).as_str(),
+            ));
         } else {
             w.set_tune_glow_enabled(false);
             w.set_tune_glow_range(20);
@@ -315,33 +340,49 @@ pub(crate) fn sync_border_tune_pane(
         // Freshly loaded state is the saved state: clear the
         // D4 unsaved marker the pane shows in its header.
         w.set_tune_dirty(false);
-        w.set_tune_animations(slint::SharedString::from(PresetStore::encode_animations(&params.animations).as_str()));
+        w.set_tune_animations(slint::SharedString::from(
+            PresetStore::encode_animations(&params.animations).as_str(),
+        ));
         // Set individual animation leaf properties
         for leaf in &params.animations {
             match leaf.leaf.as_str() {
                 "borderangle" => {
                     w.set_tune_anim_borderangle_enabled(leaf.enabled);
                     w.set_tune_anim_borderangle_speed(leaf.speed.unwrap_or(30));
-                    w.set_tune_anim_borderangle_bezier(slint::SharedString::from(leaf.bezier.as_deref().unwrap_or("default")));
-                    w.set_tune_anim_borderangle_style(slint::SharedString::from(leaf.style.as_deref().unwrap_or("")));
+                    w.set_tune_anim_borderangle_bezier(slint::SharedString::from(
+                        leaf.bezier.as_deref().unwrap_or("default"),
+                    ));
+                    w.set_tune_anim_borderangle_style(slint::SharedString::from(
+                        leaf.style.as_deref().unwrap_or(""),
+                    ));
                 }
                 "border" => {
                     w.set_tune_anim_border_enabled(leaf.enabled);
                     w.set_tune_anim_border_speed(leaf.speed.unwrap_or(30));
-                    w.set_tune_anim_border_bezier(slint::SharedString::from(leaf.bezier.as_deref().unwrap_or("default")));
-                    w.set_tune_anim_border_style(slint::SharedString::from(leaf.style.as_deref().unwrap_or("")));
+                    w.set_tune_anim_border_bezier(slint::SharedString::from(
+                        leaf.bezier.as_deref().unwrap_or("default"),
+                    ));
+                    w.set_tune_anim_border_style(slint::SharedString::from(
+                        leaf.style.as_deref().unwrap_or(""),
+                    ));
                 }
                 "fadeShadow" => {
                     w.set_tune_anim_fadeshadow_enabled(leaf.enabled);
                     w.set_tune_anim_fadeshadow_speed(leaf.speed.unwrap_or(30));
-                    w.set_tune_anim_fadeshadow_bezier(slint::SharedString::from(leaf.bezier.as_deref().unwrap_or("default")));
-                    w.set_tune_anim_fadeshadow_style(slint::SharedString::from(leaf.style.as_deref().unwrap_or("")));
+                    w.set_tune_anim_fadeshadow_bezier(slint::SharedString::from(
+                        leaf.bezier.as_deref().unwrap_or("default"),
+                    ));
+                    w.set_tune_anim_fadeshadow_style(slint::SharedString::from(
+                        leaf.style.as_deref().unwrap_or(""),
+                    ));
                 }
                 _ => {}
             }
         }
         // Set file-local curves
-        let curve_names: Vec<slint::SharedString> = params.curves.iter()
+        let curve_names: Vec<slint::SharedString> = params
+            .curves
+            .iter()
             .map(|s| slint::SharedString::from(s.as_str()))
             .collect();
         w.set_tune_anim_curves(slint::ModelRc::from(curve_names.as_slice()));
@@ -537,7 +578,8 @@ pub(crate) fn sync_motion_tune_pane(
         return;
     }
     let preset_name = anim_file.strip_suffix(".lua").unwrap_or(anim_file);
-    let Ok(content) = crate::preset_store::PresetStore::read_animation_file(preset_name, proj) else {
+    let Ok(content) = crate::preset_store::PresetStore::read_animation_file(preset_name, proj)
+    else {
         return;
     };
     let Some(params) = crate::animation_preset::parse(&content) else {
@@ -588,12 +630,15 @@ fn apply_live_draft(
     let content = PresetStore::generate_border_lua_full("draft", params);
     PresetStore::write_draft(&content, proj).map_err(|e| format!("Draft write failed: {}", e))?;
     let st = state.lock().unwrap_or_else(|e| e.into_inner());
-    st.engine().run_script("assemble.sh", &[]).map(|_| ()).map_err(|e| {
-        // Drop the draft so a later successful assemble cannot pick up this
-        // failed attempt's stale state.
-        PresetStore::remove_draft(proj);
-        format!("Live preview failed: {}", e)
-    })
+    st.engine()
+        .run_script("assemble.sh", &[])
+        .map(|_| ())
+        .map_err(|e| {
+            // Drop the draft so a later successful assemble cannot pick up this
+            // failed attempt's stale state.
+            PresetStore::remove_draft(proj);
+            format!("Live preview failed: {}", e)
+        })
 }
 
 /// Push a slot list back to the UI (model + count) and refresh the live draft.
@@ -658,7 +703,10 @@ pub(crate) fn refresh_theme_list(
     let themes = tm.list().unwrap_or_default();
 
     let names: Vec<SharedString> = themes.iter().map(|t| SharedString::from(&t.name)).collect();
-    let saved_ats: Vec<SharedString> = themes.iter().map(|t| SharedString::from(&t.saved_at)).collect();
+    let saved_ats: Vec<SharedString> = themes
+        .iter()
+        .map(|t| SharedString::from(&t.saved_at))
+        .collect();
     let is_actives: Vec<bool> = themes.iter().map(|t| t.is_active).collect();
 
     window.set_theme_names(ModelRc::from(names.as_slice()));
@@ -666,7 +714,11 @@ pub(crate) fn refresh_theme_list(
     window.set_theme_is_actives(ModelRc::from(is_actives.as_slice()));
 
     // Update active theme index
-    let active_idx = themes.iter().position(|t| t.is_active).map(|i| i as i32).unwrap_or(-1);
+    let active_idx = themes
+        .iter()
+        .position(|t| t.is_active)
+        .map(|i| i as i32)
+        .unwrap_or(-1);
     window.set_active_theme_index(active_idx);
 }
 
@@ -808,8 +860,7 @@ pub(crate) fn reaffirm_gallery_focus_on_active(window: &crate::MainWindow) -> bo
     }
     let cards = window.get_gallery_cards();
     let count = cards.row_count() as usize;
-    let Some(active) =
-        (0..count).find(|&i| cards.row_data(i).is_some_and(|row| row.is_active))
+    let Some(active) = (0..count).find(|&i| cards.row_data(i).is_some_and(|row| row.is_active))
     else {
         return false;
     };
@@ -848,7 +899,12 @@ fn backfill_active_from_live(
     let themes = tm.list().ok()?;
     let rows: Vec<(String, Option<String>)> = themes
         .iter()
-        .map(|t| (t.name.clone(), shell.saved_theme_wallpaper(&themes_dir, &t.name)))
+        .map(|t| {
+            (
+                t.name.clone(),
+                shell.saved_theme_wallpaper(&themes_dir, &t.name),
+            )
+        })
         .collect();
     crate::callbacks::backfill_active_candidate(&rows, &live)
 }
@@ -990,9 +1046,7 @@ fn mosaic_tile_real(window: &crate::MainWindow, pos: i32) -> Option<i32> {
 /// the same tile position. Called wherever the cursor is placed.
 fn remember_mosaic_cursor_theme(
     window: &crate::MainWindow,
-    pages: &std::sync::Arc<
-        std::sync::Mutex<crate::shell::gallery::views::mosaic::MosaicPages>,
-    >,
+    pages: &std::sync::Arc<std::sync::Mutex<crate::shell::gallery::views::mosaic::MosaicPages>>,
     pos: i32,
 ) {
     if let Ok(mut p) = pages.lock() {
@@ -1016,20 +1070,25 @@ fn grow_mosaic_card(window: &crate::MainWindow, pos: i32) {
     window.set_gallery_mosaic_card_open(false);
     let weak = window.as_weak();
     slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
-        let Some(w) = weak.upgrade() else { return; };
+        let Some(w) = weak.upgrade() else {
+            return;
+        };
         // The selection may have moved on (or been contracted) meanwhile.
         if w.get_gallery_mosaic_selected() != pos {
             return;
         }
         w.set_gallery_mosaic_card_open(true);
         let inner = w.as_weak();
-        slint::Timer::single_shot(std::time::Duration::from_millis(MOSAIC_FACE_BEAT_MS), move || {
-            if let Some(w) = inner.upgrade() {
-                if w.get_gallery_mosaic_selected() == pos {
-                    w.set_gallery_mosaic_face_open(true);
+        slint::Timer::single_shot(
+            std::time::Duration::from_millis(MOSAIC_FACE_BEAT_MS),
+            move || {
+                if let Some(w) = inner.upgrade() {
+                    if w.get_gallery_mosaic_selected() == pos {
+                        w.set_gallery_mosaic_face_open(true);
+                    }
                 }
-            }
-        });
+            },
+        );
     });
 }
 
@@ -1040,15 +1099,18 @@ fn contract_mosaic_card(window: &crate::MainWindow) {
     window.set_gallery_mosaic_face_open(false);
     window.set_gallery_mosaic_card_open(false);
     let weak = window.as_weak();
-    slint::Timer::single_shot(std::time::Duration::from_millis(MOSAIC_CONTRACT_MS), move || {
-        if let Some(w) = weak.upgrade() {
-            // A new selection may have taken over while the morph ran: only
-            // drop this one when nothing re-opened in the meantime.
-            if !w.get_gallery_mosaic_card_open() {
-                w.set_gallery_mosaic_selected(-1);
+    slint::Timer::single_shot(
+        std::time::Duration::from_millis(MOSAIC_CONTRACT_MS),
+        move || {
+            if let Some(w) = weak.upgrade() {
+                // A new selection may have taken over while the morph ran: only
+                // drop this one when nothing re-opened in the meantime.
+                if !w.get_gallery_mosaic_card_open() {
+                    w.set_gallery_mosaic_selected(-1);
+                }
             }
-        }
-    });
+        },
+    );
 }
 
 /// Open the theme info face for card `idx`, reading that theme's own saved
@@ -1087,7 +1149,9 @@ fn open_gallery_info(
         None => crate::ThemeInfoData {
             name: slint::SharedString::from(name.as_str()),
             saved_at: slint::SharedString::from(""),
-            providers: slint::ModelRc::new(slint::VecModel::from(Vec::<slint::SharedString>::new())),
+            providers: slint::ModelRc::new(
+                slint::VecModel::from(Vec::<slint::SharedString>::new()),
+            ),
             swatches: slint::ModelRc::new(slint::VecModel::from(Vec::<slint::Color>::new())),
             rows: slint::ModelRc::new(slint::VecModel::from(Vec::<crate::ThemeInfoRow>::new())),
         },
@@ -1133,9 +1197,7 @@ fn refresh_invalidation_set(last_applied: &str) -> std::collections::HashSet<Str
 /// all go through it, so the three cannot drift into three slightly different
 /// card shapes. Images are left empty on purpose — the thumb scheduler fills
 /// them, and `sync_cards` preserves any bake already on the row.
-fn gallery_cards_from_tm(
-    tm: &crate::theme_manager::ThemeManager,
-) -> Vec<crate::GalleryCardData> {
+fn gallery_cards_from_tm(tm: &crate::theme_manager::ThemeManager) -> Vec<crate::GalleryCardData> {
     use slint::{ModelRc, SharedString, VecModel};
     tm.list()
         .unwrap_or_default()
@@ -1245,7 +1307,10 @@ fn sync_save_gallery_ui(
     close_gallery_info(w);
     let new_rows = gallery_cards_from_tm(&gallery_tm.lock().unwrap());
     let model_rc = w.get_gallery_cards();
-    if let Some(model) = model_rc.as_any().downcast_ref::<slint::VecModel<crate::GalleryCardData>>() {
+    if let Some(model) = model_rc
+        .as_any()
+        .downcast_ref::<slint::VecModel<crate::GalleryCardData>>()
+    {
         crate::shell::gallery::model::sync_cards(model, new_rows);
         // Overwritten artwork would otherwise keep its stale bake (the
         // merge above preserves old images, and the scheduler skips painted
@@ -1337,7 +1402,8 @@ static PENDING_RECONSULT_AT: std::sync::Mutex<Option<std::time::Instant>> =
 /// The first path to fire (event-driven configreloaded OR 4.8s fallback)
 /// wins; the other becomes a no-op for that generation.
 pub(crate) static THEME_GEN: std::sync::Mutex<u64> = std::sync::Mutex::new(0);
-pub(crate) static THEME_CYCLE_FIRED_GEN: std::sync::Mutex<Option<u64>> = std::sync::Mutex::new(None);
+pub(crate) static THEME_CYCLE_FIRED_GEN: std::sync::Mutex<Option<u64>> =
+    std::sync::Mutex::new(None);
 pub(crate) static THEME_TRANSITIONING_FLAG: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 /// Captured originals of the masked options, keyed by `MaskSpec::key`. One map
@@ -1511,9 +1577,7 @@ pub(crate) fn trust_gate_request(
     } else {
         None
     };
-    let already_accepted = store
-        .as_ref()
-        .is_some_and(|s| s.accepts(name, &report));
+    let already_accepted = store.as_ref().is_some_and(|s| s.accepts(name, &report));
     let decision = {
         let mut gate = theme_trust_gate();
         gate.request(name, index, origin, &report, already_accepted)
@@ -1738,10 +1802,7 @@ pub(crate) fn reload_settle_window() -> std::time::Duration {
 
 /// The whole enemy is the clock guessing. `true` when the settle timer is the
 /// last event we saw for this transition (i.e. it was never restarted since).
-pub(crate) fn reload_restarts_settle(
-    transitioning: bool,
-    waiting: Option<TransitionStep>,
-) -> bool {
+pub(crate) fn reload_restarts_settle(transitioning: bool, waiting: Option<TransitionStep>) -> bool {
     transitioning && waiting == Some(TransitionStep::Restore)
 }
 
@@ -1768,7 +1829,10 @@ pub(crate) fn theme_reload_signal() {
     // Bump a counter the armed timer watches: if it changed, the timer knows a
     // newer reload arrived and it must NOT run the finale yet.
     THEME_SETTLE_BUMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    tracing::debug!("[theme] reload arrived — settle window restarted (gen {})", gen);
+    tracing::debug!(
+        "[theme] reload arrived — settle window restarted (gen {})",
+        gen
+    );
 }
 
 /// Arm the settle wait for a transition. Returns the bump value at arm time, so
@@ -1885,49 +1949,56 @@ pub(crate) fn begin_interlude_display(win: slint::Weak<crate::MainWindow>, gen: 
     // Stage after the exit fade completes (420ms ease-in, 560ms in the house
     // convention) so the user watches the shell dissolve before the cut. Tunable
     // (HVE_INTERLUDE_STAGE_MS): 0 stages immediately.
-    slint::Timer::single_shot(std::time::Duration::from_millis(interlude_stage_ms()), move || {
-        if *THEME_GEN.lock().unwrap() != gen {
-            return; // superseded
-        }
-        let target = {
-            let st = THEME_INTERLUDE.lock().unwrap();
-            if !st.should_move() {
-                None
-            } else {
-                st.orig().map(|o| find_empty_workspace(o))
-            }
-        };
-        if let Some(target) = target {
-            if hypr_switch_view(&target) {
-                THEME_INTERLUDE.lock().unwrap().mark_moved();
-                tracing::info!(
-                    "[theme] interlude: view staged on empty ws {} (gen {})",
-                    target, gen
-                );
-            } else {
-                tracing::warn!(
-                    "[theme] interlude staging failed — stay-fullscreen fallback (gen {})",
-                    gen
-                );
-            }
-        }
-        // HOLD: the display time the owner wants, counted from the stage.
-        let weak_hold = weak.clone();
-        slint::Timer::single_shot(std::time::Duration::from_millis(interlude_display_ms()), move || {
+    slint::Timer::single_shot(
+        std::time::Duration::from_millis(interlude_stage_ms()),
+        move || {
             if *THEME_GEN.lock().unwrap() != gen {
                 return; // superseded
             }
-            if let Some(w) = weak_hold.upgrade() {
-                if claim_waiting_step(TransitionStep::Restore) {
+            let target = {
+                let st = THEME_INTERLUDE.lock().unwrap();
+                if !st.should_move() {
+                    None
+                } else {
+                    st.orig().map(|o| find_empty_workspace(o))
+                }
+            };
+            if let Some(target) = target {
+                if hypr_switch_view(&target) {
+                    THEME_INTERLUDE.lock().unwrap().mark_moved();
                     tracing::info!(
-                        "[theme] finale advanced after the interlude display (gen {})",
+                        "[theme] interlude: view staged on empty ws {} (gen {})",
+                        target,
                         gen
                     );
-                    theme_finale_run(w, gen);
+                } else {
+                    tracing::warn!(
+                        "[theme] interlude staging failed — stay-fullscreen fallback (gen {})",
+                        gen
+                    );
                 }
             }
-        });
-    });
+            // HOLD: the display time the owner wants, counted from the stage.
+            let weak_hold = weak.clone();
+            slint::Timer::single_shot(
+                std::time::Duration::from_millis(interlude_display_ms()),
+                move || {
+                    if *THEME_GEN.lock().unwrap() != gen {
+                        return; // superseded
+                    }
+                    if let Some(w) = weak_hold.upgrade() {
+                        if claim_waiting_step(TransitionStep::Restore) {
+                            tracing::info!(
+                                "[theme] finale advanced after the interlude display (gen {})",
+                                gen
+                            );
+                            theme_finale_run(w, gen);
+                        }
+                    }
+                },
+            );
+        },
+    );
 }
 
 /// Poll for the reload burst to settle, re-arming with NO cap.
@@ -1945,12 +2016,18 @@ fn arm_settle_poll(win: slint::Weak<crate::MainWindow>, gen: u64, armed_bump: u6
         if !reload_settled_since(armed_bump, gen) {
             // A newer reload arrived: the burst is still going. Re-arm with the
             // fresh bump and wait again — no cap, no fallback to guessing.
-            tracing::debug!("[theme] reload burst still going (gen {}) — polling again", gen);
+            tracing::debug!(
+                "[theme] reload burst still going (gen {}) — polling again",
+                gen
+            );
             let fresh = arm_reload_settle(gen);
             arm_settle_poll(win, gen, fresh);
             return;
         }
-        tracing::info!("[theme] reload settled (gen {}) — staging the interlude", gen);
+        tracing::info!(
+            "[theme] reload settled (gen {}) — staging the interlude",
+            gen
+        );
         begin_interlude_display(win, gen);
     });
 }
@@ -1990,7 +2067,9 @@ pub(crate) fn theme_finale_run(win: crate::MainWindow, gen: u64) {
             let back_ok = hypr_switch_view(&orig);
             tracing::info!(
                 "[theme] interlude: view returned to {} ok={} (targeted fullscreen {})",
-                orig, back_ok, fs_ok
+                orig,
+                back_ok,
+                fs_ok
             );
         }
         // Masks + DND release AFTER the entrance fade completes (520ms ease-out):
@@ -2008,8 +2087,8 @@ fn hypr_getoption_int(option: &str, fallback: &str) -> String {
     // Raw live-option read behind `Composer` (capability-routing Phase 3):
     // the option NAME is passed through verbatim here — its normalisation
     // stays in this caller, which also owns the parse below.
-    let answer = crate::composer::global_controller()
-        .and_then(|ctrl| ctrl.composer().read_option(option));
+    let answer =
+        crate::composer::global_controller().and_then(|ctrl| ctrl.composer().read_option(option));
     option_int_from(answer.as_deref(), fallback)
 }
 
@@ -2512,7 +2591,9 @@ pub(crate) fn reapply_theme_masks() {
 fn reassert_debounce_ok() -> bool {
     let mut last = LAST_REASSERT.lock().unwrap();
     let now = std::time::Instant::now();
-    if last.is_some_and(|t| now.duration_since(t) < std::time::Duration::from_millis(REASSERT_DEBOUNCE_MS)) {
+    if last.is_some_and(|t| {
+        now.duration_since(t) < std::time::Duration::from_millis(REASSERT_DEBOUNCE_MS)
+    }) {
         return false; // a cycle ran (or is running) very recently — skip
     }
     *last = Some(now);
@@ -2546,7 +2627,10 @@ pub(crate) fn reassert_gallery_fullscreen() {
             }
             *fired = Some(gen);
         }
-        tracing::info!("[reassert] theme generation {} claims cycle (single-fire)", gen);
+        tracing::info!(
+            "[reassert] theme generation {} claims cycle (single-fire)",
+            gen
+        );
     } else if !reassert_debounce_ok() {
         return;
     }
@@ -2632,7 +2716,8 @@ pub(crate) fn reload_fs_action(
     if hve_fullscreen {
         return ReloadFsAction::Nothing(ReloadFsSkip::AlreadyFullscreen);
     }
-    if since_last_cycle.is_some_and(|d| d < std::time::Duration::from_millis(REASSERT_DEBOUNCE_MS)) {
+    if since_last_cycle.is_some_and(|d| d < std::time::Duration::from_millis(REASSERT_DEBOUNCE_MS))
+    {
         return ReloadFsAction::Nothing(ReloadFsSkip::Debounced);
     }
     ReloadFsAction::Cycle
@@ -2659,9 +2744,7 @@ fn run_reload_cycle() {
     if reassert_debounce_ok() {
         run_fullscreen_cycle(reload_cycle_step2_ok);
     } else {
-        tracing::debug!(
-            "[reassert] reload restore lost the debounce claim (parallel cycle)"
-        );
+        tracing::debug!("[reassert] reload restore lost the debounce claim (parallel cycle)");
     }
 }
 
@@ -2818,7 +2901,9 @@ fn reload_reconsult_delay(since_last_cycle: Option<std::time::Duration>) -> std:
 /// single owner, no stacked timers/cycles). Returns whether THIS call
 /// armed it.
 fn arm_reload_reconsult(tick: impl FnOnce() + 'static) -> bool {
-    let mut pending = PENDING_RECONSULT_AT.lock().unwrap_or_else(|e| e.into_inner());
+    let mut pending = PENDING_RECONSULT_AT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     if pending.is_some() {
         tracing::debug!("[reassert] reload re-consult already pending — no second timer");
         return false;
@@ -2826,7 +2911,9 @@ fn arm_reload_reconsult(tick: impl FnOnce() + 'static) -> bool {
     let delay = reload_reconsult_delay(last_reassert_elapsed());
     *pending = Some(std::time::Instant::now() + delay);
     slint::Timer::single_shot(delay, move || {
-        *PENDING_RECONSULT_AT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *PENDING_RECONSULT_AT
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
         tick();
     });
     true
@@ -2915,7 +3002,9 @@ fn startup_settle_fullscreen(attempt: usize, tile_toggle: bool) {
             if let Some(mut ctrl) = composer::global_controller() {
                 if tile_toggle {
                     ctrl.composer().toggle_float();
-                    tracing::info!("[startup] Tiling mode ON: togglefloating dispatched (mapped-gated)");
+                    tracing::info!(
+                        "[startup] Tiling mode ON: togglefloating dispatched (mapped-gated)"
+                    );
                 }
                 // Cycle unset->set to force a real compositor transition
                 // (a bare `set` on an already-fullscreen client is a no-op
@@ -2925,7 +3014,11 @@ fn startup_settle_fullscreen(attempt: usize, tile_toggle: bool) {
                 if !ctrl.gallery_session_active() {
                     let _ = ctrl.enter_gallery_session();
                 }
-                tracing::info!("[startup] mapped-gated unset->set fullscreen ok={} (attempt={})", ok, attempt);
+                tracing::info!(
+                    "[startup] mapped-gated unset->set fullscreen ok={} (attempt={})",
+                    ok,
+                    attempt
+                );
             }
             schedule_startup_settle(attempt + 1, false);
         }
@@ -2951,8 +3044,10 @@ fn active_workspace_name(answer: Option<String>) -> String {
 fn find_empty_workspace(exclude: &str) -> String {
     // Find a normal workspace with no windows, not special, not the current one.
     // Falls back to "10" (Hyprland creates it on demand).
-    let answer = crate::composer::global_controller()
-        .and_then(|ctrl| ctrl.composer().query_json(crate::composer::CompositorQuery::Workspaces));
+    let answer = crate::composer::global_controller().and_then(|ctrl| {
+        ctrl.composer()
+            .query_json(crate::composer::CompositorQuery::Workspaces)
+    });
     empty_workspace_from(answer.as_deref(), exclude)
 }
 
@@ -2971,7 +3066,11 @@ fn empty_workspace_from(workspaces_json: Option<&str>, exclude: &str) -> String 
             }
         }
     }
-    if exclude != "10" { "10".to_string() } else { "11".to_string() }
+    if exclude != "10" {
+        "10".to_string()
+    } else {
+        "11".to_string()
+    }
 }
 
 // ── Theme interlude (empty-workspace stage for the wallpaper/bar swap) ──
@@ -2997,14 +3096,19 @@ fn interlude_view_script(ws: &str) -> Option<String> {
 fn is_safe_workspace_name(ws: &str) -> bool {
     !ws.is_empty()
         && ws.len() <= 128
-        && ws.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ' '))
+        && ws
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ' '))
 }
 
 /// Switch the compositor view (never any window) to `ws`. Best-effort:
 /// a failure keeps the old stay-fullscreen contract (no staging, no return).
 fn hypr_switch_view(ws: &str) -> bool {
     let Some(script) = interlude_view_script(ws) else {
-        tracing::warn!("[theme] interlude view switch rejected unsafe name {:?}", ws);
+        tracing::warn!(
+            "[theme] interlude view switch rejected unsafe name {:?}",
+            ws
+        );
         return false;
     };
     // Validation stays HERE (the unsafe-name rejection is this function's
@@ -3086,7 +3190,10 @@ struct InterludeState {
 
 impl InterludeState {
     const fn new() -> Self {
-        Self { orig: None, moved: false }
+        Self {
+            orig: None,
+            moved: false,
+        }
     }
     /// First writer wins: while an interlude is in flight, a newer theme
     /// generation must keep returning to the user's ORIGINAL workspace, not
@@ -3270,12 +3377,14 @@ fn main() -> Result<(), slint::PlatformError> {
         })
         .join("hve");
     let _ = std::fs::create_dir_all(&lock_dir);
-    let lock_file = std::fs::File::create(lock_dir.join("hve.lock"))
-        .unwrap_or_else(|e| {
-            tracing::error!("Failed to create lock file: {}", e);
-            std::process::exit(1);
-        });
-    if let Err(e) = rustix::fs::flock(&lock_file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+    let lock_file = std::fs::File::create(lock_dir.join("hve.lock")).unwrap_or_else(|e| {
+        tracing::error!("Failed to create lock file: {}", e);
+        std::process::exit(1);
+    });
+    if let Err(e) = rustix::fs::flock(
+        &lock_file,
+        rustix::fs::FlockOperation::NonBlockingLockExclusive,
+    ) {
         if e.kind() == std::io::ErrorKind::WouldBlock {
             // Single-instance handoff: another instance owns the lock, so this
             // process must create NO window and must NOT steal the lock. It
@@ -3380,8 +3489,14 @@ fn main() -> Result<(), slint::PlatformError> {
     shell::Shell::set_global(shell.clone());
     // Register production stub slots for Gallery and Workshop. Real
     // slot views land in modules 2 and 4.
-    shell::Shell::register_slot(&shell, Box::new(shell::slots::StubSlot::new(shell::nav::Screen::Gallery)));
-    shell::Shell::register_slot(&shell, Box::new(shell::slots::StubSlot::new(shell::nav::Screen::Workshop)));
+    shell::Shell::register_slot(
+        &shell,
+        Box::new(shell::slots::StubSlot::new(shell::nav::Screen::Gallery)),
+    );
+    shell::Shell::register_slot(
+        &shell,
+        Box::new(shell::slots::StubSlot::new(shell::nav::Screen::Workshop)),
+    );
     // Set shell i18n strings (nav-shell spec R5).
     window.set_shell_brand_text(tr.tr_shared("shell.brand", "HVE"));
     window.set_shell_brand_subtitle(tr.tr_shared("shell.subtitle", "Hyprland Visual Editor"));
@@ -3394,10 +3509,9 @@ fn main() -> Result<(), slint::PlatformError> {
     // Bottom-bar shortcut list, one string per context (keyboard-shortcuts-footer).
     // The shell derives the painted string from the current context; here we only
     // hand it the four translated candidates.
-    window.set_shell_shortcuts_home(tr.tr_shared(
-        "shell.shortcuts.home",
-        "←→ move · Enter open · Esc hides",
-    ));
+    window.set_shell_shortcuts_home(
+        tr.tr_shared("shell.shortcuts.home", "←→ move · Enter open · Esc hides"),
+    );
     window.set_shell_shortcuts_slider(tr.tr_shared(
         "shell.shortcuts.slider",
         "←→ themes · Enter apply · i info · Ctrl+↑↓ drawers · Esc hides",
@@ -3410,7 +3524,9 @@ fn main() -> Result<(), slint::PlatformError> {
         "shell.shortcuts.panel",
         "↑↓ move · ← menu · →/Enter section · Enter engage · Esc back",
     ));
-    window.set_shell_home_hint(tr.tr_shared("shell.home.hint", "Home — theme cards land in module 2"));
+    window.set_shell_home_hint(
+        tr.tr_shared("shell.home.hint", "Home — theme cards land in module 2"),
+    );
     window.set_shell_gallery_hint(tr.tr_shared("shell.gallery.hint", "Gallery slot — module 2"));
     window.set_shell_workshop_hint(tr.tr_shared("shell.workshop.hint", "Workshop slot — module 4"));
 
@@ -3450,7 +3566,11 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // ── Theme Manager init ──
     let config_dir = dirs::config_dir()
-        .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")))
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join(".config"))
+        })
         .unwrap_or_else(|| PathBuf::from("/tmp/hve-config"));
     let mut theme_manager = crate::theme_manager::ThemeManager::new(&config_dir);
     crate::providers::register_default_providers(&mut theme_manager, &engine);
@@ -3461,7 +3581,11 @@ fn main() -> Result<(), slint::PlatformError> {
         // the field empty — resolve the active theme from the live wallpaper
         // and persist it, so the gallery opens on the APPLIED card.
         if theme_manager.last_applied.is_empty() {
-            if let Some(name) = backfill_active_from_live(&theme_manager, &config_dir, &*crate::providers::active_shell()) {
+            if let Some(name) = backfill_active_from_live(
+                &theme_manager,
+                &config_dir,
+                &*crate::providers::active_shell(),
+            ) {
                 theme_manager.last_applied = name.clone();
                 cfg.last_applied_theme = name;
                 let _ = cfg.save();
@@ -3485,7 +3609,9 @@ fn main() -> Result<(), slint::PlatformError> {
     // ── GallerySlot real registration (PR4 4.6 + PR4.5 visible wiring) ──
     // Overwrites the stub registered above — SlotRegistry::register replaces on same Screen (design D3).
     // Keep an Arc handle so callbacks can call apply / switch without moving the boxed slot.
-    let gallery_tm = std::sync::Arc::new(std::sync::Mutex::new(crate::theme_manager::ThemeManager::new(&config_dir)));
+    let gallery_tm = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::theme_manager::ThemeManager::new(&config_dir),
+    ));
     let gallery_slot = {
         {
             let mut gtm = gallery_tm.lock().unwrap();
@@ -3496,10 +3622,18 @@ fn main() -> Result<(), slint::PlatformError> {
         // Wrapper so the registry owns a box but we keep the Arc handle.
         struct ArcSlot(std::sync::Arc<crate::shell::gallery::GallerySlot>);
         impl crate::shell::slots::Slot for ArcSlot {
-            fn screen(&self) -> crate::shell::nav::Screen { self.0.screen() }
-            fn on_mount(&self) { self.0.on_mount() }
-            fn on_unmount(&self) { self.0.on_unmount() }
-            fn label(&self, tr: &crate::tr::Tr) -> slint::SharedString { self.0.label(tr) }
+            fn screen(&self) -> crate::shell::nav::Screen {
+                self.0.screen()
+            }
+            fn on_mount(&self) {
+                self.0.on_mount()
+            }
+            fn on_unmount(&self) {
+                self.0.on_unmount()
+            }
+            fn label(&self, tr: &crate::tr::Tr) -> slint::SharedString {
+                self.0.label(tr)
+            }
         }
         shell::Shell::register_slot(&shell, Box::new(ArcSlot(slot.clone())));
         tracing::info!("[shell] GallerySlot registered (PR4) replacing StubSlot — i18n Gallery");
@@ -3569,19 +3703,19 @@ fn main() -> Result<(), slint::PlatformError> {
                 justified_hero_layout, mosaic_curtain_delays,
             };
             use slint::{Model, ModelRc, VecModel};
-            let Some(w) = weak.upgrade() else { return; };
+            let Some(w) = weak.upgrade() else {
+                return;
+            };
             let cards = w.get_gallery_cards();
             let real_count = cards.row_count();
-            let (stage_w, stage_h) = dims
-                .lock()
-                .unwrap()
-                .as_ref()
-                .copied()
-                .unwrap_or_else(|| {
-                    let scale = w.window().scale_factor();
-                    let physical = w.window().size();
-                    (physical.width as f32 / scale, physical.height as f32 / scale)
-                });
+            let (stage_w, stage_h) = dims.lock().unwrap().as_ref().copied().unwrap_or_else(|| {
+                let scale = w.window().scale_factor();
+                let physical = w.window().size();
+                (
+                    physical.width as f32 / scale,
+                    physical.height as f32 / scale,
+                )
+            });
             if !(stage_w > 0.0) || !(stage_h > 0.0) {
                 return;
             }
@@ -3612,7 +3746,10 @@ fn main() -> Result<(), slint::PlatformError> {
             w.set_gallery_mosaic_current_page(pg.current() as i32);
             w.set_gallery_mosaic_total_pages(pg.total_pages() as i32);
             w.set_gallery_mosaic_page_numbers(ModelRc::new(VecModel::from(
-                pg.page_numbers().iter().map(|n| *n as i32).collect::<Vec<i32>>(),
+                pg.page_numbers()
+                    .iter()
+                    .map(|n| *n as i32)
+                    .collect::<Vec<i32>>(),
             )));
             // Tramo 9: on page flips snapshot the outgoing tiles as the under layer
             // so the curtain sweeps the incoming image over a frozen copy of the
@@ -3621,25 +3758,36 @@ fn main() -> Result<(), slint::PlatformError> {
             // cards[real_index] (same binding pattern as live tiles).
             if is_flip {
                 let tiles_rc = w.get_gallery_mosaic_tiles();
-                if let Some(tiles) =
-                    tiles_rc.as_any().downcast_ref::<VecModel<crate::MosaicTileData>>()
+                if let Some(tiles) = tiles_rc
+                    .as_any()
+                    .downcast_ref::<VecModel<crate::MosaicTileData>>()
                 {
-                    let snapshot: Vec<crate::MosaicTileData> =
-                        (0..tiles.row_count()).filter_map(|i| tiles.row_data(i)).collect();
+                    let snapshot: Vec<crate::MosaicTileData> = (0..tiles.row_count())
+                        .filter_map(|i| tiles.row_data(i))
+                        .collect();
                     w.set_gallery_mosaic_under_tiles(ModelRc::new(VecModel::from(snapshot)));
                 }
             } else {
-                w.set_gallery_mosaic_under_tiles(ModelRc::new(VecModel::from(Vec::<crate::MosaicTileData>::new())));
+                w.set_gallery_mosaic_under_tiles(ModelRc::new(VecModel::from(Vec::<
+                    crate::MosaicTileData,
+                >::new(
+                ))));
             }
             let tiles_rc = w.get_gallery_mosaic_tiles();
-            let Some(tiles) =
-                tiles_rc.as_any().downcast_ref::<VecModel<crate::MosaicTileData>>()
+            let Some(tiles) = tiles_rc
+                .as_any()
+                .downcast_ref::<VecModel<crate::MosaicTileData>>()
             else {
                 return;
             };
             while tiles.row_count() < layout.tiles.len() {
                 tiles.push(crate::MosaicTileData {
-                    x: 0.0, y: 0.0, w: 0.0, h: 0.0, real_index: 0, delay_ms: 0,
+                    x: 0.0,
+                    y: 0.0,
+                    w: 0.0,
+                    h: 0.0,
+                    real_index: 0,
+                    delay_ms: 0,
                 });
             }
             while tiles.row_count() > layout.tiles.len() {
@@ -3649,7 +3797,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 tiles.set_row_data(
                     i,
                     crate::MosaicTileData {
-                        x: t.x, y: t.y, w: t.w, h: t.h,
+                        x: t.x,
+                        y: t.y,
+                        w: t.w,
+                        h: t.h,
                         real_index: *r as i32,
                         delay_ms: delays.get(i).copied().unwrap_or(0) as i32,
                     },
@@ -3684,41 +3835,72 @@ fn main() -> Result<(), slint::PlatformError> {
         let dims = stage_dims.clone();
         std::sync::Arc::new(move |focused: usize| {
             use slint::{Model, ModelRc, VecModel};
-            let Some(w) = weak.upgrade() else { return; };
+            let Some(w) = weak.upgrade() else {
+                return;
+            };
             let cards = w.get_gallery_cards();
             let real_count = cards.row_count() as usize;
             if real_count == 0 {
-                w.set_gallery_slice_tiles(ModelRc::new(VecModel::from(Vec::<crate::SliceTileData>::new())));
+                w.set_gallery_slice_tiles(ModelRc::new(VecModel::from(
+                    Vec::<crate::SliceTileData>::new(),
+                )));
                 return;
             }
             let focused = focused.min(real_count.saturating_sub(1));
-            let (stage_w, _stage_h) = dims
-                .lock()
-                .unwrap()
-                .as_ref()
-                .copied()
-                .unwrap_or_else(|| {
-                    let scale = w.window().scale_factor();
-                    let physical = w.window().size();
-                    (physical.width as f32 / scale, physical.height as f32 / scale)
-                });
+            let (stage_w, _stage_h) = dims.lock().unwrap().as_ref().copied().unwrap_or_else(|| {
+                let scale = w.window().scale_factor();
+                let physical = w.window().size();
+                (
+                    physical.width as f32 / scale,
+                    physical.height as f32 / scale,
+                )
+            });
             if !(stage_w > 0.0) {
                 return;
             }
-            let tiles = crate::shell::gallery::views::slice::slice_delta_tiles(real_count, focused, stage_w);
+            let tiles = crate::shell::gallery::views::slice::slice_delta_tiles(
+                real_count, focused, stage_w,
+            );
             let tiles_rc = w.get_gallery_slice_tiles();
-            if let Some(vm) = tiles_rc.as_any().downcast_ref::<VecModel<crate::SliceTileData>>() {
+            if let Some(vm) = tiles_rc
+                .as_any()
+                .downcast_ref::<VecModel<crate::SliceTileData>>()
+            {
                 while vm.row_count() < tiles.len() {
-                    vm.push(crate::SliceTileData { delta: 0, real_index: 0, is_expanded: false, fade: 1.0, dist: 0 });
+                    vm.push(crate::SliceTileData {
+                        delta: 0,
+                        real_index: 0,
+                        is_expanded: false,
+                        fade: 1.0,
+                        dist: 0,
+                    });
                 }
                 while vm.row_count() > tiles.len() {
                     vm.remove(vm.row_count() - 1);
                 }
                 for (i, t) in tiles.iter().enumerate() {
-                    vm.set_row_data(i, crate::SliceTileData { delta: t.delta, real_index: t.real_index as i32, is_expanded: t.is_expanded, fade: t.fade, dist: t.dist });
+                    vm.set_row_data(
+                        i,
+                        crate::SliceTileData {
+                            delta: t.delta,
+                            real_index: t.real_index as i32,
+                            is_expanded: t.is_expanded,
+                            fade: t.fade,
+                            dist: t.dist,
+                        },
+                    );
                 }
             } else {
-                let slint_tiles: Vec<crate::SliceTileData> = tiles.into_iter().map(|t| crate::SliceTileData { delta: t.delta, real_index: t.real_index as i32, is_expanded: t.is_expanded, fade: t.fade, dist: t.dist }).collect();
+                let slint_tiles: Vec<crate::SliceTileData> = tiles
+                    .into_iter()
+                    .map(|t| crate::SliceTileData {
+                        delta: t.delta,
+                        real_index: t.real_index as i32,
+                        is_expanded: t.is_expanded,
+                        fade: t.fade,
+                        dist: t.dist,
+                    })
+                    .collect();
                 w.set_gallery_slice_tiles(ModelRc::new(VecModel::from(slint_tiles)));
             }
         })
@@ -3737,7 +3919,9 @@ fn main() -> Result<(), slint::PlatformError> {
         let rebuild = rebuild_slice_tiles.clone();
         let virtual_focus = slice_virtual_focus.clone();
         std::sync::Arc::new(move || {
-            let Some(w) = weak.upgrade() else { return; };
+            let Some(w) = weak.upgrade() else {
+                return;
+            };
             let focused = w.get_gallery_focused().max(0) as usize;
             virtual_focus.store(focused as i32, std::sync::atomic::Ordering::Relaxed);
             rebuild(focused);
@@ -3767,7 +3951,9 @@ fn main() -> Result<(), slint::PlatformError> {
         let slice_virtual_focus = slice_virtual_focus.clone();
         std::sync::Arc::new(move |delta: isize| {
             use slint::Model;
-            let Some(w) = weak.upgrade() else { return; };
+            let Some(w) = weak.upgrade() else {
+                return;
+            };
             if delta == 0 {
                 return;
             }
@@ -3787,7 +3973,8 @@ fn main() -> Result<(), slint::PlatformError> {
             // the infinite carousel breaks after a few full laps.
             let current_pos = w.get_gallery_slice_focus_pos();
             let virtual_cur = slice_virtual_focus.load(std::sync::atomic::Ordering::Relaxed);
-            let step = crate::shell::gallery::views::slice::focus_step(virtual_cur, current_pos, delta);
+            let step =
+                crate::shell::gallery::views::slice::focus_step(virtual_cur, current_pos, delta);
             slice_virtual_focus.store(step.virtual_next, std::sync::atomic::Ordering::Relaxed);
             let idle = (current_pos - virtual_cur as f32).abs() < 0.001;
             // Advance the base and relabel deltas (visual no-op), then move
@@ -3855,8 +4042,12 @@ fn main() -> Result<(), slint::PlatformError> {
         if !sources.is_empty() {
             let count = model.row_count() as usize;
             priority.insert(focused % count.max(1));
-            if focused > 0 { priority.insert((focused - 1) % count.max(1)); }
-            if count > 1 { priority.insert((focused + 1) % count); }
+            if focused > 0 {
+                priority.insert((focused - 1) % count.max(1));
+            }
+            if count > 1 {
+                priority.insert((focused + 1) % count);
+            }
         }
         drop(w);
         let ready_weak = weak.clone();
@@ -3866,82 +4057,89 @@ fn main() -> Result<(), slint::PlatformError> {
             return;
         }
         let pending = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(jobs.len()));
-        thumbs::preheat(jobs, move |idx, name, png, hero_png, slat_rgba, slat_expanded_rgba| {
-            if let Some(w) = ready_weak.upgrade() {
-                let model = w.get_gallery_cards();
-                // Two file-handle loads remain (GPU handles) — all pixel bakes stay in worker
-                let img = slint::Image::load_from_path(&png).unwrap_or_default();
-                let hero_img = slint::Image::load_from_path(&hero_png).unwrap_or_default();
-                let slat = if slat_rgba.width() == 0 || slat_rgba.height() == 0 {
-                    slint::Image::default()
-                } else {
-                    let (w, h) = (slat_rgba.width(), slat_rgba.height());
-                    let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
-                    buf.make_mut_bytes().copy_from_slice(slat_rgba.as_raw());
-                    slint::Image::from_rgba8(buf)
-                };
-                let slat_expanded = if slat_expanded_rgba.width() == 0 || slat_expanded_rgba.height() == 0 {
-                    slint::Image::default()
-                } else {
-                    let (w, h) = (slat_expanded_rgba.width(), slat_expanded_rgba.height());
-                    let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
-                    buf.make_mut_bytes().copy_from_slice(slat_expanded_rgba.as_raw());
-                    slint::Image::from_rgba8(buf)
-                };
-                // Fast path: the planned index still points at the same theme.
-                // On a mismatch the theme list was rebuilt while this batch was
-                // in flight, so the positional handshake shifted — repair by
-                // NAME over the model's current rows instead of dropping the
-                // payload (a name absent from the list is a deleted theme, the
-                // only payload we may drop, and never silently).
-                let exact = model
-                    .row_data(idx)
-                    .is_some_and(|row| row.name.as_str() == &*name);
-                let target = if exact {
-                    Some(idx)
-                } else {
-                    let rows: Vec<(usize, String)> = (0..model.row_count())
-                        .filter_map(|i| model.row_data(i).map(|r| (i as usize, r.name.to_string())))
-                        .collect();
-                    match thumbs::resolve_row_index(&rows, idx, &name) {
-                        Some(found) => {
-                            if found != idx {
-                                tracing::debug!(
-                                    theme = %name,
-                                    expected = idx,
-                                    found,
-                                    "gallery thumb index shifted; resolved by name"
-                                );
+        thumbs::preheat(
+            jobs,
+            move |idx, name, png, hero_png, slat_rgba, slat_expanded_rgba| {
+                if let Some(w) = ready_weak.upgrade() {
+                    let model = w.get_gallery_cards();
+                    // Two file-handle loads remain (GPU handles) — all pixel bakes stay in worker
+                    let img = slint::Image::load_from_path(&png).unwrap_or_default();
+                    let hero_img = slint::Image::load_from_path(&hero_png).unwrap_or_default();
+                    let slat = if slat_rgba.width() == 0 || slat_rgba.height() == 0 {
+                        slint::Image::default()
+                    } else {
+                        let (w, h) = (slat_rgba.width(), slat_rgba.height());
+                        let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+                        buf.make_mut_bytes().copy_from_slice(slat_rgba.as_raw());
+                        slint::Image::from_rgba8(buf)
+                    };
+                    let slat_expanded =
+                        if slat_expanded_rgba.width() == 0 || slat_expanded_rgba.height() == 0 {
+                            slint::Image::default()
+                        } else {
+                            let (w, h) = (slat_expanded_rgba.width(), slat_expanded_rgba.height());
+                            let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+                            buf.make_mut_bytes()
+                                .copy_from_slice(slat_expanded_rgba.as_raw());
+                            slint::Image::from_rgba8(buf)
+                        };
+                    // Fast path: the planned index still points at the same theme.
+                    // On a mismatch the theme list was rebuilt while this batch was
+                    // in flight, so the positional handshake shifted — repair by
+                    // NAME over the model's current rows instead of dropping the
+                    // payload (a name absent from the list is a deleted theme, the
+                    // only payload we may drop, and never silently).
+                    let exact = model
+                        .row_data(idx)
+                        .is_some_and(|row| row.name.as_str() == &*name);
+                    let target = if exact {
+                        Some(idx)
+                    } else {
+                        let rows: Vec<(usize, String)> = (0..model.row_count())
+                            .filter_map(|i| {
+                                model.row_data(i).map(|r| (i as usize, r.name.to_string()))
+                            })
+                            .collect();
+                        match thumbs::resolve_row_index(&rows, idx, &name) {
+                            Some(found) => {
+                                if found != idx {
+                                    tracing::debug!(
+                                        theme = %name,
+                                        expected = idx,
+                                        found,
+                                        "gallery thumb index shifted; resolved by name"
+                                    );
+                                }
+                                Some(found)
                             }
-                            Some(found)
+                            None => {
+                                tracing::warn!(
+                                    theme = %name,
+                                    index = idx,
+                                    "gallery thumb dropped: theme no longer in the list"
+                                );
+                                None
+                            }
                         }
-                        None => {
-                            tracing::warn!(
-                                theme = %name,
-                                index = idx,
-                                "gallery thumb dropped: theme no longer in the list"
-                            );
-                            None
+                    };
+                    if let Some(found) = target {
+                        if let Some(mut row) = model.row_data(found) {
+                            row.thumb = img;
+                            row.hero = hero_img;
+                            row.slat_image = slat;
+                            row.slat_expanded_image = slat_expanded;
+                            model.set_row_data(found, row);
                         }
                     }
-                };
-                if let Some(found) = target {
-                    if let Some(mut row) = model.row_data(found) {
-                        row.thumb = img;
-                        row.hero = hero_img;
-                        row.slat_image = slat;
-                        row.slat_expanded_image = slat_expanded;
-                        model.set_row_data(found, row);
+                    if thumbs::is_last_completion(&pending) {
+                        // Every path counts toward batch completion for coalescing
+                        refresh_clone(false); // thumb completion: not a flip
                     }
+                } else if thumbs::is_last_completion(&pending) {
+                    refresh_clone(false);
                 }
-                if thumbs::is_last_completion(&pending) {
-                    // Every path counts toward batch completion for coalescing
-                    refresh_clone(false); // thumb completion: not a flip
-                }
-            } else if thumbs::is_last_completion(&pending) {
-                refresh_clone(false);
-            }
-        });
+            },
+        );
     }
     {
         window.set_gallery_mosaic_tiles(ModelRc::new(VecModel::from(
@@ -3957,7 +4155,9 @@ fn main() -> Result<(), slint::PlatformError> {
         let carried = {
             let prev = window.get_gallery_cards();
             use slint::Model as _;
-            let rows: Vec<crate::GalleryCardData> = (0..prev.row_count()).filter_map(|i| prev.row_data(i)).collect();
+            let rows: Vec<crate::GalleryCardData> = (0..prev.row_count())
+                .filter_map(|i| prev.row_data(i))
+                .collect();
             crate::shell::gallery::model::carry_over_bakes(&rows, cards)
         };
         let empty = carried.is_empty();
@@ -3969,7 +4169,12 @@ fn main() -> Result<(), slint::PlatformError> {
         crate::gallery_note_startup(&window);
         refresh_mosaic_page(false); // startup: no under layer
         refresh_slice_ring();
-        schedule_thumbs(&window.as_weak(), &gallery_themes_root, &stage_dims, refresh_mosaic_page.clone());
+        schedule_thumbs(
+            &window.as_weak(),
+            &gallery_themes_root,
+            &stage_dims,
+            refresh_mosaic_page.clone(),
+        );
         // Slint-driven stage geometry: recompute BOTH models whenever the
         // gallery stage resizes (shared plumbing, reused for mosaic + slice ring).
         // Only the tiles MODEL is mutated here — never width/height — so
@@ -4312,7 +4517,9 @@ fn main() -> Result<(), slint::PlatformError> {
         }
         window.set_gallery_empty_text(SharedString::from(gallery_slot.empty_message()));
         window.set_gallery_mit_footer(SharedString::from(gallery_slot.mit_footer()));
-        window.set_gallery_mit_link(SharedString::from(crate::shell::gallery::model::MIT_FOOTER_LINK));
+        window.set_gallery_mit_link(SharedString::from(
+            crate::shell::gallery::model::MIT_FOOTER_LINK,
+        ));
         // The keeper's choice, not a hardcoded Slider: `/mosaic` stays `/mosaic`.
         apply_gallery_style(&window, sanitized_gallery_style(cfg.gallery_style));
         // Slider opens on the active theme — never hardcoded 0.
@@ -4332,7 +4539,10 @@ fn main() -> Result<(), slint::PlatformError> {
             // through the slot — same idiom as the card-clicked handler.
             let gallery_state_c = gallery_state_slot.clone();
             window.on_gallery_style_selected(move |style| {
-                tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("gallery style-selected style={style}")));
+                tracing::debug!(
+                    "{}",
+                    crate::callbacks::mouse_trace(&format!("gallery style-selected style={style}"))
+                );
                 let idx = (style as usize).min(2);
                 if let Some(w) = win.upgrade() {
                     let _style = match idx {
@@ -4367,7 +4577,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     if len > 0 && cur >= len {
                         w.set_gallery_focused(len - 1);
                     }
-                    let _ = slot.effective_anim_duration(crate::shell::gallery::views::CHROME_SWITCH_DURATION_MS);
+                    let _ = slot.effective_anim_duration(
+                        crate::shell::gallery::views::CHROME_SWITCH_DURATION_MS,
+                    );
                     refresh_slice();
                 }
             });
@@ -4378,7 +4590,10 @@ fn main() -> Result<(), slint::PlatformError> {
             let shell_c = shell.clone();
             let gtm = gallery_tm.clone();
             window.on_gallery_card_right_clicked(move |idx| {
-                tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("gallery card-right-clicked idx={idx}")));
+                tracing::debug!(
+                    "{}",
+                    crate::callbacks::mouse_trace(&format!("gallery card-right-clicked idx={idx}"))
+                );
                 if crate::shell::Shell::is_mutating(&shell_c) {
                     tracing::debug!("[gallery] card-right-clicked ignored — mutating");
                     return;
@@ -4391,7 +4606,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     if len > 0 {
                         let cur = w.get_gallery_focused().max(0) as usize;
                         let target = (idx.max(0) as usize).min(len - 1);
-                        let delta = crate::shell::gallery::views::slice::ring_shortest_delta(cur, target, len);
+                        let delta = crate::shell::gallery::views::slice::ring_shortest_delta(
+                            cur, target, len,
+                        );
                         if delta != 0 {
                             animate(delta);
                         } else {
@@ -4439,7 +4656,9 @@ fn main() -> Result<(), slint::PlatformError> {
                 if crate::shell::Shell::is_mutating(&shell_c) {
                     return;
                 }
-                let Some(w) = win.upgrade() else { return; };
+                let Some(w) = win.upgrade() else {
+                    return;
+                };
                 let rects = mosaic_tile_rects(&w);
                 if rects.is_empty() {
                     return;
@@ -4476,12 +4695,17 @@ fn main() -> Result<(), slint::PlatformError> {
                         // re-anchor onto the new page's tile for a moment,
                         // showing one theme and applying another.
                         close_gallery_info(&w);
-                        let step = if matches!(dir, MosaicDir::Right | MosaicDir::Down) { 1 } else { -1 };
+                        let step = if matches!(dir, MosaicDir::Right | MosaicDir::Down) {
+                            1
+                        } else {
+                            -1
+                        };
                         let changed = pages.lock().map(|mut p| p.step(step)).unwrap_or(false);
                         if changed {
                             refresh(true);
                             // Page-edge stepping uses the FRESH tile count.
-                            let last = w.get_gallery_mosaic_tiles().row_count().saturating_sub(1) as i32;
+                            let last =
+                                w.get_gallery_mosaic_tiles().row_count().saturating_sub(1) as i32;
                             let pos = if step > 0 { 0 } else { last };
                             w.set_gallery_mosaic_cursor(pos);
                             remember_mosaic_cursor_theme(&w, &pages, pos);
@@ -4500,7 +4724,9 @@ fn main() -> Result<(), slint::PlatformError> {
                 if crate::shell::Shell::is_mutating(&shell_c) {
                     return;
                 }
-                let Some(w) = win.upgrade() else { return; };
+                let Some(w) = win.upgrade() else {
+                    return;
+                };
                 if let Some(real) = mosaic_tile_real(&w, pos) {
                     // The keyboard continues from where the mouse left off.
                     w.set_gallery_mosaic_cursor(pos);
@@ -4521,14 +4747,18 @@ fn main() -> Result<(), slint::PlatformError> {
                 if crate::shell::Shell::is_mutating(&shell_c) {
                     return;
                 }
-                let Some(w) = win.upgrade() else { return; };
+                let Some(w) = win.upgrade() else {
+                    return;
+                };
                 let cur = w.get_gallery_mosaic_cursor();
                 if cur < 0 {
                     w.set_gallery_mosaic_cursor(0);
                     remember_mosaic_cursor_theme(&w, &pages, 0);
                     return;
                 }
-                let Some(real) = mosaic_tile_real(&w, cur) else { return; };
+                let Some(real) = mosaic_tile_real(&w, cur) else {
+                    return;
+                };
                 // Only a FULLY grown card applies: a card that is still growing
                 // (or already contracting, e.g. right after Escape) must not.
                 let grown = w.get_gallery_mosaic_card_open() && w.get_gallery_mosaic_face_open();
@@ -4585,14 +4815,21 @@ fn main() -> Result<(), slint::PlatformError> {
             let win = window.as_weak();
             window.on_panel_save_nav(move |delta| {
                 tracing::debug!("[panel][kbd] save-nav delta={} (arrow)", delta);
-                let Some(w) = win.upgrade() else { return; };
+                let Some(w) = win.upgrade() else {
+                    return;
+                };
                 use slint::Model as _;
                 // PanelRoot reads root.theme-names (panel-save-theme-names is
                 // a shell binding), so the list length comes from there.
                 let len = w.get_theme_names().row_count();
                 let before = w.get_panel_save_focused_index();
                 let after = callbacks::save_nav_step(before, delta, len);
-                tracing::debug!("[panel][kbd] save-nav {} -> {} (len={})", before, after, len);
+                tracing::debug!(
+                    "[panel][kbd] save-nav {} -> {} (len={})",
+                    before,
+                    after,
+                    len
+                );
                 w.set_panel_save_focused_index(after);
             });
         }
@@ -4601,8 +4838,13 @@ fn main() -> Result<(), slint::PlatformError> {
             // continue from where the mouse left off (keyboard == mouse, D8).
             let win = window.as_weak();
             window.on_panel_save_focus_requested(move |idx| {
-                tracing::debug!("[panel][mouse] focus-requested idx={} (click on Save row)", idx);
-                let Some(w) = win.upgrade() else { return; };
+                tracing::debug!(
+                    "[panel][mouse] focus-requested idx={} (click on Save row)",
+                    idx
+                );
+                let Some(w) = win.upgrade() else {
+                    return;
+                };
                 w.set_panel_save_focused_index(idx);
             });
         }
@@ -4655,7 +4897,10 @@ fn main() -> Result<(), slint::PlatformError> {
     // home-none-* removed — Active config display moved
     window.set_home_active_theme_name(cfg.last_applied_theme.clone().into());
     window.set_home_about_title(tr.tr_shared("home.about_title", "About HVE"));
-    window.set_home_about_short(tr.tr_shared("home.about_short", "Hyprland Visual Editor makes your desktop truly yours."));
+    window.set_home_about_short(tr.tr_shared(
+        "home.about_short",
+        "Hyprland Visual Editor makes your desktop truly yours.",
+    ));
     window.set_home_about_full(tr.tr_shared("home.about_full", "HVE is a graphical app to visually manage your Hyprland desktop aesthetics: animations, borders, rounded corners, window gaps, and visual effects — all with live preview.\n\nThe Themes tab lets you save, apply, rename, and delete full configurations, including static and animated (mpvpaper) wallpapers depending on the active provider (your shell provider, HVE presets, and wallpapers).\n\nIt also includes tiling mode, auto-minimize on focus loss, autostart with your session, full keyboard navigation, Spanish/English languages, and system tray control.\n\nEverything applies safely: HVE assembles fragments and never rewrites your personal config. When you disable the system or uninstall, a watchdog cleans up and your original config always stays intact."));
     window.set_home_about_tree_label(tr.tr_shared("home.about_tree_label", "Project structure"));
     let tree_paths: Vec<SharedString> = tr.tr_array("home.about_tree_paths");
@@ -4672,30 +4917,46 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_home_about_docs_label(tr.tr_shared("home.about_docs", "View documentation"));
     let about_items: Vec<AboutItem> = vec![
         AboutItem {
-            text: tr.tr_shared("home.about_line_1", "Live preview — tweak and see it instantly"),
+            text: tr.tr_shared(
+                "home.about_line_1",
+                "Live preview — tweak and see it instantly",
+            ),
             color: Color::from_rgb_u8(251, 191, 36),
         },
         AboutItem {
-            text: tr.tr_shared("home.about_line_2", "Safe assembly — zero risk to your configs"),
+            text: tr.tr_shared(
+                "home.about_line_2",
+                "Safe assembly — zero risk to your configs",
+            ),
             color: Color::from_rgb_u8(16, 185, 129),
         },
         AboutItem {
-            text: tr.tr_shared("home.about_line_3", "Hot reload — apply without restarting Hyprland"),
+            text: tr.tr_shared(
+                "home.about_line_3",
+                "Hot reload — apply without restarting Hyprland",
+            ),
             color: Color::from_rgb_u8(56, 189, 248),
         },
         AboutItem {
-            text: tr.tr_shared("home.about_line_4", "Fragments — composable pieces, not one huge file"),
+            text: tr.tr_shared(
+                "home.about_line_4",
+                "Fragments — composable pieces, not one huge file",
+            ),
             color: Color::from_rgb_u8(192, 132, 252),
         },
         AboutItem {
-            text: tr.tr_shared("home.about_line_5", "Themes — save and apply complete configurations"),
+            text: tr.tr_shared(
+                "home.about_line_5",
+                "Themes — save and apply complete configurations",
+            ),
             color: Color::from_rgb_u8(56, 189, 248),
         },
     ];
     window.set_home_about_items(ModelRc::new(VecModel::from(about_items)));
 
     // ── i18n: Settings strings ──
-    window.set_settings_restart_banner(tr.tr_shared("settings.restart_banner", "⚠ Restart required"));
+    window
+        .set_settings_restart_banner(tr.tr_shared("settings.restart_banner", "⚠ Restart required"));
     window.set_settings_restart_button(tr.tr_shared("settings.restart_button", "Restart"));
     window.set_settings_title(tr.tr_shared("settings.title", "Settings"));
     window.set_auto_minimize_label(tr.tr_shared("settings.auto_minimize", "Hide delay"));
@@ -4735,12 +4996,7 @@ fn main() -> Result<(), slint::PlatformError> {
     // to seed — skip it (same reason `sync_border_tune_pane` guards on empty).
     if !cfg.active_border_file.is_empty() {
         let geometry = crate::callbacks::BorderGeometry::from_config(&cfg);
-        crate::seed_borders_pane_from_persisted(
-            &window,
-            &proj,
-            &cfg.active_border_file,
-            geometry,
-        );
+        crate::seed_borders_pane_from_persisted(&window, &proj, &cfg.active_border_file, geometry);
     }
 
     // ── Central view-model: Config + Engine + ThemeManager behind one lock ──
@@ -4785,13 +5041,17 @@ fn main() -> Result<(), slint::PlatformError> {
         let proj_c = proj.clone();
         let weak = window.as_weak();
         window.on_panel_section_selected(move |section| {
-            tracing::debug!("[panel][mouse] section-selected section={} (rail click)", section);
+            tracing::debug!(
+                "[panel][mouse] section-selected section={} (rail click)",
+                section
+            );
             if crate::shell::Shell::is_mutating(&shell_c) {
                 tracing::debug!("[panel] section-selected ignored — mutating");
                 return;
             }
             let idx = section.max(0) as usize;
-            let target = crate::shell::nav::PanelSection::from_index(idx).unwrap_or(crate::shell::nav::PanelSection::Save);
+            let target = crate::shell::nav::PanelSection::from_index(idx)
+                .unwrap_or(crate::shell::nav::PanelSection::Save);
             let (is_closed, is_open, prev_section) = crate::shell::Shell::with_nav(&shell_c, |n| {
                 let state = n.panel_state();
                 let is_closed = state == crate::shell::nav::PanelState::Closed;
@@ -4799,7 +5059,12 @@ fn main() -> Result<(), slint::PlatformError> {
                 let prev = n.panel_section();
                 (is_closed, is_open, prev)
             });
-            tracing::debug!("[panel] section-selected target={:?} is_closed={} is_open={}", target, is_closed, is_open);
+            tracing::debug!(
+                "[panel] section-selected target={:?} is_closed={} is_open={}",
+                target,
+                is_closed,
+                is_open
+            );
             if is_closed {
                 let _ = crate::shell::Shell::enter_panel(&shell_c, target);
             } else if is_open {
@@ -4836,7 +5101,12 @@ fn main() -> Result<(), slint::PlatformError> {
                                 crate::callbacks::BorderGeometry::from_config(st.cfg()),
                             )
                         };
-                        crate::seed_borders_pane_from_persisted(&w, &proj_c, &active_file, geometry);
+                        crate::seed_borders_pane_from_persisted(
+                            &w,
+                            &proj_c,
+                            &active_file,
+                            geometry,
+                        );
                     }
                 }
             }
@@ -4904,7 +5174,13 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         window.on_panel_save_theme(move |name| {
             let name_str = name.to_string();
-            tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("save-theme name={} (save button/enter)", name_str.trim())));
+            tracing::debug!(
+                "{}",
+                crate::callbacks::mouse_trace(&format!(
+                    "save-theme name={} (save button/enter)",
+                    name_str.trim()
+                ))
+            );
             let trimmed = name_str.trim().to_string();
             if trimmed.is_empty() {
                 if let Some(w) = weak.upgrade() {
@@ -4916,7 +5192,11 @@ fn main() -> Result<(), slint::PlatformError> {
             // Existing name → overwrite confirm dialog (tranche B), no silent save
             let exists = {
                 let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
-                st.theme_manager().list().unwrap_or_default().iter().any(|t| t.name == trimmed)
+                st.theme_manager()
+                    .list()
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|t| t.name == trimmed)
             };
             if exists {
                 if let Some(w) = weak.upgrade() {
@@ -4993,7 +5273,9 @@ fn main() -> Result<(), slint::PlatformError> {
                                     border_size: card.border.size,
                                     border_radius: card.border.radius,
                                     border_color: crate::theme::parse_hex(&card.border.color),
-                                    shader: slint::SharedString::from(card.shader.clone().unwrap_or_default()),
+                                    shader: slint::SharedString::from(
+                                        card.shader.clone().unwrap_or_default(),
+                                    ),
                                     thumb_path: slint::SharedString::from(
                                         card.thumb_path
                                             .as_ref()
@@ -5038,56 +5320,79 @@ fn main() -> Result<(), slint::PlatformError> {
                             if row.thumb.size().width > 0 {
                                 continue;
                             }
-                            let src = thumbs::plan_preview_source(&gallery_themes_root2.join(row.name.as_str()));
+                            let src = thumbs::plan_preview_source(
+                                &gallery_themes_root2.join(row.name.as_str()),
+                            );
                             sources.push((i as usize, row.name.to_string(), src));
                         }
                     }
                     if !sources.is_empty() {
-                        let pending = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(sources.len()));
+                        let pending =
+                            std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(sources.len()));
                         let jobs = thumbs::plan_jobs(sources);
                         if !jobs.is_empty() {
                             let pending_c = pending.clone();
-                            thumbs::preheat(jobs, move |idx, name, png, hero_png, slat_rgba, slat_expanded_rgba| {
-                                if let Some(w2) = weak2.upgrade() {
-                                    let model2 = w2.get_gallery_cards();
-                                    let img = slint::Image::load_from_path(&png).unwrap_or_default();
-                                    let hero_img = slint::Image::load_from_path(&hero_png).unwrap_or_default();
-                                    let slat = if slat_rgba.width() == 0 || slat_rgba.height() == 0 {
-                                        slint::Image::default()
-                                    } else {
-                                        let (sw, sh) = (slat_rgba.width(), slat_rgba.height());
-                                        let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(sw, sh);
-                                        buf.make_mut_bytes().copy_from_slice(slat_rgba.as_raw());
-                                        slint::Image::from_rgba8(buf)
-                                    };
-                                    let slat_exp = if slat_expanded_rgba.width() == 0 || slat_expanded_rgba.height() == 0 {
-                                        slint::Image::default()
-                                    } else {
-                                        let (sw, sh) = (slat_expanded_rgba.width(), slat_expanded_rgba.height());
-                                        let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(sw, sh);
-                                        buf.make_mut_bytes().copy_from_slice(slat_expanded_rgba.as_raw());
-                                        slint::Image::from_rgba8(buf)
-                                    };
-                                    if let Some(mut row) = model2.row_data(idx) {
-                                        if row.name.as_str() == &*name {
-                                            row.thumb = img;
-                                            row.hero = hero_img;
-                                            row.slat_image = slat;
-                                            row.slat_expanded_image = slat_exp;
-                                            model2.set_row_data(idx, row);
-                                            if thumbs::is_last_completion(&pending_c) {
+                            thumbs::preheat(
+                                jobs,
+                                move |idx, name, png, hero_png, slat_rgba, slat_expanded_rgba| {
+                                    if let Some(w2) = weak2.upgrade() {
+                                        let model2 = w2.get_gallery_cards();
+                                        let img =
+                                            slint::Image::load_from_path(&png).unwrap_or_default();
+                                        let hero_img = slint::Image::load_from_path(&hero_png)
+                                            .unwrap_or_default();
+                                        let slat = if slat_rgba.width() == 0
+                                            || slat_rgba.height() == 0
+                                        {
+                                            slint::Image::default()
+                                        } else {
+                                            let (sw, sh) = (slat_rgba.width(), slat_rgba.height());
+                                            let mut buf =
+                                                slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(
+                                                    sw, sh,
+                                                );
+                                            buf.make_mut_bytes()
+                                                .copy_from_slice(slat_rgba.as_raw());
+                                            slint::Image::from_rgba8(buf)
+                                        };
+                                        let slat_exp = if slat_expanded_rgba.width() == 0
+                                            || slat_expanded_rgba.height() == 0
+                                        {
+                                            slint::Image::default()
+                                        } else {
+                                            let (sw, sh) = (
+                                                slat_expanded_rgba.width(),
+                                                slat_expanded_rgba.height(),
+                                            );
+                                            let mut buf =
+                                                slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(
+                                                    sw, sh,
+                                                );
+                                            buf.make_mut_bytes()
+                                                .copy_from_slice(slat_expanded_rgba.as_raw());
+                                            slint::Image::from_rgba8(buf)
+                                        };
+                                        if let Some(mut row) = model2.row_data(idx) {
+                                            if row.name.as_str() == &*name {
+                                                row.thumb = img;
+                                                row.hero = hero_img;
+                                                row.slat_image = slat;
+                                                row.slat_expanded_image = slat_exp;
+                                                model2.set_row_data(idx, row);
+                                                if thumbs::is_last_completion(&pending_c) {
+                                                    refresh_mosaic_page2(false);
+                                                }
+                                            } else if thumbs::is_last_completion(&pending_c) {
                                                 refresh_mosaic_page2(false);
                                             }
                                         } else if thumbs::is_last_completion(&pending_c) {
                                             refresh_mosaic_page2(false);
                                         }
-                                    } else if thumbs::is_last_completion(&pending_c) {
+                                    } else if thumbs::is_last_completion(&pending) {
                                         refresh_mosaic_page2(false);
                                     }
-                                } else if thumbs::is_last_completion(&pending) {
-                                    refresh_mosaic_page2(false);
-                                }
-                            });
+                                },
+                            );
                         }
                     }
                 }
@@ -5110,7 +5415,10 @@ fn main() -> Result<(), slint::PlatformError> {
             let guard_permits = guard_permits;
             let guard_block_message = guard_block_message.clone();
             window.on_panel_apply_saved_theme(move |idx| {
-                tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("apply-saved-theme idx={idx}")));
+                tracing::debug!(
+                    "{}",
+                    crate::callbacks::mouse_trace(&format!("apply-saved-theme idx={idx}"))
+                );
                 if !guard_permits {
                     tracing::warn!("[guard] saved-theme apply refused (migration guard)");
                     if let Some(w) = weak.upgrade() {
@@ -5121,9 +5429,15 @@ fn main() -> Result<(), slint::PlatformError> {
                 let i = idx.max(0) as usize;
                 let name_opt = {
                     let guard = gallery_tm_c.lock().unwrap();
-                    guard.list().unwrap_or_default().get(i).map(|info| info.name.clone())
+                    guard
+                        .list()
+                        .unwrap_or_default()
+                        .get(i)
+                        .map(|info| info.name.clone())
                 };
-                let Some(name) = name_opt else { return; };
+                let Some(name) = name_opt else {
+                    return;
+                };
                 // W2 consent gate: the SAME rule as the gallery path. The
                 // gate holds a risky package and shows the warning; Continue
                 // re-invokes this callback with the one-shot confirmation.
@@ -5194,12 +5508,23 @@ fn main() -> Result<(), slint::PlatformError> {
             let refresh_slice_ring_c = refresh_slice_ring.clone();
             let weak = window.as_weak();
             window.on_panel_rename_saved_theme(move |old, new| {
-                tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("rename-saved-theme old={old} new={new}")));
+                tracing::debug!(
+                    "{}",
+                    crate::callbacks::mouse_trace(&format!(
+                        "rename-saved-theme old={old} new={new}"
+                    ))
+                );
                 let (old_str, new_str) = (old.to_string(), new.to_string());
                 let mut error_msg = String::new();
                 let ok = {
                     let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
-                    let r = callbacks::handle_panel_rename(&old_str, &new_str, st.theme_manager_mut(), &slot_c, &mut error_msg);
+                    let r = callbacks::handle_panel_rename(
+                        &old_str,
+                        &new_str,
+                        st.theme_manager_mut(),
+                        &slot_c,
+                        &mut error_msg,
+                    );
                     if r {
                         // Rename moves last_applied in the manager — mirror to
                         // cfg or the next startup loses the active card.
@@ -5208,7 +5533,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                     r
                 };
-                let Some(w) = weak.upgrade() else { return; };
+                let Some(w) = weak.upgrade() else {
+                    return;
+                };
                 if !ok {
                     w.set_panel_save_error(error_msg.clone().into());
                     w.set_theme_error_text(error_msg.into());
@@ -5222,7 +5549,13 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 // Rename changes no artwork: empty invalidation set keeps
                 // every bake (no flicker for unrelated cards).
-                sync_save_gallery_ui(&w, &gallery_tm_c, &refresh_mosaic_page_c, &refresh_slice_ring_c, &std::collections::HashSet::new());
+                sync_save_gallery_ui(
+                    &w,
+                    &gallery_tm_c,
+                    &refresh_mosaic_page_c,
+                    &refresh_slice_ring_c,
+                    &std::collections::HashSet::new(),
+                );
             });
         }
         {
@@ -5233,16 +5566,28 @@ fn main() -> Result<(), slint::PlatformError> {
             let refresh_slice_ring_c = refresh_slice_ring.clone();
             let weak = window.as_weak();
             window.on_panel_delete_saved_theme(move |name| {
-                tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("delete-saved-theme name={name}")));
+                tracing::debug!(
+                    "{}",
+                    crate::callbacks::mouse_trace(&format!("delete-saved-theme name={name}"))
+                );
                 let name_str = name.to_string();
                 let del_idx = {
                     let gtm = gallery_tm_c.lock().unwrap();
-                    gtm.list().unwrap_or_default().iter().position(|t| t.name == name_str).unwrap_or(0)
+                    gtm.list()
+                        .unwrap_or_default()
+                        .iter()
+                        .position(|t| t.name == name_str)
+                        .unwrap_or(0)
                 };
                 let mut error_msg = String::new();
                 let ok = {
                     let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
-                    let r = callbacks::handle_panel_delete(&name_str, st.theme_manager_mut(), &slot_c, &mut error_msg);
+                    let r = callbacks::handle_panel_delete(
+                        &name_str,
+                        st.theme_manager_mut(),
+                        &slot_c,
+                        &mut error_msg,
+                    );
                     if r {
                         // Delete clears last_applied when the active theme is
                         // removed — mirror so cfg never names a ghost theme.
@@ -5251,7 +5596,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                     r
                 };
-                let Some(w) = weak.upgrade() else { return; };
+                let Some(w) = weak.upgrade() else {
+                    return;
+                };
                 if !ok {
                     w.set_panel_save_error(error_msg.clone().into());
                     w.set_theme_error_text(error_msg.into());
@@ -5263,9 +5610,20 @@ fn main() -> Result<(), slint::PlatformError> {
                     let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
                     st.refresh_theme_list(&w);
                 }
-                sync_save_gallery_ui(&w, &gallery_tm_c, &refresh_mosaic_page_c, &refresh_slice_ring_c, &std::collections::HashSet::new());
+                sync_save_gallery_ui(
+                    &w,
+                    &gallery_tm_c,
+                    &refresh_mosaic_page_c,
+                    &refresh_slice_ring_c,
+                    &std::collections::HashSet::new(),
+                );
                 // Focus the neighbor that takes the deleted slot (next, or previous if last)
-                let new_len = gallery_tm_c.lock().unwrap().list().unwrap_or_default().len();
+                let new_len = gallery_tm_c
+                    .lock()
+                    .unwrap()
+                    .list()
+                    .unwrap_or_default()
+                    .len();
                 w.set_panel_save_focused_index(callbacks::focus_after_delete(del_idx, new_len));
             });
         }
@@ -5286,10 +5644,16 @@ fn main() -> Result<(), slint::PlatformError> {
                     // does not change it during the call.
                     let refreshed = st.theme_manager().last_applied.clone();
                     let mut gtm = gallery_tm_c.lock().unwrap();
-                    let ok = callbacks::handle_panel_refresh(st.theme_manager_mut(), &mut gtm, &mut error_msg);
+                    let ok = callbacks::handle_panel_refresh(
+                        st.theme_manager_mut(),
+                        &mut gtm,
+                        &mut error_msg,
+                    );
                     (ok, refreshed)
                 };
-                let Some(w) = weak.upgrade() else { return; };
+                let Some(w) = weak.upgrade() else {
+                    return;
+                };
                 if !ok {
                     w.set_panel_save_error(error_msg.clone().into());
                     w.set_theme_error_text(error_msg.into());
@@ -5311,8 +5675,19 @@ fn main() -> Result<(), slint::PlatformError> {
                 // cheap, and unrelated cards keep their bakes (no mass
                 // invalidation, no flicker).
                 let invalidated = refresh_invalidation_set(&refreshed);
-                sync_save_gallery_ui(&w, &gallery_tm_c, &refresh_mosaic_page_c, &refresh_slice_ring_c, &invalidated);
-                schedule_thumbs(&weak, &gallery_themes_root_c, &stage_dims_c, refresh_mosaic_page_c.clone());
+                sync_save_gallery_ui(
+                    &w,
+                    &gallery_tm_c,
+                    &refresh_mosaic_page_c,
+                    &refresh_slice_ring_c,
+                    &invalidated,
+                );
+                schedule_thumbs(
+                    &weak,
+                    &gallery_themes_root_c,
+                    &stage_dims_c,
+                    refresh_mosaic_page_c.clone(),
+                );
             });
         }
         {
@@ -5324,15 +5699,27 @@ fn main() -> Result<(), slint::PlatformError> {
             let stage_dims_c = stage_dims.clone();
             let weak = window.as_weak();
             window.on_panel_overwrite_saved_theme(move |name| {
-                tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("overwrite-saved-theme name={name}")));
+                tracing::debug!(
+                    "{}",
+                    crate::callbacks::mouse_trace(&format!("overwrite-saved-theme name={name}"))
+                );
                 let name_str = name.to_string();
                 let mut error_msg = String::new();
                 let ok = {
                     let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
                     let mut gtm = gallery_tm_c.lock().unwrap();
-                    callbacks::handle_panel_save(&name_str, st.theme_manager_mut(), &mut gtm, || {}, || {}, &mut error_msg)
+                    callbacks::handle_panel_save(
+                        &name_str,
+                        st.theme_manager_mut(),
+                        &mut gtm,
+                        || {},
+                        || {},
+                        &mut error_msg,
+                    )
                 };
-                let Some(w) = weak.upgrade() else { return; };
+                let Some(w) = weak.upgrade() else {
+                    return;
+                };
                 if !ok {
                     w.set_panel_save_error(error_msg.clone().into());
                     w.set_theme_error_text(error_msg.into());
@@ -5354,16 +5741,32 @@ fn main() -> Result<(), slint::PlatformError> {
                 // cards keep their bakes (no mass invalidation, no flicker).
                 let mut invalidated = std::collections::HashSet::new();
                 invalidated.insert(name_str.clone());
-                sync_save_gallery_ui(&w, &gallery_tm_c, &refresh_mosaic_page_c, &refresh_slice_ring_c, &invalidated);
-                schedule_thumbs(&weak, &gallery_themes_root_c, &stage_dims_c, refresh_mosaic_page_c.clone());
+                sync_save_gallery_ui(
+                    &w,
+                    &gallery_tm_c,
+                    &refresh_mosaic_page_c,
+                    &refresh_slice_ring_c,
+                    &invalidated,
+                );
+                schedule_thumbs(
+                    &weak,
+                    &gallery_themes_root_c,
+                    &stage_dims_c,
+                    refresh_mosaic_page_c.clone(),
+                );
             });
         }
         {
             let state_c = state.clone();
             let weak = window.as_weak();
             window.on_panel_save_search_changed(move |query| {
-                tracing::debug!("{}", crate::callbacks::mouse_trace(&format!("save-search-changed q={query}")));
-                let Some(w) = weak.upgrade() else { return; };
+                tracing::debug!(
+                    "{}",
+                    crate::callbacks::mouse_trace(&format!("save-search-changed q={query}"))
+                );
+                let Some(w) = weak.upgrade() else {
+                    return;
+                };
                 let q = query.to_string();
                 if q.trim().is_empty() {
                     let st = state_c.lock().unwrap_or_else(|e| e.into_inner());
@@ -5374,10 +5777,14 @@ fn main() -> Result<(), slint::PlatformError> {
                 let rows = callbacks::save_list_rows(st.theme_manager());
                 let out = callbacks::filter_saved_rows(&q, &rows);
                 w.set_theme_names(slint::ModelRc::new(slint::VecModel::from(
-                    out.iter().map(|(n, _, _)| slint::SharedString::from(n.as_str())).collect::<Vec<_>>(),
+                    out.iter()
+                        .map(|(n, _, _)| slint::SharedString::from(n.as_str()))
+                        .collect::<Vec<_>>(),
                 )));
                 w.set_theme_saved_ats(slint::ModelRc::new(slint::VecModel::from(
-                    out.iter().map(|(_, d, _)| slint::SharedString::from(d.as_str())).collect::<Vec<_>>(),
+                    out.iter()
+                        .map(|(_, d, _)| slint::SharedString::from(d.as_str()))
+                        .collect::<Vec<_>>(),
                 )));
                 w.set_theme_is_actives(slint::ModelRc::new(slint::VecModel::from(
                     out.iter().map(|(_, _, a)| *a).collect::<Vec<_>>(),
@@ -5392,7 +5799,9 @@ fn main() -> Result<(), slint::PlatformError> {
         window.set_panel_save_button_text(tr.tr_shared("themes.save_button", "Save"));
         window.set_panel_save_error("".into());
         // Save classic tranche A: search + card action labels (themes.* keys exist in en/es.json)
-        window.set_panel_save_search_placeholder(tr.tr_shared("themes.search_placeholder", "Search themes..."));
+        window.set_panel_save_search_placeholder(
+            tr.tr_shared("themes.search_placeholder", "Search themes..."),
+        );
         window.set_panel_save_empty_text(tr.tr_shared("themes.empty", "No themes yet."));
         window.set_panel_save_apply_text(tr.tr_shared("themes.apply", "Apply"));
         window.set_panel_save_refresh_text(tr.tr_shared("themes.refresh", "Refresh"));
@@ -5401,39 +5810,48 @@ fn main() -> Result<(), slint::PlatformError> {
         // Save classic tranche B: dialog texts (themes.* keys in en/es.json)
         window.set_panel_save_rename_title(tr.tr_shared("themes.rename_title", "Rename theme"));
         window.set_panel_save_confirm_delete(tr.tr_shared("themes.confirm_delete", "Delete theme"));
-        window.set_panel_save_confirm_delete_msg(tr.tr_shared("themes.confirm_delete_msg", "Are you sure you want to delete"));
-        window.set_panel_save_confirm_refresh(tr.tr_shared("themes.confirm_refresh", "Refresh theme"));
-        window.set_panel_save_confirm_refresh_msg(tr.tr_shared("themes.confirm_refresh_msg", "This will reload the theme with the current configuration. Continue?"));
-        window.set_panel_save_overwrite_title(tr.tr_shared("themes.overwrite_title", "Overwrite theme"));
-        window.set_panel_save_overwrite_msg(tr.tr_shared("themes.overwrite_msg", "already exists. Overwrite it with the current setup?"));
+        window.set_panel_save_confirm_delete_msg(tr.tr_shared(
+            "themes.confirm_delete_msg",
+            "Are you sure you want to delete",
+        ));
+        window.set_panel_save_confirm_refresh(
+            tr.tr_shared("themes.confirm_refresh", "Refresh theme"),
+        );
+        window.set_panel_save_confirm_refresh_msg(tr.tr_shared(
+            "themes.confirm_refresh_msg",
+            "This will reload the theme with the current configuration. Continue?",
+        ));
+        window.set_panel_save_overwrite_title(
+            tr.tr_shared("themes.overwrite_title", "Overwrite theme"),
+        );
+        window.set_panel_save_overwrite_msg(tr.tr_shared(
+            "themes.overwrite_msg",
+            "already exists. Overwrite it with the current setup?",
+        ));
         window.set_panel_save_cancel_text(tr.tr_shared("themes.cancel", "Cancel"));
         // Preset rename/delete dialogs (Borders + Motion) — same shared dialog
         // component as the theme Save section, with the section's own strings.
-        window.set_border_rename_title(tr.tr_shared(
-            "borders.rename_dialog.title",
-            "Rename border preset",
-        ));
-        window.set_border_delete_title(tr.tr_shared(
-            "borders.delete_dialog.title",
-            "Delete border preset",
-        ));
+        window.set_border_rename_title(
+            tr.tr_shared("borders.rename_dialog.title", "Rename border preset"),
+        );
+        window.set_border_delete_title(
+            tr.tr_shared("borders.delete_dialog.title", "Delete border preset"),
+        );
         window.set_border_delete_msg(tr.tr_shared(
             "borders.delete_dialog.message",
             "Are you sure you want to delete",
         ));
         window.set_border_cancel_text(tr.tr_shared("themes.cancel", "Cancel"));
-        window.set_animation_rename_title(tr.tr_shared(
-            "animations.rename_dialog.title",
-            "Rename animation preset",
-        ));
+        window.set_animation_rename_title(
+            tr.tr_shared("animations.rename_dialog.title", "Rename animation preset"),
+        );
         window.set_animation_rename_placeholder(tr.tr_shared(
             "animations.rename_dialog.placeholder",
             "Animation preset name…",
         ));
-        window.set_animation_delete_title(tr.tr_shared(
-            "animations.delete_dialog.title",
-            "Delete animation preset",
-        ));
+        window.set_animation_delete_title(
+            tr.tr_shared("animations.delete_dialog.title", "Delete animation preset"),
+        );
         window.set_animation_delete_msg(tr.tr_shared(
             "animations.delete_dialog.message",
             "Are you sure you want to delete",
@@ -5467,7 +5885,13 @@ fn main() -> Result<(), slint::PlatformError> {
         let persist_pending = geometry_persist_pending.clone();
         let persist_timer = geometry_persist_timer.clone();
         window.on_panel_apply_geometry(move |size, radius, gap_in, gap_out| {
-            tracing::debug!("[borders][mouse|kbd] apply-geometry size={} radius={} gap_in={} gap_out={}", size, radius, gap_in, gap_out);
+            tracing::debug!(
+                "[borders][mouse|kbd] apply-geometry size={} radius={} gap_in={} gap_out={}",
+                size,
+                radius,
+                gap_in,
+                gap_out
+            );
             if !guard_permits {
                 tracing::warn!("[guard] geometry apply refused (migration guard)");
                 if let Some(w) = weak.upgrade() {
@@ -5475,7 +5899,12 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 return;
             }
-            let next = callbacks::BorderGeometry { size, radius, gap_in, gap_out };
+            let next = callbacks::BorderGeometry {
+                size,
+                radius,
+                gap_in,
+                gap_out,
+            };
             {
                 let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
                 let prev = callbacks::BorderGeometry {
@@ -5523,7 +5952,11 @@ fn main() -> Result<(), slint::PlatformError> {
         let guard_block_message = guard_block_message.clone();
         let proj_c = proj.clone();
         window.on_panel_apply_border(move |idx, file| {
-            tracing::debug!("[borders][mouse|kbd] apply-border idx={} file={} (click/card)", idx, file);
+            tracing::debug!(
+                "[borders][mouse|kbd] apply-border idx={} file={} (click/card)",
+                idx,
+                file
+            );
             if !guard_permits {
                 tracing::warn!("[guard] border apply refused (migration guard)");
                 if let Some(w) = weak.upgrade() {
@@ -5584,7 +6017,11 @@ fn main() -> Result<(), slint::PlatformError> {
         let guard_permits = guard_permits;
         let guard_block_message = guard_block_message.clone();
         window.on_panel_apply_animation(move |idx, file| {
-            tracing::debug!("[motion][mouse|kbd] apply-animation idx={} file={}", idx, file);
+            tracing::debug!(
+                "[motion][mouse|kbd] apply-animation idx={} file={}",
+                idx,
+                file
+            );
             if !guard_permits {
                 tracing::warn!("[guard] animation apply refused (migration guard)");
                 if let Some(w) = weak.upgrade() {
@@ -5599,8 +6036,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 // canonical record and the bare stem a USER card sends toggle
                 // the same preset; canonical record, so the config never holds
                 // the stem the click arrived with.
-                let (is_deact, recorded) =
-                    preset_card_click(&st.cfg().active_anim_file, &file_str);
+                let (is_deact, recorded) = preset_card_click(&st.cfg().active_anim_file, &file_str);
                 st.cfg_mut().active_anim_file = recorded.clone();
                 let _ = st.cfg().save();
                 let res = if is_deact {
@@ -5644,11 +6080,15 @@ fn main() -> Result<(), slint::PlatformError> {
                 let r = store.save(&name_str, &content);
                 if r.is_ok() {
                     let store2 = PresetStore::new("borders");
-                    let names: Vec<_> = store2.list()
+                    let names: Vec<_> = store2
+                        .list()
                         .into_iter()
                         .map(|n| slint::SharedString::from(n.as_str()))
                         .collect();
-                    let tags: Vec<_> = names.iter().map(|_| slint::SharedString::from("CUSTOM")).collect();
+                    let tags: Vec<_> = names
+                        .iter()
+                        .map(|_| slint::SharedString::from("CUSTOM"))
+                        .collect();
                     w.set_user_border_preset_names(slint::ModelRc::from(names.as_slice()));
                     w.set_user_border_preset_tags(slint::ModelRc::from(tags.as_slice()));
                     w.set_border_save_error(String::new().into());
@@ -5740,13 +6180,17 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             } else if let Some(w) = weak.upgrade() {
                 let store = crate::preset_store::PresetStore::new("borders");
-                let names: Vec<_> = store.list()
+                let names: Vec<_> = store
+                    .list()
                     .into_iter()
                     .map(|n| slint::SharedString::from(n.as_str()))
                     .collect();
-                let tags: Vec<_> = names.iter().map(|_| slint::SharedString::from("CUSTOM")).collect();
-                    w.set_user_border_preset_names(slint::ModelRc::from(names.as_slice()));
-                    w.set_user_border_preset_tags(slint::ModelRc::from(tags.as_slice()));
+                let tags: Vec<_> = names
+                    .iter()
+                    .map(|_| slint::SharedString::from("CUSTOM"))
+                    .collect();
+                w.set_user_border_preset_names(slint::ModelRc::from(names.as_slice()));
+                w.set_user_border_preset_tags(slint::ModelRc::from(tags.as_slice()));
             }
         });
     }
@@ -5766,13 +6210,17 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             } else if let Some(w) = weak.upgrade() {
                 let store = crate::preset_store::PresetStore::new("borders");
-                let names: Vec<_> = store.list()
+                let names: Vec<_> = store
+                    .list()
                     .into_iter()
                     .map(|n| slint::SharedString::from(n.as_str()))
                     .collect();
-                let tags: Vec<_> = names.iter().map(|_| slint::SharedString::from("CUSTOM")).collect();
-                    w.set_user_border_preset_names(slint::ModelRc::from(names.as_slice()));
-                    w.set_user_border_preset_tags(slint::ModelRc::from(tags.as_slice()));
+                let tags: Vec<_> = names
+                    .iter()
+                    .map(|_| slint::SharedString::from("CUSTOM"))
+                    .collect();
+                w.set_user_border_preset_names(slint::ModelRc::from(names.as_slice()));
+                w.set_user_border_preset_tags(slint::ModelRc::from(tags.as_slice()));
             }
         });
     }
@@ -5810,8 +6258,12 @@ fn main() -> Result<(), slint::PlatformError> {
             let params = crate::border_preset::BorderParams {
                 active_colors: PresetStore::decode_colors(&colors_joined),
                 angle,
-                inactive: PresetStore::decode_colors(&inactive.to_string()).into_iter().next()
-                    .unwrap_or(crate::border_preset::BorderColor::Token(crate::border_preset::PaletteToken::SurfaceLowest)),
+                inactive: PresetStore::decode_colors(&inactive.to_string())
+                    .into_iter()
+                    .next()
+                    .unwrap_or(crate::border_preset::BorderColor::Token(
+                        crate::border_preset::PaletteToken::SurfaceLowest,
+                    )),
                 border_size: Some(size),
                 glow: PresetStore::decode_glow(&glow.to_string()),
                 rule_enabled: rule,
@@ -5831,9 +6283,10 @@ fn main() -> Result<(), slint::PlatformError> {
                         // stale state from this failed attempt.
                         PresetStore::remove_draft(&proj_c);
                         if let Some(w) = weak.upgrade() {
-                            w.set_border_save_error(slint::SharedString::from(
-                                &format!("Live preview failed: {}", e),
-                            ));
+                            w.set_border_save_error(slint::SharedString::from(&format!(
+                                "Live preview failed: {}",
+                                e
+                            )));
                         }
                     } else if let Some(w) = weak.upgrade() {
                         // Clear any previous error on successful apply
@@ -5850,9 +6303,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 Err(e) => {
                     tracing::error!("[borders][tune] draft write failed: {}", e);
                     if let Some(w) = weak.upgrade() {
-                        w.set_border_save_error(slint::SharedString::from(
-                            &format!("Draft write failed: {}", e),
-                        ));
+                        w.set_border_save_error(slint::SharedString::from(&format!(
+                            "Draft write failed: {}",
+                            e
+                        )));
                     }
                 }
             }
@@ -5902,11 +6356,15 @@ fn main() -> Result<(), slint::PlatformError> {
                 let r = store.save(&name_str, &content);
                 if r.is_ok() {
                     let store2 = crate::preset_store::PresetStore::new("animations");
-                    let names: Vec<_> = store2.list()
+                    let names: Vec<_> = store2
+                        .list()
                         .into_iter()
                         .map(|n| slint::SharedString::from(n.as_str()))
                         .collect();
-                    let tags: Vec<_> = names.iter().map(|_| slint::SharedString::from("CUSTOM")).collect();
+                    let tags: Vec<_> = names
+                        .iter()
+                        .map(|_| slint::SharedString::from("CUSTOM"))
+                        .collect();
                     w.set_user_animation_preset_names(slint::ModelRc::from(names.as_slice()));
                     w.set_user_animation_preset_tags(slint::ModelRc::from(tags.as_slice()));
                     w.set_animation_save_error(String::new().into());
@@ -5986,11 +6444,15 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             } else if let Some(w) = weak.upgrade() {
                 let store = crate::preset_store::PresetStore::new("animations");
-                let names: Vec<_> = store.list()
+                let names: Vec<_> = store
+                    .list()
                     .into_iter()
                     .map(|n| slint::SharedString::from(n.as_str()))
                     .collect();
-                let tags: Vec<_> = names.iter().map(|_| slint::SharedString::from("CUSTOM")).collect();
+                let tags: Vec<_> = names
+                    .iter()
+                    .map(|_| slint::SharedString::from("CUSTOM"))
+                    .collect();
                 w.set_user_animation_preset_names(slint::ModelRc::from(names.as_slice()));
                 w.set_user_animation_preset_tags(slint::ModelRc::from(tags.as_slice()));
             }
@@ -6012,11 +6474,15 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             } else if let Some(w) = weak.upgrade() {
                 let store = crate::preset_store::PresetStore::new("animations");
-                let names: Vec<_> = store.list()
+                let names: Vec<_> = store
+                    .list()
                     .into_iter()
                     .map(|n| slint::SharedString::from(n.as_str()))
                     .collect();
-                let tags: Vec<_> = names.iter().map(|_| slint::SharedString::from("CUSTOM")).collect();
+                let tags: Vec<_> = names
+                    .iter()
+                    .map(|_| slint::SharedString::from("CUSTOM"))
+                    .collect();
                 w.set_user_animation_preset_names(slint::ModelRc::from(names.as_slice()));
                 w.set_user_animation_preset_tags(slint::ModelRc::from(tags.as_slice()));
             }
@@ -6029,7 +6495,11 @@ fn main() -> Result<(), slint::PlatformError> {
         let guard_permits = guard_permits;
         let guard_block_message = guard_block_message.clone();
         window.on_panel_apply_shader(move |idx, file| {
-            tracing::debug!("[filters][mouse|kbd] apply-shader idx={} file={}", idx, file);
+            tracing::debug!(
+                "[filters][mouse|kbd] apply-shader idx={} file={}",
+                idx,
+                file
+            );
             if !guard_permits {
                 tracing::warn!("[guard] shader apply refused (migration guard)");
                 if let Some(w) = weak.upgrade() {
@@ -6041,7 +6511,11 @@ fn main() -> Result<(), slint::PlatformError> {
             let (is_deact, result) = {
                 let mut st = state_c.lock().unwrap_or_else(|e| e.into_inner());
                 let is_deact = st.cfg().active_shader_file == file_str;
-                let new = if is_deact { String::new() } else { file_str.clone() };
+                let new = if is_deact {
+                    String::new()
+                } else {
+                    file_str.clone()
+                };
                 st.cfg_mut().active_shader_file = new.clone();
                 let _ = st.cfg().save();
                 let arg = if is_deact { "none" } else { &new };
@@ -6145,7 +6619,11 @@ fn main() -> Result<(), slint::PlatformError> {
         // confirmation-gated fullscreen retries. The window is never shown
         // until it is ready, so a manual launch lands straight in
         // fullscreen Gallery instead of a small floating frame.
-        let startup_tiling = state.lock().unwrap_or_else(|e| e.into_inner()).cfg().tiling_mode;
+        let startup_tiling = state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .cfg()
+            .tiling_mode;
         let rules_changed = if guard_permits {
             set_tiling_window_rules(startup_tiling)
         } else {
@@ -6197,11 +6675,7 @@ fn main() -> Result<(), slint::PlatformError> {
     // whole drag and the next `hyprctl reload` would revert the value the user
     // just saw. The idle timer can never fire again, so stop it and run the
     // same drain synchronously before the process leaves.
-    flush_geometry_persist(
-        &geometry_persist_timer,
-        &geometry_persist_pending,
-        &state,
-    );
+    flush_geometry_persist(&geometry_persist_timer, &geometry_persist_pending, &state);
 
     // Clean up IPC socket after the event loop stops
     ipc::cleanup();
@@ -6312,7 +6786,9 @@ mod tests {
         );
 
         let too_large = ThemeTrustReport {
-            shell_hooks: vec![hook("x".repeat(crate::theme_trust::MAX_REMEMBERED_THEME_BYTES + 1))],
+            shell_hooks: vec![hook(
+                "x".repeat(crate::theme_trust::MAX_REMEMBERED_THEME_BYTES + 1),
+            )],
             lua_presets: Vec::new(),
         };
         assert!(
@@ -6330,8 +6806,14 @@ mod tests {
     #[test]
     fn the_log_rotates_only_past_the_two_mib_cap() {
         assert!(!log_rotate_due(0), "an empty log never rotates");
-        assert!(!log_rotate_due(LOG_ROTATE_BYTES), "exactly at the cap is still fine");
-        assert!(log_rotate_due(LOG_ROTATE_BYTES + 1), "one byte past the cap rotates");
+        assert!(
+            !log_rotate_due(LOG_ROTATE_BYTES),
+            "exactly at the cap is still fine"
+        );
+        assert!(
+            log_rotate_due(LOG_ROTATE_BYTES + 1),
+            "one byte past the cap rotates"
+        );
     }
 
     #[test]
@@ -6345,14 +6827,25 @@ mod tests {
         drop(writer);
 
         let rotated = std::fs::read(dir.path().join("hve.log.1")).expect("rotated file");
-        assert_eq!(rotated.len() as u64, LOG_ROTATE_BYTES + 1, "oversized file replaced .1");
-        assert_eq!(std::fs::metadata(&log).expect("fresh log").len(), 0, "fresh log starts empty");
+        assert_eq!(
+            rotated.len() as u64,
+            LOG_ROTATE_BYTES + 1,
+            "oversized file replaced .1"
+        );
+        assert_eq!(
+            std::fs::metadata(&log).expect("fresh log").len(),
+            0,
+            "fresh log starts empty"
+        );
 
         // Degradation path: a path that cannot be a directory yields Err, never
         // a panic — the caller falls back to console-only logging.
         let blocker = dir.path().join("blocker");
         std::fs::write(&blocker, b"not a dir").expect("blocker file");
-        assert!(open_log_file_in(&blocker.join("hve")).is_err(), "unusable dir must return Err");
+        assert!(
+            open_log_file_in(&blocker.join("hve")).is_err(),
+            "unusable dir must return Err"
+        );
     }
 
     // ── W8: the logs are private (mode 0600) ─────────────────────────
@@ -6428,7 +6921,11 @@ mod tests {
         let log = dir.path().join("hve.log");
         std::fs::write(&log, b"keeper's earlier lines").expect("seed the old log");
         set_file_mode(&log, 0o644);
-        assert_eq!(file_mode(&log), 0o644, "fixture: the old log is world-readable");
+        assert_eq!(
+            file_mode(&log),
+            0o644,
+            "fixture: the old log is world-readable"
+        );
 
         let writer = open_log_file_in(dir.path()).expect("open must succeed");
         drop(writer);
@@ -6529,7 +7026,12 @@ mod tests {
             7
         ));
         // Nothing waiting: a stale signal must never drive a step.
-        assert!(!signal_advances_step(None, TransitionStep::Fullscreen, 7, 7));
+        assert!(!signal_advances_step(
+            None,
+            TransitionStep::Fullscreen,
+            7,
+            7
+        ));
         // A different step than the waiting one is refused.
         assert!(!signal_advances_step(
             Some(TransitionStep::Fullscreen),
@@ -6562,7 +7064,10 @@ mod tests {
         // The claim is the race breaker: whoever gets it runs the step; the
         // loser (the fallback timer, or a duplicate signal) is refused.
         *THEME_WAITING_STEP.lock().unwrap() = Some(TransitionStep::Fullscreen);
-        assert!(claim_waiting_step(TransitionStep::Fullscreen), "first claim wins");
+        assert!(
+            claim_waiting_step(TransitionStep::Fullscreen),
+            "first claim wins"
+        );
         assert!(
             !claim_waiting_step(TransitionStep::Fullscreen),
             "the same step cannot be claimed twice"
@@ -6601,12 +7106,12 @@ mod tests {
     #[serial_test::serial]
     fn only_a_waiting_transition_restarts_the_settle_window() {
         // A reload during the restore wait: the burst is still going.
-        assert!(reload_restarts_settle(
-            true,
+        assert!(reload_restarts_settle(true, Some(TransitionStep::Restore)));
+        // No transition: a reload must never arm anything.
+        assert!(!reload_restarts_settle(
+            false,
             Some(TransitionStep::Restore)
         ));
-        // No transition: a reload must never arm anything.
-        assert!(!reload_restarts_settle(false, Some(TransitionStep::Restore)));
         // Waiting on a different step: this reload is not ours.
         assert!(!reload_restarts_settle(
             true,
@@ -6655,7 +7160,10 @@ mod tests {
         assert_eq!(lua_literal(MaskKind::Flag, "1").as_deref(), Some("true"));
         assert_eq!(lua_literal(MaskKind::Flag, "true").as_deref(), Some("true"));
         assert_eq!(lua_literal(MaskKind::Flag, "0").as_deref(), Some("false"));
-        assert_eq!(lua_literal(MaskKind::Flag, "false").as_deref(), Some("false"));
+        assert_eq!(
+            lua_literal(MaskKind::Flag, "false").as_deref(),
+            Some("false")
+        );
         assert_eq!(lua_literal(MaskKind::Flag, "[EMPTY]"), None);
     }
 
@@ -6677,7 +7185,10 @@ mod tests {
         originals.insert("border", "2".to_string());
         originals.insert("shadow", "true".to_string());
         let payload = theme_mask_payload(false, &originals).expect("restore must build");
-        assert_eq!(payload, "hl.config({ decoration = { blur = { enabled = true } } })");
+        assert_eq!(
+            payload,
+            "hl.config({ decoration = { blur = { enabled = true } } })"
+        );
     }
 
     #[test]
@@ -6853,7 +7364,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn a_late_reapply_refuses_when_no_originals_are_left() {
         assert!(should_reapply(true, true));
@@ -6861,7 +7371,10 @@ mod tests {
             !should_reapply(true, false),
             "no originals -> nothing could ever restore it, so do not mask"
         );
-        assert!(!should_reapply(false, true), "not transitioning -> do not mask");
+        assert!(
+            !should_reapply(false, true),
+            "not transitioning -> do not mask"
+        );
     }
 
     #[test]
@@ -6880,7 +7393,10 @@ mod tests {
         assert!(build(&[("a b", "1")]).is_none(), "not an identifier");
         assert!(build(&[("a", "")]).is_none(), "empty literal");
         assert!(build(&[("a", "1abc")]).is_none(), "not a literal");
-        assert!(build(&[("a", "-3")]).is_some(), "negative integers are fine");
+        assert!(
+            build(&[("a", "-3")]).is_some(),
+            "negative integers are fine"
+        );
     }
 
     #[test]
@@ -6898,7 +7414,11 @@ mod tests {
         let text = r#"{"blur":"1","border":"2","shadow":"true","future_option":"9"}"#;
         let map = marker_from_json(text).expect("a usable marker");
         assert_eq!(map.get("blur").map(String::as_str), Some("1"));
-        assert_eq!(map.len(), 1, "only masked keys are kept; unknown/legacy keys are ignored");
+        assert_eq!(
+            map.len(),
+            1,
+            "only masked keys are kept; unknown/legacy keys are ignored"
+        );
         assert!(marker_from_json("not json").is_none());
         assert!(marker_from_json(r#"{"unrelated":"1"}"#).is_none());
     }
@@ -6974,9 +7494,18 @@ mod tests {
         let controller = composer::Controller::new(Box::new(fake));
 
         // Verify the Controller's initial state matches what main.rs expects
-        assert!(!controller.window_hidden(), "window should not be hidden at startup");
-        assert!(!controller.tray_mode(), "tray_mode should be false at startup");
-        assert!(controller.prev_workspace().is_none(), "no prev workspace at startup");
+        assert!(
+            !controller.window_hidden(),
+            "window should not be hidden at startup"
+        );
+        assert!(
+            !controller.tray_mode(),
+            "tray_mode should be false at startup"
+        );
+        assert!(
+            controller.prev_workspace().is_none(),
+            "no prev workspace at startup"
+        );
 
         // Verify the composer reference works
         let _composer = controller.composer();
@@ -6985,18 +7514,50 @@ mod tests {
     // ── Borders tune geometry — strict TDD slice 4 (debounce, skip-init, snap) ──
     #[test]
     fn test_geometry_debounce_last_wins() {
-        use crate::callbacks::{BorderGeometry, GeometryDebouncer, should_apply_geometry};
-        let initial = BorderGeometry { size: 2, radius: 32, gap_in: 5, gap_out: 5 };
+        use crate::callbacks::{should_apply_geometry, BorderGeometry, GeometryDebouncer};
+        let initial = BorderGeometry {
+            size: 2,
+            radius: 32,
+            gap_in: 5,
+            gap_out: 5,
+        };
         let mut d = GeometryDebouncer::new(initial);
         d.push(initial); // prime init skip
         let seq = [
-            BorderGeometry { size: 2, radius: 10, gap_in: 5, gap_out: 5 },
-            BorderGeometry { size: 2, radius: 20, gap_in: 5, gap_out: 5 },
-            BorderGeometry { size: 2, radius: 30, gap_in: 5, gap_out: 5 },
-            BorderGeometry { size: 2, radius: 40, gap_in: 5, gap_out: 5 },
-            BorderGeometry { size: 2, radius: 80, gap_in: 5, gap_out: 5 },
+            BorderGeometry {
+                size: 2,
+                radius: 10,
+                gap_in: 5,
+                gap_out: 5,
+            },
+            BorderGeometry {
+                size: 2,
+                radius: 20,
+                gap_in: 5,
+                gap_out: 5,
+            },
+            BorderGeometry {
+                size: 2,
+                radius: 30,
+                gap_in: 5,
+                gap_out: 5,
+            },
+            BorderGeometry {
+                size: 2,
+                radius: 40,
+                gap_in: 5,
+                gap_out: 5,
+            },
+            BorderGeometry {
+                size: 2,
+                radius: 80,
+                gap_in: 5,
+                gap_out: 5,
+            },
         ];
-        for g in seq { assert!(d.push(g)); }
+        for g in seq {
+            assert!(d.push(g));
+        }
         let flushed = d.flush().expect("last-wins flush");
         assert_eq!(flushed.radius, 80);
         assert!(should_apply_geometry(&initial, &flushed));
@@ -7006,10 +7567,23 @@ mod tests {
     fn test_skip_init_event() {
         use crate::callbacks::{BorderGeometry, GeometryDebouncer};
         let mut d = GeometryDebouncer::new(BorderGeometry::default());
-        assert!(!d.push(BorderGeometry { size: 3, radius: 10, gap_in: 5, gap_out: 5 }), "first event ignored");
+        assert!(
+            !d.push(BorderGeometry {
+                size: 3,
+                radius: 10,
+                gap_in: 5,
+                gap_out: 5
+            }),
+            "first event ignored"
+        );
         assert!(!d.has_pending());
         assert_eq!(d.flush(), None);
-        assert!(d.push(BorderGeometry { size: 3, radius: 10, gap_in: 5, gap_out: 5 }));
+        assert!(d.push(BorderGeometry {
+            size: 3,
+            radius: 10,
+            gap_in: 5,
+            gap_out: 5
+        }));
         assert!(d.has_pending());
     }
 
@@ -7111,12 +7685,14 @@ mod tests {
         let pending = std::rc::Rc::new(std::cell::RefCell::new(
             crate::callbacks::GeometryPersistCoalescer::default(),
         ));
-        pending.borrow_mut().request(crate::callbacks::BorderGeometry {
-            size: 5,
-            radius: 44,
-            gap_in: 8,
-            gap_out: 10,
-        });
+        pending
+            .borrow_mut()
+            .request(crate::callbacks::BorderGeometry {
+                size: 5,
+                radius: 44,
+                gap_in: 8,
+                gap_out: 10,
+            });
         let timer = slint::Timer::default();
 
         // Shutdown: no timer fire, just the flush.
@@ -7134,7 +7710,10 @@ mod tests {
         assert_eq!(on_disk.border_radius, 44);
         assert_eq!(on_disk.gaps_in, 8);
         assert_eq!(on_disk.gaps_out, 10);
-        assert!(!pending.borrow().has_pending(), "the flush consumed the owe");
+        assert!(
+            !pending.borrow().has_pending(),
+            "the flush consumed the owe"
+        );
 
         // A second flush owes nothing and must not run the durable path again.
         std::fs::remove_file(&record).unwrap();
@@ -7194,10 +7773,7 @@ mod tests {
         let syn::Expr::Path(path) = &*call.func else {
             return None;
         };
-        path.path
-            .segments
-            .last()
-            .map(|seg| seg.ident.to_string())
+        path.path.segments.last().map(|seg| seg.ident.to_string())
     }
 
     /// Index of the first top-level statement that is a plain call to `callee`.
@@ -7265,9 +7841,10 @@ mod tests {
             1,
             "main must call flush_geometry_persist exactly once"
         );
-        let flush = call_index(&body.stmts, FLUSH)
-            .expect("the single flush mention must be a plain top-level call, \
-                     never nested in a branch or loop");
+        let flush = call_index(&body.stmts, FLUSH).expect(
+            "the single flush mention must be a plain top-level call, \
+                     never nested in a branch or loop",
+        );
 
         // 2. It runs after the event loop returns and before teardown.
         let quit = call_index(&body.stmts, "run_event_loop_until_quit")
@@ -7309,9 +7886,10 @@ mod tests {
             1,
             "main must call panel_i18n::apply_borders exactly once"
         );
-        let apply = call_index(&body.stmts, APPLY)
-            .expect("the single apply_borders mention must be a plain top-level call, \
-                     never nested in a branch or loop");
+        let apply = call_index(&body.stmts, APPLY).expect(
+            "the single apply_borders mention must be a plain top-level call, \
+                     never nested in a branch or loop",
+        );
 
         // The panel is built from this global before the window is shown, so
         // the first frame is already translated.
@@ -7344,9 +7922,10 @@ mod tests {
             1,
             "main must call panel_i18n::apply_panel_chrome exactly once"
         );
-        let apply = call_index(&body.stmts, APPLY)
-            .expect("the single apply_panel_chrome mention must be a plain top-level call, \
-                     never nested in a branch or loop");
+        let apply = call_index(&body.stmts, APPLY).expect(
+            "the single apply_panel_chrome mention must be a plain top-level call, \
+                     never nested in a branch or loop",
+        );
 
         let quit = call_index(&body.stmts, "run_event_loop_until_quit");
         if let Some(quit) = quit {
@@ -7397,7 +7976,10 @@ mod tests {
         s.capture("2");
         assert_eq!(s.take_restore(), None, "no restore before mark_moved");
         s.mark_moved();
-        assert!(s.staged(), "mark_moved must be observable for the finale skip");
+        assert!(
+            s.staged(),
+            "mark_moved must be observable for the finale skip"
+        );
         assert_eq!(s.take_restore(), Some("2".to_string()));
         assert_eq!(s.take_restore(), None, "restore is consumed exactly once");
     }
@@ -7493,7 +8075,13 @@ mod tests {
         );
         // Never cycled (None) is not "inside the debounce window".
         assert_eq!(
-            reload_fs_action(false, true, true, false, Some(Duration::from_millis(REASSERT_DEBOUNCE_MS))),
+            reload_fs_action(
+                false,
+                true,
+                true,
+                false,
+                Some(Duration::from_millis(REASSERT_DEBOUNCE_MS))
+            ),
             ReloadFsAction::Cycle,
             "a cycle exactly at the debounce boundary is allowed"
         );
@@ -7530,7 +8118,13 @@ mod tests {
         // A cycle ran inside the debounce window — one visible cycle max
         // per 1.5s (the shared reassert contract).
         assert_eq!(
-            reload_fs_action(false, true, true, false, Some(Duration::from_millis(REASSERT_DEBOUNCE_MS - 1))),
+            reload_fs_action(
+                false,
+                true,
+                true,
+                false,
+                Some(Duration::from_millis(REASSERT_DEBOUNCE_MS - 1))
+            ),
             ReloadFsAction::Nothing(ReloadFsSkip::Debounced)
         );
     }
@@ -7543,49 +8137,64 @@ mod tests {
         use std::time::Duration;
 
         let mut cycles = 0;
-        let action = apply_reload_fs_action(
-            reload_fs_action(false, true, true, false, None),
-            || cycles += 1,
-        );
+        let action =
+            apply_reload_fs_action(reload_fs_action(false, true, true, false, None), || {
+                cycles += 1
+            });
         assert_eq!(action, ReloadFsAction::Cycle);
         assert_eq!(cycles, 1, "Cycle must run the shared cycle runner");
 
         let mut cycles = 0;
-        let hidden = apply_reload_fs_action(
-            reload_fs_action(false, false, true, false, None),
-            || cycles += 1,
+        let hidden =
+            apply_reload_fs_action(reload_fs_action(false, false, true, false, None), || {
+                cycles += 1
+            });
+        assert!(matches!(
+            hidden,
+            ReloadFsAction::Nothing(ReloadFsSkip::HveHidden)
+        ));
+        assert_eq!(
+            cycles, 0,
+            "firing while HVE is hidden is the parked-window bug"
         );
-        assert!(matches!(hidden, ReloadFsAction::Nothing(ReloadFsSkip::HveHidden)));
-        assert_eq!(cycles, 0, "firing while HVE is hidden is the parked-window bug");
 
         let mut cycles = 0;
-        let not_immersive = apply_reload_fs_action(
-            reload_fs_action(false, true, false, false, None),
-            || cycles += 1,
-        );
+        let not_immersive =
+            apply_reload_fs_action(reload_fs_action(false, true, false, false, None), || {
+                cycles += 1
+            });
         assert!(matches!(
             not_immersive,
             ReloadFsAction::Nothing(ReloadFsSkip::NotImmersive)
         ));
-        assert_eq!(cycles, 0, "the floating panel / collapsed Home must never be fullscreened");
+        assert_eq!(
+            cycles, 0,
+            "the floating panel / collapsed Home must never be fullscreened"
+        );
 
         let mut cycles = 0;
-        let transitioning = apply_reload_fs_action(
-            reload_fs_action(true, true, true, false, None),
-            || cycles += 1,
-        );
+        let transitioning =
+            apply_reload_fs_action(reload_fs_action(true, true, true, false, None), || {
+                cycles += 1
+            });
         assert!(matches!(
             transitioning,
             ReloadFsAction::Nothing(ReloadFsSkip::ThemeTransitionInFlight)
         ));
-        assert_eq!(cycles, 0, "the finale owns the cycle inside a theme transition");
+        assert_eq!(
+            cycles, 0,
+            "the finale owns the cycle inside a theme transition"
+        );
 
         let mut cycles = 0;
-        let fullscreen = apply_reload_fs_action(
-            reload_fs_action(false, true, true, true, None),
-            || cycles += 1,
-        );
-        assert!(matches!(fullscreen, ReloadFsAction::Nothing(ReloadFsSkip::AlreadyFullscreen)));
+        let fullscreen =
+            apply_reload_fs_action(reload_fs_action(false, true, true, true, None), || {
+                cycles += 1
+            });
+        assert!(matches!(
+            fullscreen,
+            ReloadFsAction::Nothing(ReloadFsSkip::AlreadyFullscreen)
+        ));
         assert_eq!(cycles, 0, "already fullscreen needs no cycle");
 
         let mut cycles = 0;
@@ -7593,8 +8202,14 @@ mod tests {
             reload_fs_action(false, true, true, false, Some(Duration::from_millis(100))),
             || cycles += 1,
         );
-        assert!(matches!(debounced, ReloadFsAction::Nothing(ReloadFsSkip::Debounced)));
-        assert_eq!(cycles, 0, "a cycle inside the debounce window must not stack");
+        assert!(matches!(
+            debounced,
+            ReloadFsAction::Nothing(ReloadFsSkip::Debounced)
+        ));
+        assert_eq!(
+            cycles, 0,
+            "a cycle inside the debounce window must not stack"
+        );
     }
 
     /// (d) The existing transition finale ownership is unchanged: no cycle
@@ -7603,15 +8218,18 @@ mod tests {
     #[test]
     fn transition_finale_ownership_unchanged_no_reload_cycle_in_flight() {
         let mut cycles = 0;
-        let action = apply_reload_fs_action(
-            reload_fs_action(true, true, true, false, None),
-            || cycles += 1,
-        );
+        let action =
+            apply_reload_fs_action(reload_fs_action(true, true, true, false, None), || {
+                cycles += 1
+            });
         assert!(matches!(
             action,
             ReloadFsAction::Nothing(ReloadFsSkip::ThemeTransitionInFlight)
         ));
-        assert_eq!(cycles, 0, "no reload restore may fire while the finale owns the cycle");
+        assert_eq!(
+            cycles, 0,
+            "no reload restore may fire while the finale owns the cycle"
+        );
         // The gallery finale keeps its generation single-fire claim: the
         // transition branch of reassert_gallery_fullscreen must still be
         // present and consult the generation (comment-stripped source pin).
@@ -7622,7 +8240,10 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let claim = "THEME_CYCLE_FIRED_GEN";
-        assert!(code.contains(claim), "the finale single-fire claim must survive");
+        assert!(
+            code.contains(claim),
+            "the finale single-fire claim must survive"
+        );
         assert!(
             code.contains("fired.is_some_and(|g| g == gen)"),
             "the finale single-fire check must survive"
@@ -7740,7 +8361,7 @@ mod tests {
             let cycles = std::sync::Arc::clone(&cycles);
             let armed = arm_reload_reconsult(move || {
                 let action = reload_fs_action(
-                    false, // no transition in flight
+                    false,                                                              // no transition in flight
                     true,  // HVE still Visible
                     true,  // still immersive (gallery session, panel docked)
                     false, // STILL windowed: reload B re-floated it
@@ -7760,7 +8381,11 @@ mod tests {
         }
 
         // Nothing runs before the window expires…
-        assert_eq!(*cycles.lock().unwrap(), 0, "no cycle before the window expires");
+        assert_eq!(
+            *cycles.lock().unwrap(),
+            0,
+            "no cycle before the window expires"
+        );
 
         // …and once the mock clock passes the remaining window (1.4s old
         // stamp → ~100ms left), the single-shot fires exactly once and the
@@ -7932,8 +8557,13 @@ mod tests {
             "the Debounced refusal must arm the delayed re-consult"
         );
 
-        let tick_start = code.find("fn reload_reconsult_tick").expect("re-consult tick must exist");
-        let tick_end = code[tick_start..].find("\n}").expect("tick body must close") + tick_start;
+        let tick_start = code
+            .find("fn reload_reconsult_tick")
+            .expect("re-consult tick must exist");
+        let tick_end = code[tick_start..]
+            .find("\n}")
+            .expect("tick body must close")
+            + tick_start;
         let tick_body = &code[tick_start..tick_end];
         assert!(
             !tick_body.contains("arm_reload_reconsult"),
@@ -7944,7 +8574,9 @@ mod tests {
             "the tick must not schedule any timer — one re-consult per refused decision"
         );
 
-        let arm_start = code.find("fn arm_reload_reconsult").expect("arm must exist");
+        let arm_start = code
+            .find("fn arm_reload_reconsult")
+            .expect("arm must exist");
         let arm_end = code[arm_start..].find("\n}").expect("arm body must close") + arm_start;
         let arm_body = &code[arm_start..arm_end];
         assert_eq!(
@@ -7967,7 +8599,11 @@ mod tests {
     /// the same `"2"` the raw `activeworkspace -j` failure path produced.
     #[test]
     fn active_workspace_name_keeps_the_two_fallback() {
-        assert_eq!(active_workspace_name(None), "2", "no answer must fall back to \"2\"");
+        assert_eq!(
+            active_workspace_name(None),
+            "2",
+            "no answer must fall back to \"2\""
+        );
         assert_eq!(
             active_workspace_name(Some("7".to_string())),
             "7",
@@ -8002,13 +8638,21 @@ mod tests {
             "6",
             "without an exclusion the first eligible workspace wins"
         );
-        assert_eq!(empty_workspace_from(None, "3"), "10", "absent output falls back to \"10\"");
+        assert_eq!(
+            empty_workspace_from(None, "3"),
+            "10",
+            "absent output falls back to \"10\""
+        );
         assert_eq!(
             empty_workspace_from(None, "10"),
             "11",
             "excluded \"10\" falls back to \"11\""
         );
-        assert_eq!(empty_workspace_from(Some("not json"), "3"), "10", "garbage output falls back");
+        assert_eq!(
+            empty_workspace_from(Some("not json"), "3"),
+            "10",
+            "garbage output falls back"
+        );
         assert_eq!(
             empty_workspace_from(Some(r#"[{"windows":0}]"#), "3"),
             "10",
@@ -8020,17 +8664,41 @@ mod tests {
     /// or boolean `str`, trimmed) and the caller's fallback otherwise.
     #[test]
     fn option_int_from_keeps_the_pre_move_parse() {
-        assert_eq!(option_int_from(None, "1"), "1", "no answer must yield the fallback");
-        assert_eq!(option_int_from(Some("not json"), "1"), "1", "garbage must yield the fallback");
-        assert_eq!(option_int_from(Some(r#"[3]"#), "1"), "1", "a non-object answer yields the fallback");
-        assert_eq!(option_int_from(Some(r#"{"int":-4}"#), "1"), "-4", "int wins");
+        assert_eq!(
+            option_int_from(None, "1"),
+            "1",
+            "no answer must yield the fallback"
+        );
+        assert_eq!(
+            option_int_from(Some("not json"), "1"),
+            "1",
+            "garbage must yield the fallback"
+        );
+        assert_eq!(
+            option_int_from(Some(r#"[3]"#), "1"),
+            "1",
+            "a non-object answer yields the fallback"
+        );
+        assert_eq!(
+            option_int_from(Some(r#"{"int":-4}"#), "1"),
+            "-4",
+            "int wins"
+        );
         assert_eq!(
             option_int_from(Some(r#"{"int":3,"str":"true"}"#), "1"),
             "3",
             "`int` is read before `str`"
         );
-        assert_eq!(option_int_from(Some(r#"{"str":"12"}"#), "1"), "12", "numeric str passes");
-        assert_eq!(option_int_from(Some(r#"{"str":" 12 "}"#), "1"), "12", "str is trimmed");
+        assert_eq!(
+            option_int_from(Some(r#"{"str":"12"}"#), "1"),
+            "12",
+            "numeric str passes"
+        );
+        assert_eq!(
+            option_int_from(Some(r#"{"str":" 12 "}"#), "1"),
+            "12",
+            "str is trimmed"
+        );
         assert_eq!(
             option_int_from(Some(r#"{"str":"true"}"#), "1"),
             "true",
@@ -8060,7 +8728,10 @@ mod tests {
     /// including the `{:?}` format placeholders).
     fn fn_body(src: &str, sig: &str) -> String {
         let start = src.find(sig).unwrap_or_else(|| panic!("{sig} must exist"));
-        let open = src[start..].find('{').expect("the function must have a body") + start;
+        let open = src[start..]
+            .find('{')
+            .expect("the function must have a body")
+            + start;
         let mut depth = 0usize;
         for (i, ch) in src[open..].char_indices() {
             match ch {
@@ -8157,7 +8828,10 @@ mod tests {
             "write_mask_payload(true, &originals, hypr_eval)",
             "restore_theme_masks_with(hypr_eval)",
         ] {
-            assert!(code.contains(seam), "the seam must keep passing hypr_eval: {seam}");
+            assert!(
+                code.contains(seam),
+                "the seam must keep passing hypr_eval: {seam}"
+            );
         }
     }
 
@@ -8200,7 +8874,9 @@ mod tests {
     fn the_persisted_style_is_read_at_startup_and_written_by_the_chrome() {
         let code = main_rs_code();
         assert!(
-            code.contains("apply_gallery_style(&window, sanitized_gallery_style(cfg.gallery_style))"),
+            code.contains(
+                "apply_gallery_style(&window, sanitized_gallery_style(cfg.gallery_style))"
+            ),
             "start-up must open the gallery on the persisted style, not a hardcoded 0"
         );
         let handler = fn_body(&code, "window.on_gallery_style_selected(");
@@ -8433,14 +9109,8 @@ mod tests {
     fn both_tune_pane_save_handlers_apply_before_recording_and_keep_the_persist_error() {
         let code = main_rs_code();
         for (sig, apply_call) in [
-            (
-                "window.on_panel_save_border_preset(",
-                "apply_border",
-            ),
-            (
-                "window.on_panel_save_animation_preset(",
-                "apply_animation",
-            ),
+            ("window.on_panel_save_border_preset(", "apply_border"),
+            ("window.on_panel_save_animation_preset(", "apply_animation"),
         ] {
             let handler = fn_body(&code, sig);
             let apply = handler
@@ -8478,7 +9148,9 @@ mod tests {
         let handler = fn_body(&code, "window.on_panel_save_border_preset(");
         let refresh = handler
             .find("set_user_border_preset_names")
-            .unwrap_or_else(|| panic!("the save must refresh the user preset list, got: {handler}"));
+            .unwrap_or_else(|| {
+                panic!("the save must refresh the user preset list, got: {handler}")
+            });
         let reseed = handler.find("reseed_active_border_index").unwrap_or_else(|| {
             panic!("the save must re-derive the pane marker from the recorded value, got: {handler}")
         });

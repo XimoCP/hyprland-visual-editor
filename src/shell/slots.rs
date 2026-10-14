@@ -108,11 +108,13 @@ impl Slot for StubSlot {
     }
 
     fn on_mount(&self) {
-        self.mount_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.mount_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     fn on_unmount(&self) {
-        self.unmount_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.unmount_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     fn label(&self, tr: &Tr) -> SharedString {
@@ -135,8 +137,8 @@ pub fn is_mutating(nav: &super::nav::NavState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
 
     /// Configurable slot double: distinct label + externally observable
     /// hook counters, so tests can tell two registrations apart and verify
@@ -187,7 +189,9 @@ mod tests {
         let mut registry = SlotRegistry::new();
         registry.register(Box::new(StubSlot::new(Screen::Gallery)));
 
-        let slot = registry.get(Screen::Gallery).expect("registered slot must be retrievable");
+        let slot = registry
+            .get(Screen::Gallery)
+            .expect("registered slot must be retrievable");
         assert_eq!(slot.screen(), Screen::Gallery);
     }
 
@@ -199,7 +203,9 @@ mod tests {
         registry.register(Box::new(first));
         registry.register(Box::new(second));
 
-        let slot = registry.get(Screen::Gallery).expect("slot present after overwrite");
+        let slot = registry
+            .get(Screen::Gallery)
+            .expect("slot present after overwrite");
         assert_eq!(
             slot.label(&Tr::with_lang("en")).as_str(),
             "second",
@@ -212,8 +218,14 @@ mod tests {
     #[test]
     fn get_unregistered_screen_returns_none() {
         let registry = SlotRegistry::new();
-        assert!(registry.get(Screen::Workshop).is_none(), "unknown target stays put");
-        assert!(registry.get(Screen::Home).is_none(), "Home is never a registered slot");
+        assert!(
+            registry.get(Screen::Workshop).is_none(),
+            "unknown target stays put"
+        );
+        assert!(
+            registry.get(Screen::Home).is_none(),
+            "Home is never a registered slot"
+        );
     }
 
     // ── Hooks (spec R3 mount/unmount scenarios) ─────────────────────

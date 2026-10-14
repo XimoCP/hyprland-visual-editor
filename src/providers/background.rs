@@ -724,10 +724,7 @@ fn complete_pending_release() -> Result<bool, String> {
             "[background] completed a pending engine-mute release: theme.policy -> \"{}\"",
             previous
         );
-        crate::decision_log::record(
-            "MUTE RELEASED",
-            "completed a pending engine-mute release",
-        );
+        crate::decision_log::record("MUTE RELEASED", "completed a pending engine-mute release");
     }
     Ok(wrote)
 }
@@ -867,21 +864,18 @@ fn picker_voice_tick() -> Result<(), String> {
                 .iter()
                 .map(|path| canonical_for_compare(path))
                 .collect::<Vec<String>>();
-            let live = crate::providers::wallpaper_authority::query_live_backgrounds().map(|paths| {
-                paths
-                    .iter()
-                    .map(|path| canonical_for_compare(path))
-                    .collect::<Vec<String>>()
-            });
+            let live =
+                crate::providers::wallpaper_authority::query_live_backgrounds().map(|paths| {
+                    paths
+                        .iter()
+                        .map(|path| canonical_for_compare(path))
+                        .collect::<Vec<String>>()
+                });
             // The picker was open, so a foreign live background is the
             // keeper's own pick, never an engine reconcile.
-            let foreign = decide_palette_authority(
-                live.as_deref(),
-                &declared,
-                false,
-                Some(true),
-                true,
-            ) == PaletteAuthorityVerdict::StepAside;
+            let foreign =
+                decide_palette_authority(live.as_deref(), &declared, false, Some(true), true)
+                    == PaletteAuthorityVerdict::StepAside;
             if foreign {
                 release_claim(
                     "the keeper changed the background from the engine's own picker; descriptor cleared",
@@ -1449,10 +1443,7 @@ mod tests {
             FAKE_ENGINE_OWNER,
             "release must restore the exact original bytes"
         );
-        assert!(
-            !color_authority_held(),
-            "release must clear the held state"
-        );
+        assert!(!color_authority_held(), "release must clear the held state");
     }
 
     /// Restore-on-every-exit-path, through the new owner: an ARMED hold
@@ -1475,7 +1466,10 @@ mod tests {
             FAKE_ENGINE_OWNER,
             "an armed hold must restore the exact bytes on scope exit"
         );
-        assert!(!color_authority_held(), "scope exit must clear the held state");
+        assert!(
+            !color_authority_held(),
+            "scope exit must clear the held state"
+        );
     }
 
     /// Nothing to hold: a `fixed` policy — and an absent engine config —
@@ -1487,7 +1481,9 @@ mod tests {
         {
             let engine = FakeEngine::new(Some(fixed));
             assert!(
-                hold_color_authority().expect("hold is an honest Result").is_none(),
+                hold_color_authority()
+                    .expect("hold is an honest Result")
+                    .is_none(),
                 "a fixed policy has no authority to hold"
             );
             assert_eq!(engine.text(), fixed, "the config must stay byte-identical");
@@ -1496,7 +1492,9 @@ mod tests {
         {
             let engine = FakeEngine::new(None);
             assert!(
-                hold_color_authority().expect("hold is an honest Result").is_none(),
+                hold_color_authority()
+                    .expect("hold is an honest Result")
+                    .is_none(),
                 "a missing config has no authority to hold"
             );
             assert!(
@@ -1844,7 +1842,10 @@ mod tests {
             sandbox.read_config().contains("\"policy\": \"off\""),
             "precondition: the engine is held off"
         );
-        assert!(color_authority_held(), "precondition: the marker is pending");
+        assert!(
+            color_authority_held(),
+            "precondition: the marker is pending"
+        );
         assert!(
             crate::color_authority::read_descriptor().is_some(),
             "precondition: a theme owns the palette"
@@ -1934,8 +1935,7 @@ mod tests {
             StepAsideOutcome::Held
         );
 
-        let text =
-            std::fs::read_to_string(crate::decision_log::log_path()).unwrap_or_default();
+        let text = std::fs::read_to_string(crate::decision_log::log_path()).unwrap_or_default();
         assert!(
             text.contains("ENGINE UNREADABLE"),
             "the held claim on an unreadable engine must be logged, got: {text}"
@@ -1956,8 +1956,7 @@ mod tests {
             StepAsideOutcome::SteppedAside
         );
 
-        let text =
-            std::fs::read_to_string(crate::decision_log::log_path()).unwrap_or_default();
+        let text = std::fs::read_to_string(crate::decision_log::log_path()).unwrap_or_default();
         assert!(
             text.contains("STEPPED ASIDE"),
             "the step-aside must be logged with its reason, got: {text}"
@@ -2337,7 +2336,10 @@ mod tests {
 
         let result = hold_color_authority();
 
-        assert!(result.is_err(), "an unreadable engine config is an honest Err");
+        assert!(
+            result.is_err(),
+            "an unreadable engine config is an honest Err"
+        );
         assert_eq!(
             apply_depth(),
             base,
@@ -2428,7 +2430,10 @@ mod tests {
         let provider_dir = theme.path().join("providers").join("noctalia-v5");
         std::fs::create_dir_all(&provider_dir).unwrap();
         let mut content = br#"{"version":1,"assignments":{}}"#.to_vec();
-        content.resize(crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1, b' ');
+        content.resize(
+            crate::theme_package::MAX_THEME_FILE_BYTES as usize + 1,
+            b' ',
+        );
         std::fs::write(provider_dir.join(bg_info::MANIFEST_FILE), content).unwrap();
 
         let req = ApplyBackgroundRequest {

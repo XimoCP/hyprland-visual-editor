@@ -83,7 +83,9 @@ pub fn cover_geometry(
     let crop_x = (w - crop_w) / 2;
     let crop_y = (h - crop_h) / 2;
     // Never upscale: scale caps at 1.0.
-    let scale = 1.0_f64.min(max_w as f64 / crop_w as f64).min(max_h as f64 / crop_h as f64);
+    let scale = 1.0_f64
+        .min(max_w as f64 / crop_w as f64)
+        .min(max_h as f64 / crop_h as f64);
     let out_w = ((crop_w as f64) * scale).round() as u32;
     let out_h = ((crop_h as f64) * scale).round() as u32;
     (
@@ -138,8 +140,8 @@ pub struct BakedSet {
 /// Returns all four artifacts in [`BakedSet`].
 pub fn generate_set(source: &Path, out_dir: &Path) -> Result<BakedSet, String> {
     // Single read → key + decode share the same bytes (zero extra IO).
-    let bytes = std::fs::read(source)
-        .map_err(|e| format!("cannot read {}: {e}", source.display()))?;
+    let bytes =
+        std::fs::read(source).map_err(|e| format!("cannot read {}: {e}", source.display()))?;
     let key = content_cache_key_from_bytes(&bytes);
     let thumb_out = out_dir.join(format!("{key}-thumb.png"));
     let hero_out = out_dir.join(format!("{key}-hero.png"));
@@ -155,7 +157,12 @@ pub fn generate_set(source: &Path, out_dir: &Path) -> Result<BakedSet, String> {
             .map(|d| d.to_rgba8())
             .ok_or_else(|| format!("cannot decode cached slat {}", slat_out.display()))?;
         let slat_expanded_rgba = image::ImageReader::open(&slat_exp_out)
-            .map_err(|e| format!("cannot open cached slat-exp {}: {e}", slat_exp_out.display()))?
+            .map_err(|e| {
+                format!(
+                    "cannot open cached slat-exp {}: {e}",
+                    slat_exp_out.display()
+                )
+            })?
             .with_guessed_format()
             .ok()
             .and_then(|r| r.decode().ok())
@@ -658,26 +665,26 @@ fn scan_images(theme_dir: &Path) -> Option<PathBuf> {
 pub fn bake_job_source(spec: &PreviewSpec) -> Result<BakedSet, String> {
     match spec {
         PreviewSpec::Image(path) => generate_set(path, &cache_dir()),
-        PreviewSpec::Video { video, theme_dir, .. } => {
-            match extract_video_frame(video, &cache_dir()) {
-                Some(frame) => generate_set(&frame, &cache_dir()),
-                None => {
-                    tracing::warn!(
-                        theme = %theme_dir.display(),
-                        video = %video.display(),
-                        "cannot extract a preview frame, falling back to static sources"
-                    );
-                    let fallback = static_fallback_source(theme_dir).ok_or_else(|| {
-                        format!(
-                            "cannot extract a preview frame from {} and no static fallback in {}",
-                            video.display(),
-                            theme_dir.display()
-                        )
-                    })?;
-                    generate_set(&fallback, &cache_dir())
-                }
+        PreviewSpec::Video {
+            video, theme_dir, ..
+        } => match extract_video_frame(video, &cache_dir()) {
+            Some(frame) => generate_set(&frame, &cache_dir()),
+            None => {
+                tracing::warn!(
+                    theme = %theme_dir.display(),
+                    video = %video.display(),
+                    "cannot extract a preview frame, falling back to static sources"
+                );
+                let fallback = static_fallback_source(theme_dir).ok_or_else(|| {
+                    format!(
+                        "cannot extract a preview frame from {} and no static fallback in {}",
+                        video.display(),
+                        theme_dir.display()
+                    )
+                })?;
+                generate_set(&fallback, &cache_dir())
             }
-        }
+        },
     }
 }
 
@@ -703,9 +710,7 @@ pub const THUMBS_MAX_WORKERS: usize = 3;
 pub fn plan_jobs(sources: Vec<(usize, String, Option<PreviewSpec>)>) -> Vec<PreheatJob> {
     sources
         .into_iter()
-        .filter_map(|(index, name, source)| {
-            source.map(|spec| PreheatJob { index, name, spec })
-        })
+        .filter_map(|(index, name, source)| source.map(|spec| PreheatJob { index, name, spec }))
         .collect()
 }
 
@@ -713,7 +718,10 @@ pub fn plan_jobs(sources: Vec<(usize, String, Option<PreviewSpec>)>) -> Vec<Preh
 /// come FIRST (preserving their original relative order), then the rest in
 /// original order. `priority` is typically the current page's real indices
 /// so visible cards bake first.
-pub fn order_jobs(jobs: Vec<PreheatJob>, priority: &std::collections::HashSet<usize>) -> Vec<PreheatJob> {
+pub fn order_jobs(
+    jobs: Vec<PreheatJob>,
+    priority: &std::collections::HashSet<usize>,
+) -> Vec<PreheatJob> {
     if priority.is_empty() {
         return jobs;
     }
@@ -753,7 +761,9 @@ pub fn resolve_row_index(rows: &[(usize, String)], index: usize, name: &str) -> 
             return Some(index);
         }
     }
-    rows.iter().find(|(_, row_name)| row_name == name).map(|(row_index, _)| *row_index)
+    rows.iter()
+        .find(|(_, row_name)| row_name == name)
+        .map(|(row_index, _)| *row_index)
 }
 
 /// Coalescing helper: returns true only for the last completion in a batch.
@@ -793,7 +803,11 @@ pub fn preheat(
     let pending: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(total));
     let batch_start = Arc::new(Instant::now());
     let ready = Arc::new(ready);
-    tracing::info!(jobs = total, workers = THUMBS_MAX_WORKERS, "thumbs preheat batch start (bounded pool)");
+    tracing::info!(
+        jobs = total,
+        workers = THUMBS_MAX_WORKERS,
+        "thumbs preheat batch start (bounded pool)"
+    );
     // Bounded pruning (Tramo 7): off UI thread, best-effort, keeps newest 512 artifacts.
     {
         let cache = cache_dir();
@@ -844,18 +858,30 @@ pub fn preheat(
                         ready2(idx, name, thumb_path, hero_path, slat, slat_exp);
                         if is_last_completion(&pending2) {
                             let batch_ms = batch_start2.elapsed().as_millis() as u64;
-                            tracing::info!(jobs = total, total_ms = batch_ms, "thumbs preheat batch complete");
+                            tracing::info!(
+                                jobs = total,
+                                total_ms = batch_ms,
+                                "thumbs preheat batch complete"
+                            );
                         }
                     });
                 }
                 Err(e) => {
-                    tracing::warn!("[thumbs] preheat for '{}' failed: {}", job.spec.log_path().display(), e);
+                    tracing::warn!(
+                        "[thumbs] preheat for '{}' failed: {}",
+                        job.spec.log_path().display(),
+                        e
+                    );
                     let pending2 = pending.clone();
                     let batch_start2 = batch_start.clone();
                     let _ = slint::invoke_from_event_loop(move || {
                         if is_last_completion(&pending2) {
                             let batch_ms = batch_start2.elapsed().as_millis() as u64;
-                            tracing::info!(jobs = total, total_ms = batch_ms, "thumbs preheat batch complete (with failures)");
+                            tracing::info!(
+                                jobs = total,
+                                total_ms = batch_ms,
+                                "thumbs preheat batch complete (with failures)"
+                            );
                         }
                     });
                 }
@@ -913,7 +939,10 @@ mod tests {
     fn cache_key_is_hex_string() {
         let k = cache_key(Path::new("/imgs/wall.png"), st(100));
         assert_eq!(k.len(), 16, "u64 hash rendered as 16 hex chars");
-        assert!(k.chars().all(|c| c.is_ascii_hexdigit()), "hex only, got {k}");
+        assert!(
+            k.chars().all(|c| c.is_ascii_hexdigit()),
+            "hex only, got {k}"
+        );
     }
 
     // ── LRU 200 prune semantics (task 4.5; reuses model.rs R8 capacity) ──
@@ -928,20 +957,38 @@ mod tests {
     fn lru_prunes_to_200_and_evicts_oldest() {
         let mut s = store();
         for i in 0..250 {
-            s.insert(cache_key(Path::new(&format!("/i/{i}.png")), st(i)), PathBuf::from(format!("/{i}.png")));
+            s.insert(
+                cache_key(Path::new(&format!("/i/{i}.png")), st(i)),
+                PathBuf::from(format!("/{i}.png")),
+            );
         }
         assert_eq!(s.len(), 200, "LRU bounded at capacity");
-        assert!(!s.contains(&cache_key(Path::new("/i/0.png"), st(0))), "oldest evicted");
-        assert!(!s.contains(&cache_key(Path::new("/i/49.png"), st(49))), "pre-eviction cutoff gone");
-        assert!(s.contains(&cache_key(Path::new("/i/50.png"), st(50))), "cutoff retained");
-        assert!(s.contains(&cache_key(Path::new("/i/249.png"), st(249))), "newest retained");
+        assert!(
+            !s.contains(&cache_key(Path::new("/i/0.png"), st(0))),
+            "oldest evicted"
+        );
+        assert!(
+            !s.contains(&cache_key(Path::new("/i/49.png"), st(49))),
+            "pre-eviction cutoff gone"
+        );
+        assert!(
+            s.contains(&cache_key(Path::new("/i/50.png"), st(50))),
+            "cutoff retained"
+        );
+        assert!(
+            s.contains(&cache_key(Path::new("/i/249.png"), st(249))),
+            "newest retained"
+        );
     }
 
     // ── HF5: hero contain-fit geometry + dedicated cache filename ──────
 
     #[test]
     fn hero_geometry_landscape_fits_exact() {
-        assert_eq!(hero_geometry(1920, 1080, HERO_MAX_W, HERO_MAX_H), (1600, 900));
+        assert_eq!(
+            hero_geometry(1920, 1080, HERO_MAX_W, HERO_MAX_H),
+            (1600, 900)
+        );
     }
 
     #[test]
@@ -963,7 +1010,11 @@ mod tests {
     #[test]
     fn cover_geometry_landscape_crops_sides() {
         let (cx, cy, cw, ch, ow, oh) = cover_geometry(1920, 1080, THUMB_MAX_W, THUMB_MAX_H);
-        assert_eq!((cx, cy, cw, ch), (660, 0, 600, 1080), "center crop to 400:720 aspect");
+        assert_eq!(
+            (cx, cy, cw, ch),
+            (660, 0, 600, 1080),
+            "center crop to 400:720 aspect"
+        );
         assert_eq!((ow, oh), (400, 720));
     }
 
@@ -978,7 +1029,11 @@ mod tests {
     fn cover_geometry_never_upscales_small_sources() {
         let (_, _, cw, ch, ow, oh) = cover_geometry(100, 100, THUMB_MAX_W, THUMB_MAX_H);
         assert_eq!((cw, ch), (55, 100), "aspect crop only");
-        assert_eq!((ow, oh), (55, 100), "output keeps source pixels, no upscale");
+        assert_eq!(
+            (ow, oh),
+            (55, 100),
+            "output keeps source pixels, no upscale"
+        );
     }
 
     // `generated_thumb_roundtrips_and_hits_cache` removed — superseded by `generate_set`
@@ -1006,16 +1061,30 @@ mod tests {
     fn find_source_none_without_images() {
         let dir = tempfile::tempdir().expect("tmp");
         std::fs::write(dir.path().join("meta.json"), b"{}").expect("meta");
-        assert!(plan_preview_source(dir.path()).is_none(), "no images -> None");
-        assert!(plan_preview_source(&dir.path().join("missing")).is_none(), "missing dir safe");
+        assert!(
+            plan_preview_source(dir.path()).is_none(),
+            "no images -> None"
+        );
+        assert!(
+            plan_preview_source(&dir.path().join("missing")).is_none(),
+            "missing dir safe"
+        );
     }
 
     #[test]
     fn plan_jobs_keeps_only_sourced_cards() {
         let jobs = plan_jobs(vec![
-            (0, "A".into(), Some(PreviewSpec::Image(PathBuf::from("/a.png")))),
+            (
+                0,
+                "A".into(),
+                Some(PreviewSpec::Image(PathBuf::from("/a.png"))),
+            ),
             (1, "B".into(), None),
-            (2, "C".into(), Some(PreviewSpec::Image(PathBuf::from("/c.jpg")))),
+            (
+                2,
+                "C".into(),
+                Some(PreviewSpec::Image(PathBuf::from("/c.jpg"))),
+            ),
         ]);
         assert_eq!(jobs.len(), 2);
         assert_eq!(jobs[0].index, 0);
@@ -1032,12 +1101,18 @@ mod tests {
         // image scan could never be what found it.
         let src_dir = tempfile::tempdir().expect("src tmp");
         let declared = src_dir.path().join("declared.png");
-        image::RgbaImage::from_pixel(10, 10, image::Rgba([0u8, 0, 0, 255])).save(&declared).unwrap();
+        image::RgbaImage::from_pixel(10, 10, image::Rgba([0u8, 0, 0, 255]))
+            .save(&declared)
+            .unwrap();
         // Loose file that the scan would find but must not decide.
         std::fs::write(dir.path().join("loose.jpg"), b"dummy").unwrap();
         let prov = dir.path().join("providers/noctalia-v5");
         std::fs::create_dir_all(&prov).unwrap();
-        std::fs::write(prov.join("wallpaper.txt"), format!("{}\n", declared.display())).unwrap();
+        std::fs::write(
+            prov.join("wallpaper.txt"),
+            format!("{}\n", declared.display()),
+        )
+        .unwrap();
         let found = plan_preview_source(dir.path()).expect("declared source");
         assert_eq!(
             found,
@@ -1053,7 +1128,9 @@ mod tests {
         std::fs::create_dir_all(&prov).unwrap();
         std::fs::write(prov.join("wallpaper.txt"), "/tmp/missing-wallpaper.png\n").unwrap();
         let loose = dir.path().join("fallback.png");
-        image::RgbaImage::from_pixel(8, 8, image::Rgba([1u8, 2, 3, 255])).save(&loose).unwrap();
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([1u8, 2, 3, 255]))
+            .save(&loose)
+            .unwrap();
         let found = plan_preview_source(dir.path()).expect("fallback scan");
         assert_eq!(
             found,
@@ -1095,10 +1172,22 @@ mod tests {
     #[test]
     fn video_assignment_none_without_assignments_file() {
         let dir = tempfile::tempdir().expect("tmp");
-        assert_eq!(video_assignment(dir.path()), None, "no providers dir at all");
+        assert_eq!(
+            video_assignment(dir.path()),
+            None,
+            "no providers dir at all"
+        );
         std::fs::create_dir_all(dir.path().join("providers/noctalia-v5")).expect("mkdir");
-        assert_eq!(video_assignment(dir.path()), None, "provider without the file");
-        assert_eq!(video_assignment(&dir.path().join("missing")), None, "missing theme dir safe");
+        assert_eq!(
+            video_assignment(dir.path()),
+            None,
+            "provider without the file"
+        );
+        assert_eq!(
+            video_assignment(&dir.path().join("missing")),
+            None,
+            "missing theme dir safe"
+        );
     }
 
     #[test]
@@ -1135,7 +1224,11 @@ mod tests {
                 "DP-1": { "local_path": chosen.to_string_lossy() }
             }}),
         );
-        assert_eq!(video_assignment(dir.path()), Some(chosen), "DP-1 sorts before HDMI-A-1");
+        assert_eq!(
+            video_assignment(dir.path()),
+            Some(chosen),
+            "DP-1 sorts before HDMI-A-1"
+        );
     }
 
     #[test]
@@ -1174,7 +1267,11 @@ mod tests {
             ("clip.tar.gz", false),
         ];
         for (name, want) in cases {
-            assert_eq!(is_video_source(Path::new(name)), want, "extension case: {name}");
+            assert_eq!(
+                is_video_source(Path::new(name)),
+                want,
+                "extension case: {name}"
+            );
         }
     }
 
@@ -1201,7 +1298,13 @@ mod tests {
         // Fixture duration > 1s: the extractor seeks to t=1s and a shorter
         // clip yields no frame at that seek point (verified with ffmpeg 9).
         let ok = std::process::Command::new("ffmpeg")
-            .args(["-f", "lavfi", "-i", "testsrc=duration=5:size=320x240:rate=10", "-y"])
+            .args([
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=5:size=320x240:rate=10",
+                "-y",
+            ])
             .arg(&video)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -1214,7 +1317,11 @@ mod tests {
         let frame = extract_video_frame(&video, &out_dir).expect("frame extracted");
         assert!(frame.exists(), "cached frame png written");
         let decoded = image::ImageReader::open(&frame).unwrap().decode().unwrap();
-        assert_eq!((decoded.width(), decoded.height()), (320, 240), "full source frame");
+        assert_eq!(
+            (decoded.width(), decoded.height()),
+            (320, 240),
+            "full source frame"
+        );
 
         // Second call short-circuits to the SAME cached artifact.
         assert_eq!(extract_video_frame(&video, &out_dir), Some(frame));
@@ -1229,9 +1336,13 @@ mod tests {
         // could never be what resolved it.
         let src_dir = tempfile::tempdir().expect("src tmp");
         let assigned = src_dir.path().join("assigned.png");
-        image::RgbaImage::from_pixel(10, 10, image::Rgba([2u8, 2, 2, 255])).save(&assigned).unwrap();
+        image::RgbaImage::from_pixel(10, 10, image::Rgba([2u8, 2, 2, 255]))
+            .save(&assigned)
+            .unwrap();
         let stale = dir.path().join("stale.png");
-        image::RgbaImage::from_pixel(10, 10, image::Rgba([9u8, 9, 9, 255])).save(&stale).unwrap();
+        image::RgbaImage::from_pixel(10, 10, image::Rgba([9u8, 9, 9, 255]))
+            .save(&stale)
+            .unwrap();
         let v5 = dir.path().join("providers/noctalia-v5");
         std::fs::create_dir_all(&v5).unwrap();
         std::fs::write(v5.join("wallpaper.txt"), format!("{}\n", stale.display())).unwrap();
@@ -1262,7 +1373,9 @@ mod tests {
         let broken = dir.path().join("broken.mp4");
         std::fs::write(&broken, b"definitely not a video").unwrap();
         let stale = dir.path().join("stale.png");
-        image::RgbaImage::from_pixel(10, 10, image::Rgba([7u8, 7, 7, 255])).save(&stale).unwrap();
+        image::RgbaImage::from_pixel(10, 10, image::Rgba([7u8, 7, 7, 255]))
+            .save(&stale)
+            .unwrap();
         let v5 = dir.path().join("providers/noctalia-v5");
         std::fs::create_dir_all(&v5).unwrap();
         std::fs::write(v5.join("wallpaper.txt"), format!("{}\n", stale.display())).unwrap();
@@ -1289,7 +1402,13 @@ mod tests {
     /// Returns None when ffmpeg cannot synthesize (caller must skip then).
     fn synth_video_fixture(path: &Path) -> bool {
         std::process::Command::new("ffmpeg")
-            .args(["-f", "lavfi", "-i", "testsrc=duration=5:size=320x240:rate=10", "-y"])
+            .args([
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=5:size=320x240:rate=10",
+                "-y",
+            ])
             .arg(path)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -1330,24 +1449,65 @@ mod tests {
         let mut img = image::RgbaImage::new(800, 600);
         for y in 0..600 {
             for x in 0..800 {
-                img.put_pixel(x, y, image::Rgba([(x % 256) as u8, (y % 256) as u8, 128, 255]));
+                img.put_pixel(
+                    x,
+                    y,
+                    image::Rgba([(x % 256) as u8, (y % 256) as u8, 128, 255]),
+                );
             }
         }
         img.save(&src).unwrap();
         let out_dir = dir.path().join("thumbs");
         let set = generate_set(&src, &out_dir).expect("generate_set should succeed");
         let expected_key = content_cache_key_from_bytes(&std::fs::read(&src).expect("read src"));
-        assert_eq!(set.thumb_path, out_dir.join(format!("{expected_key}-thumb.png")), "thumb path matches content-keyed contract");
-        assert_eq!(set.hero_path, out_dir.join(format!("{expected_key}-hero.png")), "hero path matches content-keyed contract");
+        assert_eq!(
+            set.thumb_path,
+            out_dir.join(format!("{expected_key}-thumb.png")),
+            "thumb path matches content-keyed contract"
+        );
+        assert_eq!(
+            set.hero_path,
+            out_dir.join(format!("{expected_key}-hero.png")),
+            "hero path matches content-keyed contract"
+        );
         assert!(set.thumb_path.exists(), "thumb PNG written");
         assert!(set.hero_path.exists(), "hero PNG written");
-        assert_eq!((set.slat_rgba.width(), set.slat_rgba.height()), (crate::shell::gallery::slat_image::SLAT_BBOX_COLLAPSED_W, crate::shell::gallery::slat_image::SLAT_BBOX_H), "collapsed slat bbox");
-        assert_eq!((set.slat_expanded_rgba.width(), set.slat_expanded_rgba.height()), (crate::shell::gallery::slat_image::SLAT_BBOX_EXPANDED_W, crate::shell::gallery::slat_image::SLAT_BBOX_H), "expanded slat bbox");
+        assert_eq!(
+            (set.slat_rgba.width(), set.slat_rgba.height()),
+            (
+                crate::shell::gallery::slat_image::SLAT_BBOX_COLLAPSED_W,
+                crate::shell::gallery::slat_image::SLAT_BBOX_H
+            ),
+            "collapsed slat bbox"
+        );
+        assert_eq!(
+            (
+                set.slat_expanded_rgba.width(),
+                set.slat_expanded_rgba.height()
+            ),
+            (
+                crate::shell::gallery::slat_image::SLAT_BBOX_EXPANDED_W,
+                crate::shell::gallery::slat_image::SLAT_BBOX_H
+            ),
+            "expanded slat bbox"
+        );
         // Thumb PNG dimensions must be cover-cropped to 400×720 aspect (no upscale needed for 800×600)
-        let thumb_img = image::ImageReader::open(&set.thumb_path).unwrap().decode().unwrap();
-        assert!(thumb_img.width() <= THUMB_MAX_W && thumb_img.height() <= THUMB_MAX_H, "thumb bounded");
-        let hero_img = image::ImageReader::open(&set.hero_path).unwrap().decode().unwrap();
-        assert!(hero_img.width() <= HERO_MAX_W && hero_img.height() <= HERO_MAX_H, "hero bounded");
+        let thumb_img = image::ImageReader::open(&set.thumb_path)
+            .unwrap()
+            .decode()
+            .unwrap();
+        assert!(
+            thumb_img.width() <= THUMB_MAX_W && thumb_img.height() <= THUMB_MAX_H,
+            "thumb bounded"
+        );
+        let hero_img = image::ImageReader::open(&set.hero_path)
+            .unwrap()
+            .decode()
+            .unwrap();
+        assert!(
+            hero_img.width() <= HERO_MAX_W && hero_img.height() <= HERO_MAX_H,
+            "hero bounded"
+        );
     }
 
     #[test]
@@ -1357,18 +1517,35 @@ mod tests {
         let mut img = image::RgbaImage::new(200, 120);
         for y in 0..120 {
             for x in 0..200 {
-                img.put_pixel(x, y, image::Rgba([(x % 256) as u8, (y % 256) as u8, ((x + y) % 256) as u8, 255]));
+                img.put_pixel(
+                    x,
+                    y,
+                    image::Rgba([(x % 256) as u8, (y % 256) as u8, ((x + y) % 256) as u8, 255]),
+                );
             }
         }
         img.save(&src).unwrap();
         let out_dir = dir.path().join("thumbs");
         let set = generate_set(&src, &out_dir).expect("generate_set");
         // Direct bake from the SAME decoded buffer — byte-identical contract (R1.4/D1)
-        let decoded = image::ImageReader::open(&src).unwrap().decode().unwrap().to_rgba8();
-        let direct_collapsed = crate::shell::gallery::slat_image::baked_slat_rgba(decoded.clone(), false);
+        let decoded = image::ImageReader::open(&src)
+            .unwrap()
+            .decode()
+            .unwrap()
+            .to_rgba8();
+        let direct_collapsed =
+            crate::shell::gallery::slat_image::baked_slat_rgba(decoded.clone(), false);
         let direct_expanded = crate::shell::gallery::slat_image::baked_slat_rgba(decoded, true);
-        assert_eq!(set.slat_rgba.as_raw(), direct_collapsed.as_raw(), "worker collapsed slat must be byte-identical to direct bake");
-        assert_eq!(set.slat_expanded_rgba.as_raw(), direct_expanded.as_raw(), "worker expanded slat must be byte-identical to direct bake");
+        assert_eq!(
+            set.slat_rgba.as_raw(),
+            direct_collapsed.as_raw(),
+            "worker collapsed slat must be byte-identical to direct bake"
+        );
+        assert_eq!(
+            set.slat_expanded_rgba.as_raw(),
+            direct_expanded.as_raw(),
+            "worker expanded slat must be byte-identical to direct bake"
+        );
     }
 
     // ── T1.4: preheat ships RgbaImage buffers (no UI-thread bake) ─────
@@ -1388,13 +1565,34 @@ mod tests {
         let set = generate_set(&src, &out_dir).expect("generate_set for preheat");
         // Buffers must be non-empty and match baked bbox — these are what
         // preheat ships via the channel; UI thread must wrap via from_rgba8.
-        assert_eq!((set.slat_rgba.width(), set.slat_rgba.height()), (crate::shell::gallery::slat_image::SLAT_BBOX_COLLAPSED_W, crate::shell::gallery::slat_image::SLAT_BBOX_H));
-        assert_eq!((set.slat_expanded_rgba.width(), set.slat_expanded_rgba.height()), (crate::shell::gallery::slat_image::SLAT_BBOX_EXPANDED_W, crate::shell::gallery::slat_image::SLAT_BBOX_H));
+        assert_eq!(
+            (set.slat_rgba.width(), set.slat_rgba.height()),
+            (
+                crate::shell::gallery::slat_image::SLAT_BBOX_COLLAPSED_W,
+                crate::shell::gallery::slat_image::SLAT_BBOX_H
+            )
+        );
+        assert_eq!(
+            (
+                set.slat_expanded_rgba.width(),
+                set.slat_expanded_rgba.height()
+            ),
+            (
+                crate::shell::gallery::slat_image::SLAT_BBOX_EXPANDED_W,
+                crate::shell::gallery::slat_image::SLAT_BBOX_H
+            )
+        );
         // Verify wrapping via from_rgba8 succeeds (UI side contract) without decode
-        let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(set.slat_rgba.width(), set.slat_rgba.height());
+        let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(
+            set.slat_rgba.width(),
+            set.slat_rgba.height(),
+        );
         buf.make_mut_bytes().copy_from_slice(set.slat_rgba.as_raw());
         let img = slint::Image::from_rgba8(buf);
-        assert!(img.size().width > 0, "slint::Image::from_rgba8 wrapping must succeed for shipped buffer");
+        assert!(
+            img.size().width > 0,
+            "slint::Image::from_rgba8 wrapping must succeed for shipped buffer"
+        );
     }
 
     // ── T1.5 RED→GREEN: coalescing — 42 completions → exactly 1 refresh ──
@@ -1407,7 +1605,9 @@ mod tests {
         let pending = Arc::new(AtomicUsize::new(42));
         let refresh = {
             let c = refresh_count.clone();
-            move || { c.fetch_add(1, Ordering::SeqCst); }
+            move || {
+                c.fetch_add(1, Ordering::SeqCst);
+            }
         };
         let refresh = Arc::new(refresh);
         // Simulate 42 completions arriving (possibly out-of-order, but counter is atomic)
@@ -1419,21 +1619,33 @@ mod tests {
                 r();
             }
         }
-        assert_eq!(refresh_count.load(Ordering::SeqCst), 1, "42 completions must coalesce to exactly ONE refresh (last-job semantics)");
+        assert_eq!(
+            refresh_count.load(Ordering::SeqCst),
+            1,
+            "42 completions must coalesce to exactly ONE refresh (last-job semantics)"
+        );
         // Edge: single job also triggers exactly one
         let c2 = Arc::new(AtomicUsize::new(0));
         let p2 = Arc::new(AtomicUsize::new(1));
-        if is_last_completion(&p2) { c2.fetch_add(1, Ordering::SeqCst); }
-        assert_eq!(c2.load(Ordering::SeqCst), 1, "single completion must still refresh once");
+        if is_last_completion(&p2) {
+            c2.fetch_add(1, Ordering::SeqCst);
+        }
+        assert_eq!(
+            c2.load(Ordering::SeqCst),
+            1,
+            "single completion must still refresh once"
+        );
         // So we just verify normal flow doesn't double-trigger
         let c3 = Arc::new(AtomicUsize::new(0));
         // Simulate two separate batches each with 3 completions → each batch exactly 1
         for batch in 0..2 {
             let pend = Arc::new(AtomicUsize::new(3));
             for _ in 0..3 {
-                if is_last_completion(&pend) { c3.fetch_add(1, Ordering::SeqCst); }
+                if is_last_completion(&pend) {
+                    c3.fetch_add(1, Ordering::SeqCst);
+                }
             }
-            assert_eq!(c3.load(Ordering::SeqCst), batch+1);
+            assert_eq!(c3.load(Ordering::SeqCst), batch + 1);
         }
     }
 
@@ -1453,7 +1665,10 @@ mod tests {
         // T2.3 contract: key = "{len}-{hash}" over file bytes
         let ka = content_cache_key_from_bytes(&std::fs::read(&a).expect("read a"));
         let kb = content_cache_key_from_bytes(&std::fs::read(&b).expect("read b"));
-        assert_eq!(ka, kb, "byte-identical files must share content key despite different paths/mtimes");
+        assert_eq!(
+            ka, kb,
+            "byte-identical files must share content key despite different paths/mtimes"
+        );
         let cache = tempfile::tempdir().expect("tmp cache");
         // Artifact naming is inline via key strings (no thumb_path helper)
         assert_eq!(
@@ -1480,7 +1695,11 @@ mod tests {
         bytes_b[777] = 42;
         std::fs::write(&a, &bytes_a).expect("write a");
         std::fs::write(&b, &bytes_b).expect("write b");
-        assert_eq!(std::fs::metadata(&a).unwrap().len(), std::fs::metadata(&b).unwrap().len(), "fixture must be equal-size");
+        assert_eq!(
+            std::fs::metadata(&a).unwrap().len(),
+            std::fs::metadata(&b).unwrap().len(),
+            "fixture must be equal-size"
+        );
         let ka = content_cache_key_from_bytes(&std::fs::read(&a).expect("read a"));
         let kb = content_cache_key_from_bytes(&std::fs::read(&b).expect("read b"));
         assert_ne!(ka, kb, "equal-size different bytes must have distinct keys");
@@ -1532,7 +1751,11 @@ mod tests {
         assert!(keep_txt.exists(), "non-artifact kept");
         // Best-effort on missing dir
         let missing = dir.join("missing_subdir");
-        assert_eq!(prune_stale(&missing, 2), 0, "missing cache_dir is best-effort 0");
+        assert_eq!(
+            prune_stale(&missing, 2),
+            0,
+            "missing cache_dir is best-effort 0"
+        );
         // No pruning when under cap
         assert_eq!(prune_stale(dir, 10), 0, "under cap → 0 removed");
     }
@@ -1548,7 +1771,10 @@ mod tests {
         let out_dir = dir.path().join("thumbs");
         // First bake — must decode (cold)
         let first = generate_set(&src, &out_dir).expect("first generate_set");
-        assert!(first.decoded, "first bake must have performed a full-size decode");
+        assert!(
+            first.decoded,
+            "first bake must have performed a full-size decode"
+        );
         // All four artifacts must exist after cold bake
         let key = content_cache_key_from_bytes(&std::fs::read(&src).expect("read src"));
         let thumb = out_dir.join(format!("{key}-thumb.png"));
@@ -1564,9 +1790,20 @@ mod tests {
         let first_exp = first.slat_expanded_rgba.clone();
         // Second bake — warm hit must NOT decode source (decoded == false)
         let second = generate_set(&src, &out_dir).expect("second generate_set warm hit");
-        assert!(!second.decoded, "warm hit with all four artifacts present must skip full-size source decode");
-        assert_eq!(second.slat_rgba.as_raw(), first_slat.as_raw(), "warm slat must equal cold slat (cached bytes)");
-        assert_eq!(second.slat_expanded_rgba.as_raw(), first_exp.as_raw(), "warm expanded slat must equal cold expanded slat");
+        assert!(
+            !second.decoded,
+            "warm hit with all four artifacts present must skip full-size source decode"
+        );
+        assert_eq!(
+            second.slat_rgba.as_raw(),
+            first_slat.as_raw(),
+            "warm slat must equal cold slat (cached bytes)"
+        );
+        assert_eq!(
+            second.slat_expanded_rgba.as_raw(),
+            first_exp.as_raw(),
+            "warm expanded slat must equal cold expanded slat"
+        );
         // Ensure warm path still returns valid thumb/hero paths
         assert_eq!(second.thumb_path, thumb);
         assert_eq!(second.hero_path, hero);
@@ -1579,7 +1816,11 @@ mod tests {
         let mut img = image::RgbaImage::new(200, 120);
         for y in 0..120 {
             for x in 0..200 {
-                img.put_pixel(x, y, image::Rgba([(x % 256) as u8, (y % 256) as u8, ((x + y) % 256) as u8, 255]));
+                img.put_pixel(
+                    x,
+                    y,
+                    image::Rgba([(x % 256) as u8, (y % 256) as u8, ((x + y) % 256) as u8, 255]),
+                );
             }
         }
         img.save(&src).expect("write source");
@@ -1588,18 +1829,44 @@ mod tests {
         let key = content_cache_key_from_bytes(&std::fs::read(&src).expect("read src"));
         let slat_png = out_dir.join(format!("{key}-slat.png"));
         let slat_exp_png = out_dir.join(format!("{key}-slat-exp.png"));
-        assert!(slat_png.exists() && slat_exp_png.exists(), "slat PNGs must be persisted");
+        assert!(
+            slat_png.exists() && slat_exp_png.exists(),
+            "slat PNGs must be persisted"
+        );
         // Load PNGs back (small decodes) and compare bytes to BakedSet buffers
         let loaded_slat = image::open(&slat_png).expect("open slat png").to_rgba8();
-        let loaded_exp = image::open(&slat_exp_png).expect("open slat-exp png").to_rgba8();
-        assert_eq!(loaded_slat.as_raw(), set.slat_rgba.as_raw(), "cached slat PNG bytes must equal fresh-baked slat bytes (PNG roundtrip)");
-        assert_eq!(loaded_exp.as_raw(), set.slat_expanded_rgba.as_raw(), "cached expanded slat PNG bytes must equal fresh-baked expanded slat bytes");
+        let loaded_exp = image::open(&slat_exp_png)
+            .expect("open slat-exp png")
+            .to_rgba8();
+        assert_eq!(
+            loaded_slat.as_raw(),
+            set.slat_rgba.as_raw(),
+            "cached slat PNG bytes must equal fresh-baked slat bytes (PNG roundtrip)"
+        );
+        assert_eq!(
+            loaded_exp.as_raw(),
+            set.slat_expanded_rgba.as_raw(),
+            "cached expanded slat PNG bytes must equal fresh-baked expanded slat bytes"
+        );
         // Also compare to direct bake for parity
-        let decoded = image::ImageReader::open(&src).unwrap().decode().unwrap().to_rgba8();
-        let direct_collapsed = crate::shell::gallery::slat_image::baked_slat_rgba(decoded.clone(), false);
+        let decoded = image::ImageReader::open(&src)
+            .unwrap()
+            .decode()
+            .unwrap()
+            .to_rgba8();
+        let direct_collapsed =
+            crate::shell::gallery::slat_image::baked_slat_rgba(decoded.clone(), false);
         let direct_expanded = crate::shell::gallery::slat_image::baked_slat_rgba(decoded, true);
-        assert_eq!(loaded_slat.as_raw(), direct_collapsed.as_raw(), "cached slat must match direct bake (R1.4 parity)");
-        assert_eq!(loaded_exp.as_raw(), direct_expanded.as_raw(), "cached expanded slat must match direct bake");
+        assert_eq!(
+            loaded_slat.as_raw(),
+            direct_collapsed.as_raw(),
+            "cached slat must match direct bake (R1.4 parity)"
+        );
+        assert_eq!(
+            loaded_exp.as_raw(),
+            direct_expanded.as_raw(),
+            "cached expanded slat must match direct bake"
+        );
     }
 
     #[test]
@@ -1628,8 +1895,14 @@ mod tests {
         // Keep newest 4 → oldest 3 pruned
         let removed = prune_stale(dir, 4);
         assert_eq!(removed, 3, "bounded: oldest 3 beyond cap 4 pruned");
-        assert!(!old_thumb.exists() && !old_slat.exists() && !old_slat_exp.exists(), "old slat artifacts pruned");
-        assert!(new_thumb.exists() && new_hero.exists() && new_slat.exists() && new_slat_exp.exists(), "newest artifacts kept");
+        assert!(
+            !old_thumb.exists() && !old_slat.exists() && !old_slat_exp.exists(),
+            "old slat artifacts pruned"
+        );
+        assert!(
+            new_thumb.exists() && new_hero.exists() && new_slat.exists() && new_slat_exp.exists(),
+            "newest artifacts kept"
+        );
         assert!(keep_txt.exists(), "non-artifact kept");
     }
 
@@ -1642,7 +1915,10 @@ mod tests {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::{Arc, Condvar, Mutex};
         // Contract: THUMBS_MAX_WORKERS must be 3 and pool must bound concurrency.
-        assert_eq!(THUMBS_MAX_WORKERS, 3, "THUMBS_MAX_WORKERS must be 3 (UI thread never starved)");
+        assert_eq!(
+            THUMBS_MAX_WORKERS, 3,
+            "THUMBS_MAX_WORKERS must be 3 (UI thread never starved)"
+        );
         let k = THUMBS_MAX_WORKERS;
         let n = 12usize;
         // Shared queue drained by K workers — mirrors preheat's bounded pool.
@@ -1659,12 +1935,17 @@ mod tests {
             let d = done.clone();
             handles.push(std::thread::spawn(move || {
                 loop {
-                    let job = { let mut g = q.lock().unwrap(); g.pop_front() };
+                    let job = {
+                        let mut g = q.lock().unwrap();
+                        g.pop_front()
+                    };
                     let Some(_idx) = job else { break };
                     let cur = conc.fetch_add(1, Ordering::SeqCst) + 1;
                     {
                         let mut p = peak.lock().unwrap();
-                        if cur > *p { *p = cur; }
+                        if cur > *p {
+                            *p = cur;
+                        }
                     }
                     // Simulate heavy decode/bake work so overlap is observable.
                     std::thread::sleep(std::time::Duration::from_millis(30));
@@ -1673,12 +1954,24 @@ mod tests {
                 }
             }));
         }
-        for h in handles { h.join().expect("worker join"); }
+        for h in handles {
+            h.join().expect("worker join");
+        }
         let _ = cvar; // keep condvar in scope to document Mutex/Condvar design
-        assert_eq!(done.load(Ordering::SeqCst), n, "all 12 jobs must complete (no loss)");
+        assert_eq!(
+            done.load(Ordering::SeqCst),
+            n,
+            "all 12 jobs must complete (no loss)"
+        );
         let peak = *max_seen.lock().unwrap();
-        assert!(peak <= k, "max concurrent {peak} must be ≤ K={k} (bounded pool)");
-        assert!(peak > 1, "pool must actually run concurrently (peak {peak} >1 for N=12 on K=3)");
+        assert!(
+            peak <= k,
+            "max concurrent {peak} must be ≤ K={k} (bounded pool)"
+        );
+        assert!(
+            peak > 1,
+            "pool must actually run concurrently (peak {peak} >1 for N=12 on K=3)"
+        );
     }
 
     #[test]
@@ -1686,30 +1979,58 @@ mod tests {
         use std::collections::HashSet;
         // Build 5 jobs with original order 0..5
         let sources: Vec<(usize, String, Option<PreviewSpec>)> = (0..5)
-            .map(|i| (i, format!("T{i}"), Some(PreviewSpec::Image(PathBuf::from(format!("/tmp/w-{i}.png"))))))
+            .map(|i| {
+                (
+                    i,
+                    format!("T{i}"),
+                    Some(PreviewSpec::Image(PathBuf::from(format!("/tmp/w-{i}.png")))),
+                )
+            })
             .collect();
         let jobs = plan_jobs(sources);
         assert_eq!(jobs.len(), 5);
         let priority: HashSet<usize> = [2usize, 4].into_iter().collect();
         let ordered = order_jobs(jobs, &priority);
         let indices: Vec<usize> = ordered.iter().map(|j| j.index).collect();
-        assert_eq!(indices, vec![2, 4, 0, 1, 3], "priority indices must come FIRST, rest keep stable original order");
+        assert_eq!(
+            indices,
+            vec![2, 4, 0, 1, 3],
+            "priority indices must come FIRST, rest keep stable original order"
+        );
         // Empty priority → stable original order unchanged
         let sources2: Vec<(usize, String, Option<PreviewSpec>)> = (0..3)
-            .map(|i| (i, format!("A{i}"), Some(PreviewSpec::Image(PathBuf::from(format!("/p/{i}.png"))))))
+            .map(|i| {
+                (
+                    i,
+                    format!("A{i}"),
+                    Some(PreviewSpec::Image(PathBuf::from(format!("/p/{i}.png")))),
+                )
+            })
             .collect();
         let jobs2 = plan_jobs(sources2);
         let empty: HashSet<usize> = HashSet::new();
         let ordered2 = order_jobs(jobs2, &empty);
-        assert_eq!(ordered2.iter().map(|j| j.index).collect::<Vec<_>>(), vec![0,1,2]);
+        assert_eq!(
+            ordered2.iter().map(|j| j.index).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
         // Unknown priority indices are ignored (no panic, no extra jobs)
         let sources3: Vec<(usize, String, Option<PreviewSpec>)> = (0..2)
-            .map(|i| (i, format!("B{i}"), Some(PreviewSpec::Image(PathBuf::from(format!("/p/{i}.png"))))))
+            .map(|i| {
+                (
+                    i,
+                    format!("B{i}"),
+                    Some(PreviewSpec::Image(PathBuf::from(format!("/p/{i}.png")))),
+                )
+            })
             .collect();
         let jobs3 = plan_jobs(sources3);
         let unknown: HashSet<usize> = [99usize].into_iter().collect();
         let ordered3 = order_jobs(jobs3, &unknown);
-        assert_eq!(ordered3.iter().map(|j| j.index).collect::<Vec<_>>(), vec![0,1]);
+        assert_eq!(
+            ordered3.iter().map(|j| j.index).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
     }
 
     // ── U2/U3: name-based delivery lookup for a shifted index ──────────────
@@ -1735,7 +2056,11 @@ mod tests {
         // it, so the payload now arrives for an index that holds another row.
         let planned = rows(&["Animation", "Cars", "Fantasy", "Space"]);
         let rebuilt = rows(&["Animation", "Cars", "New", "Fantasy", "Space"]);
-        assert_eq!(resolve_row_index(&rebuilt, 2, "Fantasy"), Some(3), "found by name, not by index");
+        assert_eq!(
+            resolve_row_index(&rebuilt, 2, "Fantasy"),
+            Some(3),
+            "found by name, not by index"
+        );
         // The planned pair itself still resolves when nothing moved.
         assert_eq!(resolve_row_index(&planned, 2, "Fantasy"), Some(2));
     }
@@ -1743,8 +2068,16 @@ mod tests {
     #[test]
     fn resolve_row_index_returns_none_when_the_name_is_gone() {
         let rebuilt = rows(&["Animation", "Cars", "Space"]);
-        assert_eq!(resolve_row_index(&rebuilt, 2, "Fantasy"), None, "deleted theme resolves to nothing");
-        assert_eq!(resolve_row_index(&[], 0, "Fantasy"), None, "empty model resolves to nothing");
+        assert_eq!(
+            resolve_row_index(&rebuilt, 2, "Fantasy"),
+            None,
+            "deleted theme resolves to nothing"
+        );
+        assert_eq!(
+            resolve_row_index(&[], 0, "Fantasy"),
+            None,
+            "empty model resolves to nothing"
+        );
     }
 
     #[test]
@@ -1754,7 +2087,15 @@ mod tests {
 
         // Build 42 synthetic sources (all Some) → plan_jobs must keep all 42
         let sources: Vec<(usize, String, Option<PreviewSpec>)> = (0..42)
-            .map(|i| (i, format!("Theme-{i}"), Some(PreviewSpec::Image(PathBuf::from(format!("/tmp/wall-{i}.png"))))))
+            .map(|i| {
+                (
+                    i,
+                    format!("Theme-{i}"),
+                    Some(PreviewSpec::Image(PathBuf::from(format!(
+                        "/tmp/wall-{i}.png"
+                    )))),
+                )
+            })
             .collect();
         let jobs = plan_jobs(sources);
         assert_eq!(jobs.len(), 42, "plan_jobs must keep all 42 sourced cards");
@@ -1764,7 +2105,9 @@ mod tests {
         let pending = Arc::new(AtomicUsize::new(jobs.len()));
         let refresh = {
             let c = refresh_count.clone();
-            move || { c.fetch_add(1, Ordering::SeqCst); }
+            move || {
+                c.fetch_add(1, Ordering::SeqCst);
+            }
         };
         let refresh = Arc::new(refresh);
         for _ in &jobs {
@@ -1783,7 +2126,11 @@ mod tests {
         // Mixed burst with holes: 42 slots, 7 without source → 35 jobs → still 1
         let mixed: Vec<(usize, String, Option<PreviewSpec>)> = (0..42)
             .map(|i| {
-                let src = if i % 6 == 0 { None } else { Some(PreviewSpec::Image(PathBuf::from(format!("/tmp/w-{i}.png")))) };
+                let src = if i % 6 == 0 {
+                    None
+                } else {
+                    Some(PreviewSpec::Image(PathBuf::from(format!("/tmp/w-{i}.png"))))
+                };
                 (i, format!("T{i}"), src)
             })
             .collect();
@@ -1793,15 +2140,23 @@ mod tests {
         let p2 = Arc::new(AtomicUsize::new(jobs2.len()));
         let r2 = {
             let c = c2.clone();
-            move || { c.fetch_add(1, Ordering::SeqCst); }
+            move || {
+                c.fetch_add(1, Ordering::SeqCst);
+            }
         };
         let r2 = Arc::new(r2);
         for _ in &jobs2 {
             let p = p2.clone();
             let r = r2.clone();
-            if is_last_completion(&p) { r(); }
+            if is_last_completion(&p) {
+                r();
+            }
         }
-        assert_eq!(c2.load(Ordering::SeqCst), 1, "filtered burst must still coalesce to 1");
+        assert_eq!(
+            c2.load(Ordering::SeqCst),
+            1,
+            "filtered burst must still coalesce to 1"
+        );
     }
 
     // ── W2-1: planning never spawns ffmpeg (plan vs extract split) ──
@@ -1842,10 +2197,14 @@ mod tests {
             ),
         )
         .unwrap();
-        let spec = plan_preview_source(dir.path())
-            .expect("a video-record theme must plan to a spec");
+        let spec =
+            plan_preview_source(dir.path()).expect("a video-record theme must plan to a spec");
         match &spec {
-            PreviewSpec::Video { video: v, cached_frame, .. } => {
+            PreviewSpec::Video {
+                video: v,
+                cached_frame,
+                ..
+            } => {
                 assert_eq!(v, &video);
                 assert!(
                     cached_frame
@@ -1905,7 +2264,10 @@ mod tests {
         let _env = crate::test_utils::TempEnv::new();
         let dir = tempfile::tempdir().expect("tmp");
         let video = dir.path().join("src.mp4");
-        assert!(synth_video_fixture(&video), "failed to synthesize mp4 fixture");
+        assert!(
+            synth_video_fixture(&video),
+            "failed to synthesize mp4 fixture"
+        );
         let spec = PreviewSpec::Video {
             video: video.clone(),
             cached_frame: cached_frame_path(&video),
@@ -1915,7 +2277,11 @@ mod tests {
         let frame = cached_frame_path(&video);
         assert!(frame.exists(), "the worker must extract the cached frame");
         let decoded = image::ImageReader::open(&frame).unwrap().decode().unwrap();
-        assert_eq!((decoded.width(), decoded.height()), (320, 240), "full source frame");
+        assert_eq!(
+            (decoded.width(), decoded.height()),
+            (320, 240),
+            "full source frame"
+        );
         let key = content_cache_key_from_bytes(&std::fs::read(&frame).unwrap());
         for suffix in ["-thumb.png", "-hero.png", "-slat.png", "-slat-exp.png"] {
             assert!(
@@ -2069,8 +2435,11 @@ mod tests {
         let theme = tempfile::tempdir().expect("theme tmp");
         let provider_dir = theme.path().join("providers").join("unknown-shell-xyz");
         std::fs::create_dir_all(&provider_dir).expect("provider dir");
-        std::fs::write(provider_dir.join("shell-record.src"), format!("{}\n", src.display()))
-            .expect("record");
+        std::fs::write(
+            provider_dir.join("shell-record.src"),
+            format!("{}\n", src.display()),
+        )
+        .expect("record");
 
         let declarers = vec![fake_declarer(
             &provider_dir,
@@ -2104,8 +2473,11 @@ mod tests {
         let text_dir = theme.path().join("providers").join("shell-b");
         std::fs::create_dir_all(&manifest_dir).unwrap();
         std::fs::create_dir_all(&text_dir).unwrap();
-        std::fs::write(manifest_dir.join("a.rec"), format!("{}\n", manifest_src.display()))
-            .unwrap();
+        std::fs::write(
+            manifest_dir.join("a.rec"),
+            format!("{}\n", manifest_src.display()),
+        )
+        .unwrap();
         std::fs::write(text_dir.join("b.rec"), format!("{}\n", text_src.display())).unwrap();
 
         let declarers = vec![
@@ -2219,7 +2591,10 @@ mod tests {
 
         let declarers = collect_declarers(theme.path());
         assert_eq!(declarers.len(), 1, "only the resolvable id declares");
-        assert_eq!(declarers[0].0, live, "the surviving declarer keeps its own directory");
+        assert_eq!(
+            declarers[0].0, live,
+            "the surviving declarer keeps its own directory"
+        );
         assert_eq!(declarers[0].1.id(), "noctalia-v5");
     }
 
@@ -2317,8 +2692,11 @@ mod tests {
         let theme = tempfile::tempdir().expect("theme tmp");
         let v4_dir = theme.path().join("providers").join("noctalia");
         std::fs::create_dir_all(&v4_dir).expect("mkdir");
-        std::fs::write(v4_dir.join("wallpaper.txt"), format!("{}\n", img_a.display()))
-            .expect("record");
+        std::fs::write(
+            v4_dir.join("wallpaper.txt"),
+            format!("{}\n", img_a.display()),
+        )
+        .expect("record");
 
         assert_eq!(
             plan_preview_source(theme.path()),
@@ -2423,5 +2801,4 @@ mod tests {
             "the unknown dir must never supply the planned source"
         );
     }
-
 }

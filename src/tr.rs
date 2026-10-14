@@ -233,7 +233,10 @@ mod tests {
         assert_eq!(t.tr("shell.slots.home"), Some("Home"));
         assert_eq!(t.tr("shell.slots.gallery"), Some("Gallery"));
         assert_eq!(t.tr("shell.slots.workshop"), Some("Workshop"));
-        assert_eq!(t.tr("shell.home.hint"), Some("Theme cards land in module 2"));
+        assert_eq!(
+            t.tr("shell.home.hint"),
+            Some("Theme cards land in module 2")
+        );
     }
 
     #[test]
@@ -246,7 +249,10 @@ mod tests {
         assert_eq!(t.tr("shell.slots.home"), Some("Inicio"));
         assert_eq!(t.tr("shell.slots.gallery"), Some("Galería"));
         assert_eq!(t.tr("shell.slots.workshop"), Some("Taller"));
-        assert_eq!(t.tr("shell.home.hint"), Some("Las tarjetas de temas llegan en el módulo 2"));
+        assert_eq!(
+            t.tr("shell.home.hint"),
+            Some("Las tarjetas de temas llegan en el módulo 2")
+        );
     }
 
     // ── Shell bottom-bar shortcut keys (keyboard-shortcuts-footer) ────

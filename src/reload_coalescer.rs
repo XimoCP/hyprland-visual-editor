@@ -77,9 +77,8 @@ impl Sandbox {
             "get_colors.sh",
             "reload_coalescer.sh",
         ] {
-            std::fs::copy(repo_scripts().join(name), scripts.join(name)).unwrap_or_else(|e| {
-                panic!("cannot stage {name}: {e}")
-            });
+            std::fs::copy(repo_scripts().join(name), scripts.join(name))
+                .unwrap_or_else(|e| panic!("cannot stage {name}: {e}"));
         }
         for dir in std::fs::read_dir(&scripts).unwrap() {
             let p = dir.unwrap().path();
@@ -171,7 +170,11 @@ impl Sandbox {
     }
 
     fn path_with_stubs(&self) -> String {
-        format!("{}:{}", self.stubs.display(), std::env::var("PATH").unwrap_or_default())
+        format!(
+            "{}:{}",
+            self.stubs.display(),
+            std::env::var("PATH").unwrap_or_default()
+        )
     }
 
     fn base_env(&self, hyprland_up: bool, coalesce: &str, drain_ms: &str) -> Vec<(&str, String)> {
@@ -179,8 +182,14 @@ impl Sandbox {
             ("HOME", self.home.to_string_lossy().into_owned()),
             ("HVE_CACHE_DIR", self.cache.to_string_lossy().into_owned()),
             ("PATH", self.path_with_stubs()),
-            ("HVE_SIM_LOG", self.hyprctl_log.to_string_lossy().into_owned()),
-            ("HVE_SIM_HYPRLAND", if hyprland_up { "1" } else { "0" }.to_string()),
+            (
+                "HVE_SIM_LOG",
+                self.hyprctl_log.to_string_lossy().into_owned(),
+            ),
+            (
+                "HVE_SIM_HYPRLAND",
+                if hyprland_up { "1" } else { "0" }.to_string(),
+            ),
             ("HVE_RELOAD_COALESCE", coalesce.to_string()),
             ("HVE_RELOAD_DRAIN_MS", drain_ms.to_string()),
         ]
@@ -191,7 +200,14 @@ impl Sandbox {
     /// capture pipes would block `.output()` forever, so every run is polled
     /// with a deadline and killed on timeout — a hang is a loud RED, never a
     /// hung suite.
-    fn run_apply(&self, script: &str, args: &[&str], hyprland_up: bool, coalesce: &str, drain_ms: &str) -> Output {
+    fn run_apply(
+        &self,
+        script: &str,
+        args: &[&str],
+        hyprland_up: bool,
+        coalesce: &str,
+        drain_ms: &str,
+    ) -> Output {
         run_apply_with_env(self, script, args, hyprland_up, coalesce, drain_ms, &[])
     }
 
@@ -261,7 +277,10 @@ impl Drop for Sandbox {
         // signalled.
         if let Some(pid) = self.drainer_pid() {
             if is_live_drainer(pid) {
-                let _ = std::process::Command::new("kill").arg("-9").arg(pid.to_string()).status();
+                let _ = std::process::Command::new("kill")
+                    .arg("-9")
+                    .arg(pid.to_string())
+                    .status();
             }
             let deadline = Instant::now() + Duration::from_secs(3);
             while Instant::now() < deadline
@@ -348,7 +367,10 @@ fn run_apply_with_env(
 fn kill_drainer(sb: &Sandbox) {
     let pid = sb.drainer_pid().expect("a drainer pid must exist");
     if is_live_drainer(pid) {
-        let _ = std::process::Command::new("kill").arg("-9").arg(pid.to_string()).status();
+        let _ = std::process::Command::new("kill")
+            .arg("-9")
+            .arg(pid.to_string())
+            .status();
     }
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline && std::path::Path::new(&format!("/proc/{pid}")).exists() {
@@ -363,10 +385,22 @@ fn kill_drainer(sb: &Sandbox) {
 /// The four-fragment theme apply, in `hve_presets::apply` order (measured:
 /// `odd/tasks/coalesce-config-reloads.md`).
 fn apply_four_fragments(sb: &Sandbox, hyprland_up: bool, coalesce: &str, drain_ms: &str) {
-    sb.run_apply("apply_animation.sh", &["test"], hyprland_up, coalesce, drain_ms);
+    sb.run_apply(
+        "apply_animation.sh",
+        &["test"],
+        hyprland_up,
+        coalesce,
+        drain_ms,
+    );
     sb.run_apply("border.sh", &["test"], hyprland_up, coalesce, drain_ms);
     sb.run_apply("shader.sh", &["test.frag"], hyprland_up, coalesce, drain_ms);
-    sb.run_apply("geometry.sh", &["4", "4", "5", "5"], hyprland_up, coalesce, drain_ms);
+    sb.run_apply(
+        "geometry.sh",
+        &["4", "4", "5", "5"],
+        hyprland_up,
+        coalesce,
+        drain_ms,
+    );
 }
 
 const DRAIN: &str = "500"; // 500 ms — fast tests, still ≥ the apply burst.
@@ -379,7 +413,11 @@ fn sandboxed_burst_fires_exactly_one_reload() {
     let before = now_epoch_secs();
     apply_four_fragments(&sb, true, "1", DRAIN);
 
-    sb.wait_until(|| sb.reload_count() == 1, "one reload for the burst", Duration::from_secs(8));
+    sb.wait_until(
+        || sb.reload_count() == 1,
+        "one reload for the burst",
+        Duration::from_secs(8),
+    );
     sb.assert_stable(1, Duration::from_millis(1200));
 
     assert!(
@@ -402,9 +440,16 @@ fn sandboxed_killed_drainer_loses_nothing() {
 
     // Kill the drainer as soon as its pid file appears — well inside the
     // drain window, before it can fire.
-    sb.wait_until(|| sb.drainer_pid().is_some(), "drainer pid file", Duration::from_secs(3));
+    sb.wait_until(
+        || sb.drainer_pid().is_some(),
+        "drainer pid file",
+        Duration::from_secs(3),
+    );
     let pid = sb.drainer_pid().unwrap();
-    let _ = std::process::Command::new("kill").arg("-9").arg(pid.to_string()).status();
+    let _ = std::process::Command::new("kill")
+        .arg("-9")
+        .arg(pid.to_string())
+        .status();
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline && std::path::Path::new(&format!("/proc/{pid}")).exists() {
         std::thread::sleep(Duration::from_millis(20));
@@ -412,12 +457,20 @@ fn sandboxed_killed_drainer_loses_nothing() {
 
     // The killed drainer never fired: still zero reloads after a full window.
     std::thread::sleep(Duration::from_millis(1500));
-    assert_eq!(sb.reload_count(), 0, "the killed drainer must not have fired");
+    assert_eq!(
+        sb.reload_count(),
+        0,
+        "the killed drainer must not have fired"
+    );
 
     // The next request spawns a fresh drainer that consumes the leftover
     // marker: the reload arrives LATER, never never.
     sb.run_apply("border.sh", &["test"], true, "1", DRAIN);
-    sb.wait_until(|| sb.reload_count() == 1, "the delayed reload", Duration::from_secs(8));
+    sb.wait_until(
+        || sb.reload_count() == 1,
+        "the delayed reload",
+        Duration::from_secs(8),
+    );
     sb.assert_stable(1, Duration::from_millis(1200));
     assert!(
         !sb.marker_path().exists(),
@@ -440,13 +493,21 @@ fn sandboxed_killed_drainer_inside_window_recovers_reload() {
     // Wait until the drainer has CLAIMED the marker (mv into reload.claimed),
     // then kill it: we are now inside the drain window, well before the fire
     // (1.5 s away). This is exactly the gap the old protocol lost.
-    sb.wait_until(|| sb.claim_path().exists(), "drainer to claim the marker", Duration::from_secs(3));
+    sb.wait_until(
+        || sb.claim_path().exists(),
+        "drainer to claim the marker",
+        Duration::from_secs(3),
+    );
     kill_drainer(&sb);
 
     // Dead inside the window -> it never fires: still zero reloads after a
     // full window plus margin.
     std::thread::sleep(Duration::from_millis(1800));
-    assert_eq!(sb.reload_count(), 0, "a drainer killed inside the window must not fire");
+    assert_eq!(
+        sb.reload_count(),
+        0,
+        "a drainer killed inside the window must not fire"
+    );
     assert!(
         sb.claim_path().exists(),
         "the pending claim must survive the killed drainer (it IS the durable memory of the owed reload)"
@@ -459,10 +520,20 @@ fn sandboxed_killed_drainer_inside_window_recovers_reload() {
     // The next request spawns a fresh drainer that folds claim + marker and
     // fires: the reload arrives LATER, never never.
     sb.run_apply("border.sh", &["test"], true, "1", DRAIN);
-    sb.wait_until(|| sb.reload_count() == 1, "the recovered reload", Duration::from_secs(8));
+    sb.wait_until(
+        || sb.reload_count() == 1,
+        "the recovered reload",
+        Duration::from_secs(8),
+    );
     sb.assert_stable(1, Duration::from_millis(1200));
-    assert!(!sb.claim_path().exists(), "the claim must be consumed by the fire");
-    assert!(!sb.marker_path().exists(), "the marker must be consumed by the fire");
+    assert!(
+        !sb.claim_path().exists(),
+        "the claim must be consumed by the fire"
+    );
+    assert!(
+        !sb.marker_path().exists(),
+        "the marker must be consumed by the fire"
+    );
 }
 
 // ── W5 finding, trade side: a crash AFTER the fire but BEFORE the ─────────
@@ -477,10 +548,20 @@ fn sandboxed_post_fire_crash_costs_at_most_redundant_reload() {
     // A slow hyprctl stub: the fire (the log line) lands immediately, then the
     // call blocks — the drainer is INSIDE the fire, with the claim cleanup
     // pending, for the whole stub delay.
-    run_apply_with_env(&sb, "apply_animation.sh", &["test"], true, "1", DRAIN, &[
-        ("HVE_SIM_HYPRCTL_DELAY_MS", "3000"),
-    ]);
-    sb.wait_until(|| sb.reload_count() == 1, "the first fire to be logged", Duration::from_secs(8));
+    run_apply_with_env(
+        &sb,
+        "apply_animation.sh",
+        &["test"],
+        true,
+        "1",
+        DRAIN,
+        &[("HVE_SIM_HYPRCTL_DELAY_MS", "3000")],
+    );
+    sb.wait_until(
+        || sb.reload_count() == 1,
+        "the first fire to be logged",
+        Duration::from_secs(8),
+    );
     kill_drainer(&sb);
 
     // The orphaned stub finishes its sleep (the in-flight fire completes); the
@@ -496,9 +577,16 @@ fn sandboxed_post_fire_crash_costs_at_most_redundant_reload() {
     // fire: ONE more fire (at most one redundant reload), never zero fires,
     // never more than one extra.
     sb.run_apply("border.sh", &["test"], true, "1", DRAIN);
-    sb.wait_until(|| sb.reload_count() == 2, "the folded second fire", Duration::from_secs(8));
+    sb.wait_until(
+        || sb.reload_count() == 2,
+        "the folded second fire",
+        Duration::from_secs(8),
+    );
     sb.assert_stable(2, Duration::from_millis(1200));
-    assert!(!sb.claim_path().exists(), "the claim must be consumed by the second fire");
+    assert!(
+        !sb.claim_path().exists(),
+        "the claim must be consumed by the second fire"
+    );
     assert!(!sb.marker_path().exists(), "no marker may remain");
 }
 
@@ -510,7 +598,11 @@ fn sandboxed_stray_marker_is_consumed_by_the_next_request() {
     std::fs::write(sb.marker_path(), "stray\n").unwrap();
 
     sb.run_apply("geometry.sh", &["4", "4", "5", "5"], true, "1", DRAIN);
-    sb.wait_until(|| sb.reload_count() == 1, "the stray marker to be fired", Duration::from_secs(8));
+    sb.wait_until(
+        || sb.reload_count() == 1,
+        "the stray marker to be fired",
+        Duration::from_secs(8),
+    );
     sb.assert_stable(1, Duration::from_millis(1200));
     assert!(!sb.marker_path().exists(), "marker consumed");
 }
@@ -521,11 +613,19 @@ fn sandboxed_stray_marker_is_consumed_by_the_next_request() {
 fn sandboxed_distinct_bursts_each_fire() {
     let sb = Sandbox::build();
     sb.run_apply("apply_animation.sh", &["test"], true, "1", DRAIN);
-    sb.wait_until(|| sb.reload_count() == 1, "first burst reload", Duration::from_secs(8));
+    sb.wait_until(
+        || sb.reload_count() == 1,
+        "first burst reload",
+        Duration::from_secs(8),
+    );
     sb.assert_stable(1, Duration::from_millis(1200));
 
     sb.run_apply("border.sh", &["test"], true, "1", DRAIN);
-    sb.wait_until(|| sb.reload_count() == 2, "second burst reload", Duration::from_secs(8));
+    sb.wait_until(
+        || sb.reload_count() == 2,
+        "second burst reload",
+        Duration::from_secs(8),
+    );
     sb.assert_stable(2, Duration::from_millis(1200));
 }
 
@@ -538,7 +638,11 @@ fn sandboxed_requests_within_drain_join() {
     std::thread::sleep(Duration::from_millis(250)); // still inside the window
     sb.run_apply("border.sh", &["test"], true, "1", DRAIN);
 
-    sb.wait_until(|| sb.reload_count() == 1, "joined reload", Duration::from_secs(8));
+    sb.wait_until(
+        || sb.reload_count() == 1,
+        "joined reload",
+        Duration::from_secs(8),
+    );
     sb.assert_stable(1, Duration::from_millis(1200));
 }
 
@@ -576,10 +680,20 @@ fn sandboxed_hyprland_down_keeps_pending_and_fires_when_back() {
 
     // Hyprland is UP at request time (the request-time guard passes and the
     // reload is queued)…
-    run_apply_with_env(&sb, "apply_animation.sh", &["test"], true, "1", LONG_DRAIN, &[
-        ("HVE_SIM_STATE_FILE", state_file.to_str().unwrap()),
-    ]);
-    sb.wait_until(|| sb.claim_path().exists(), "drainer to claim the marker", Duration::from_secs(3));
+    run_apply_with_env(
+        &sb,
+        "apply_animation.sh",
+        &["test"],
+        true,
+        "1",
+        LONG_DRAIN,
+        &[("HVE_SIM_STATE_FILE", state_file.to_str().unwrap())],
+    );
+    sb.wait_until(
+        || sb.claim_path().exists(),
+        "drainer to claim the marker",
+        Duration::from_secs(3),
+    );
 
     // …then it DIES inside the drain window, before the fire-time guard.
     std::fs::write(&state_file, "0\n").unwrap();
@@ -587,7 +701,11 @@ fn sandboxed_hyprland_down_keeps_pending_and_fires_when_back() {
 
     // Down at fire time: no reload, and the claim STAYS pending (consuming
     // it here is exactly the loss the finding flags).
-    assert_eq!(sb.reload_count(), 0, "Hyprland down at fire time must fire nothing");
+    assert_eq!(
+        sb.reload_count(),
+        0,
+        "Hyprland down at fire time must fire nothing"
+    );
     assert!(
         sb.claim_path().exists(),
         "Hyprland down must keep the pending claim and retry, never consume it"
@@ -596,9 +714,16 @@ fn sandboxed_hyprland_down_keeps_pending_and_fires_when_back() {
     // Hyprland comes back: the SAME drainer's next pass fires the pending
     // reload — delayed, never lost.
     std::fs::write(&state_file, "1\n").unwrap();
-    sb.wait_until(|| sb.reload_count() == 1, "the pending reload once Hyprland is back", Duration::from_secs(8));
+    sb.wait_until(
+        || sb.reload_count() == 1,
+        "the pending reload once Hyprland is back",
+        Duration::from_secs(8),
+    );
     sb.assert_stable(1, Duration::from_millis(1200));
-    assert!(!sb.claim_path().exists(), "the claim must be consumed by the fire");
+    assert!(
+        !sb.claim_path().exists(),
+        "the claim must be consumed by the fire"
+    );
     assert!(!sb.marker_path().exists(), "no marker may remain");
 }
 
@@ -611,7 +736,11 @@ fn sandboxed_disable_switch_keeps_immediate_reload() {
 
     // Every assemble reloads synchronously: after the four applies the count
     // is already 4 (the disable path never delays, exactly like today).
-    sb.wait_until(|| sb.reload_count() == 4, "four immediate reloads", Duration::from_secs(8));
+    sb.wait_until(
+        || sb.reload_count() == 4,
+        "four immediate reloads",
+        Duration::from_secs(8),
+    );
     sb.assert_stable(4, Duration::from_millis(1200));
 }
 
@@ -627,13 +756,17 @@ fn sandboxed_missing_flock_fails_open() {
         if dir.is_empty() {
             continue;
         }
-        let Ok(entries) = std::fs::read_dir(dir) else { continue; };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let name = entry.file_name();
             if name.to_string_lossy() == "flock" {
                 continue;
             }
-            let Ok(target) = std::fs::canonicalize(entry.path()) else { continue; };
+            let Ok(target) = std::fs::canonicalize(entry.path()) else {
+                continue;
+            };
             let _ = std::os::unix::fs::symlink(target, no_flock.join(&name));
         }
     }
@@ -642,10 +775,16 @@ fn sandboxed_missing_flock_fails_open() {
     let pathed = format!("{}:{}", sb.stubs.display(), no_flock.display());
     let warns = apply_four_fragments_with_path(&sb, &pathed);
     assert!(
-        warns.iter().any(|s| s.contains("flock") && s.contains("reloading immediately")),
+        warns
+            .iter()
+            .any(|s| s.contains("flock") && s.contains("reloading immediately")),
         "a missing flock must warn once and reload immediately"
     );
-    sb.wait_until(|| sb.reload_count() >= 1, "at least one reload without flock", Duration::from_secs(8));
+    sb.wait_until(
+        || sb.reload_count() >= 1,
+        "at least one reload without flock",
+        Duration::from_secs(8),
+    );
     // Fail-open fires per assemble (immediate path) — four scripts, four reloads.
     sb.assert_stable(4, Duration::from_millis(1200));
 }
@@ -668,16 +807,31 @@ fn sandboxed_idle_drainer_exits_and_removes_pidfile() {
     let sb = Sandbox::build();
     // Small drain window + a 2-tick idle bound: the drainer fires the first
     // request, then has ~2 ticks of quiet before it must exit on its own.
-    run_apply_with_env(&sb, "apply_animation.sh", &["test"], true, "1", "100", &[
-        ("HVE_RELOAD_IDLE_TICKS", "2"),
-    ]);
-    sb.wait_until(|| sb.reload_count() == 1, "the first request to fire", Duration::from_secs(8));
-    assert!(!sb.claim_path().exists(), "the claim must be consumed by the fire");
+    run_apply_with_env(
+        &sb,
+        "apply_animation.sh",
+        &["test"],
+        true,
+        "1",
+        "100",
+        &[("HVE_RELOAD_IDLE_TICKS", "2")],
+    );
+    sb.wait_until(
+        || sb.reload_count() == 1,
+        "the first request to fire",
+        Duration::from_secs(8),
+    );
+    assert!(
+        !sb.claim_path().exists(),
+        "the claim must be consumed by the fire"
+    );
     assert!(!sb.marker_path().exists(), "no marker may remain");
 
     // Capture the pid while the drainer is still alive, then watch it exit
     // and remove its pidfile — the process must not outlive its pidfile.
-    let pid = sb.drainer_pid().expect("drainer must be alive after the fire");
+    let pid = sb
+        .drainer_pid()
+        .expect("drainer must be alive after the fire");
     sb.wait_until(
         || std::fs::read_to_string(sb.cache.join("reload.drain.pid")).is_err(),
         "the idle drainer to exit and remove reload.drain.pid",
@@ -695,7 +849,11 @@ fn sandboxed_idle_drainer_exits_and_removes_pidfile() {
     // Drainer-first interleaving: a request AFTER the exit spawns a FRESH
     // drainer that wins the now-free drain lock and fires — nothing lost.
     sb.run_apply("border.sh", &["test"], true, "1", "100");
-    sb.wait_until(|| sb.reload_count() == 2, "a fresh drainer to serve the new request", Duration::from_secs(8));
+    sb.wait_until(
+        || sb.reload_count() == 2,
+        "a fresh drainer to serve the new request",
+        Duration::from_secs(8),
+    );
     sb.assert_stable(2, Duration::from_millis(1200));
     assert!(!sb.marker_path().exists(), "no marker may remain");
 }
@@ -713,11 +871,23 @@ fn sandboxed_claim_pending_never_exits_and_fires_when_back() {
     std::fs::write(&state_file, "1\n").unwrap();
 
     // Hyprland is UP at request time, so the reload is queued…
-    run_apply_with_env(&sb, "apply_animation.sh", &["test"], true, "1", WIDE_DRAIN, &[
-        ("HVE_SIM_STATE_FILE", state_file.to_str().unwrap()),
-        ("HVE_RELOAD_IDLE_TICKS", "2"),
-    ]);
-    sb.wait_until(|| sb.claim_path().exists(), "drainer to claim the marker", Duration::from_secs(3));
+    run_apply_with_env(
+        &sb,
+        "apply_animation.sh",
+        &["test"],
+        true,
+        "1",
+        WIDE_DRAIN,
+        &[
+            ("HVE_SIM_STATE_FILE", state_file.to_str().unwrap()),
+            ("HVE_RELOAD_IDLE_TICKS", "2"),
+        ],
+    );
+    sb.wait_until(
+        || sb.claim_path().exists(),
+        "drainer to claim the marker",
+        Duration::from_secs(3),
+    );
     let pid = sb.drainer_pid().expect("a live drainer must exist");
 
     // …then Hyprland DIES inside the drain window: the pending claim is owed
@@ -734,7 +904,11 @@ fn sandboxed_claim_pending_never_exits_and_fires_when_back() {
     // Hyprland returns: the SAME drainer fires exactly once and consumes the
     // claim, then exits only after a fresh idle bound.
     std::fs::write(&state_file, "1\n").unwrap();
-    sb.wait_until(|| sb.reload_count() == 1, "the pending reload once Hyprland is back", Duration::from_secs(10));
+    sb.wait_until(
+        || sb.reload_count() == 1,
+        "the pending reload once Hyprland is back",
+        Duration::from_secs(10),
+    );
     // The claim is consumed only AFTER a successful fire, so its absence is
     // POLLED, never asserted immediately: the stub's `rm` follows its
     // `hyprctl reload` return by a window a fast poller can straddle — an
@@ -768,18 +942,34 @@ fn sandboxed_request_pending_keeps_drainer_alive_and_fires() {
     const WIDE_DRAIN: &str = "1500"; // 1.5 s per tick — wide, noise-proof walls
 
     // Burst 1 fires; the drainer then goes idle with a tiny 2-tick bound.
-    run_apply_with_env(&sb, "apply_animation.sh", &["test"], true, "1", WIDE_DRAIN, &[
-        ("HVE_RELOAD_IDLE_TICKS", "2"),
-    ]);
-    sb.wait_until(|| sb.reload_count() == 1, "first burst reload", Duration::from_secs(10));
+    run_apply_with_env(
+        &sb,
+        "apply_animation.sh",
+        &["test"],
+        true,
+        "1",
+        WIDE_DRAIN,
+        &[("HVE_RELOAD_IDLE_TICKS", "2")],
+    );
+    sb.wait_until(
+        || sb.reload_count() == 1,
+        "first burst reload",
+        Duration::from_secs(10),
+    );
 
     // Burst 2 lands while the drainer is idle-but-alive (300 ms in, ~1.2 s
     // of bound left). Its spawn loses the drain lock, so the SAME drainer
     // must stay alive and fire it — exiting now would strand the request.
     std::thread::sleep(Duration::from_millis(300));
-    let pid = sb.drainer_pid().expect("drainer must still be alive mid-idle");
+    let pid = sb
+        .drainer_pid()
+        .expect("drainer must still be alive mid-idle");
     sb.run_apply("border.sh", &["test"], true, "1", WIDE_DRAIN);
-    sb.wait_until(|| sb.reload_count() == 2, "the pending request to fire", Duration::from_secs(10));
+    sb.wait_until(
+        || sb.reload_count() == 2,
+        "the pending request to fire",
+        Duration::from_secs(10),
+    );
     // The claim and marker are removed by the drainer AFTER the fire returns,
     // so their absence must be POLLED, never asserted immediately: the stub's
     // `rm` follows its `hyprctl reload` return by a window a fast poller can
@@ -831,15 +1021,25 @@ fn sandboxed_no_loss_under_idle_exit_stress() {
         // Alternate one/two-tick idle bounds so drainer lifecycles vary
         // while the queue keeps racing their exit decisions.
         let idle_ticks = if i % 2 == 0 { "1" } else { "2" };
-        run_apply_with_env(&sb, "apply_animation.sh", &["test"], true, "1", "100", &[
-            ("HVE_RELOAD_IDLE_TICKS", idle_ticks),
-        ]);
+        run_apply_with_env(
+            &sb,
+            "apply_animation.sh",
+            &["test"],
+            true,
+            "1",
+            "100",
+            &[("HVE_RELOAD_IDLE_TICKS", idle_ticks)],
+        );
         // ≥ 2 drain windows between bursts: independent bursts (each must
         // fire its own reload), with jitter so requests sweep across the
         // drainers' phases.
         std::thread::sleep(Duration::from_millis((220 + (i % 3) * 30) as u64));
     }
-    sb.wait_until(|| sb.reload_count() == BURSTS, "every burst to fire", Duration::from_secs(25));
+    sb.wait_until(
+        || sb.reload_count() == BURSTS,
+        "every burst to fire",
+        Duration::from_secs(25),
+    );
     sb.assert_stable(BURSTS, Duration::from_millis(1500));
     assert!(!sb.marker_path().exists(), "no marker may be left behind");
     assert!(!sb.claim_path().exists(), "no claim may be left behind");
@@ -896,7 +1096,11 @@ fn apply_four_fragments_with_path(sb: &Sandbox, path: &str) -> Vec<String> {
             std::thread::sleep(Duration::from_millis(25));
         }
         let out = child.wait_with_output().unwrap();
-        assert!(out.status.success(), "{script} failed: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{script} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         warns.push(String::from_utf8_lossy(&out.stderr).into_owned());
     }
     warns

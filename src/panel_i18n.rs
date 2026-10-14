@@ -151,9 +151,10 @@ pub fn apply_borders(window: &MainWindow, tr: &Tr) {
         tr.tr_shared("borders.picker.channel_gradient_prefix", "gradient colour "),
     );
     t.set_picker_channel_gradient_mid(tr.tr_shared("borders.picker.channel_gradient_mid", " of "));
-    t.set_picker_channel_inactive(
-        tr.tr_shared("borders.picker.channel_inactive", "the inactive border colour"),
-    );
+    t.set_picker_channel_inactive(tr.tr_shared(
+        "borders.picker.channel_inactive",
+        "the inactive border colour",
+    ));
     t.set_picker_channel_glow(tr.tr_shared("borders.picker.channel_glow", "the glow colour"));
     t.set_picker_channel_glow_inactive(tr.tr_shared(
         "borders.picker.channel_glow_inactive",
@@ -193,17 +194,11 @@ pub fn apply_motion(window: &MainWindow, tr: &Tr) {
     let t = crate::MotionText::get(window);
 
     t.set_speed_label(tr.tr_shared("animations.controls.speed_label", "Speed"));
-    t.set_style_label(tr.tr_shared(
-        "animations.controls.style_label",
-        "Animation Style",
-    ));
+    t.set_style_label(tr.tr_shared("animations.controls.style_label", "Animation Style"));
     t.set_style_slide(tr.tr_shared("animations.controls.style_slide", "Slide"));
     t.set_style_fade(tr.tr_shared("animations.controls.style_fade", "Fade"));
     t.set_style_popin(tr.tr_shared("animations.controls.style_popin", "Popin"));
-    t.set_style_slidefade(tr.tr_shared(
-        "animations.controls.style_slidefade",
-        "Slide + Fade",
-    ));
+    t.set_style_slidefade(tr.tr_shared("animations.controls.style_slidefade", "Slide + Fade"));
 
     // Section header
     t.set_title(tr.tr_shared("panel.nav.motion", "Motion"));
@@ -227,10 +222,7 @@ pub fn apply_motion(window: &MainWindow, tr: &Tr) {
     // List pane
     t.set_list_builtin(tr.tr_shared("borders.list.builtin", "Built-in"));
     t.set_list_user(tr.tr_shared("animations.list.user", "My Animation Presets"));
-    t.set_list_empty(tr.tr_shared(
-        "animations.list.empty",
-        "No animation presets found.",
-    ));
+    t.set_list_empty(tr.tr_shared("animations.list.empty", "No animation presets found."));
 
     // Card action tooltips and the rename/delete dialog confirm buttons
     t.set_card_apply(tr.tr_shared("borders.list.apply", "Apply"));
@@ -278,10 +270,7 @@ pub fn apply_filters(window: &MainWindow, tr: &Tr) {
         "panel.filters.desc",
         "Pick a shader — instantly applied. Repick active to turn off.",
     ));
-    t.set_empty(tr.tr_shared(
-        "panel.filters.empty",
-        "No shader presets found.",
-    ));
+    t.set_empty(tr.tr_shared("panel.filters.empty", "No shader presets found."));
     t.set_kbd_hint(tr.tr_shared(
         "panel.filters.kbd_hint",
         "↑↓ navigate • Enter/Space apply • Tab pick→next • Esc back",

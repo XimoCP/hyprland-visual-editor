@@ -40,7 +40,9 @@ impl HyprIpc {
             .join(&instance)
             .join(".socket2.sock");
         if socket.exists() {
-            Some(Self { socket_path: socket })
+            Some(Self {
+                socket_path: socket,
+            })
         } else {
             None
         }
@@ -157,13 +159,13 @@ impl HyprIpc {
                         // re-apply the same wallpaper and recompute the theme a
                         // moment later; that is the permission for the palette
                         // defence. Arming is line-local and cheap.
-                        let mut slot =
-                            MONITOR_PERMIT.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut slot = MONITOR_PERMIT.lock().unwrap_or_else(|e| e.into_inner());
                         arm_monitor_permit(&mut slot, Instant::now());
                     }
                 }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
+                Err(ref e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut =>
                 {
                     // Timeout is normal — just continue listening. Re-take the
                     // resume baseline here (free: the read already woke us, no
@@ -654,8 +656,9 @@ where
                     // If title is empty, do nothing (transition between workspaces)
                 }
             }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut =>
+            Err(ref e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
             {
                 continue;
             }
@@ -688,8 +691,14 @@ mod tests {
             || on_line += 1,
             || heavy += 1,
         );
-        assert!(ran, "the first line inside a 3s window runs the throttled reload");
-        assert_eq!(on_line, 1, "line actions (masks + restore) run on EVERY line");
+        assert!(
+            ran,
+            "the first line inside a 3s window runs the throttled reload"
+        );
+        assert_eq!(
+            on_line, 1,
+            "line actions (masks + restore) run on EVERY line"
+        );
         assert_eq!(heavy, 1);
 
         let ran2 = handle_configreloaded_line(
@@ -700,7 +709,10 @@ mod tests {
         );
         assert!(!ran2, "a second line inside the 3s window is throttled");
         assert_eq!(on_line, 2, "line actions still run on the throttled line");
-        assert_eq!(heavy, 1, "the heavy reload does not run again inside the window");
+        assert_eq!(
+            heavy, 1,
+            "the heavy reload does not run again inside the window"
+        );
 
         let ran3 = handle_configreloaded_line(
             &last_reload,
@@ -781,7 +793,10 @@ mod tests {
             "",
             "garbage line",
         ] {
-            assert!(!monitor_event_arms(line), "{line:?} must NOT arm the window");
+            assert!(
+                !monitor_event_arms(line),
+                "{line:?} must NOT arm the window"
+            );
         }
     }
 
@@ -830,7 +845,10 @@ mod tests {
         let t0 = Instant::now();
         let mut slot = None;
         arm_monitor_permit(&mut slot, t0);
-        assert!(defence_permits_reassert(&mut slot, t0 + Duration::from_millis(1)));
+        assert!(defence_permits_reassert(
+            &mut slot,
+            t0 + Duration::from_millis(1)
+        ));
         assert!(
             !defence_permits_reassert(&mut slot, t0 + Duration::from_millis(2)),
             "the first window is spent"

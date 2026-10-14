@@ -200,10 +200,7 @@ pub fn parse_authority_outputs(json: &str) -> Result<Vec<AuthorityOutput>, Strin
         .map(|e| {
             let name = e.name.clone().unwrap_or_default();
             let kind = parse_kind(e.kind.as_deref(), &name)?;
-            let current = e
-                .current
-                .or(e.path)
-                .unwrap_or_default();
+            let current = e.current.or(e.path).unwrap_or_default();
             // Logical size first, physical size as fallback, zero when
             // neither is known (never a reference then).
             let logical_width = if e.logical_width > 0 {
@@ -782,11 +779,9 @@ fn resolve_video_identity(
         let argv_refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
         // The argv's own binary name sharpens the owner check for generic
         // namespaces (same signal as /proc comm, minus one file read).
-        let proc_hint = argv.first().and_then(|bin| {
-            Path::new(bin.as_str())
-                .file_name()
-                .and_then(|f| f.to_str())
-        });
+        let proc_hint = argv
+            .first()
+            .and_then(|bin| Path::new(bin.as_str()).file_name().and_then(|f| f.to_str()));
         let owner = layer_owner(&o.top_namespace, proc_hint);
         let attributed_video = o.kind == Some(WallpaperKind::Video)
             || (owner == LayerOwner::Skwd
@@ -1335,9 +1330,7 @@ pub fn snapshot_static_path(snapshot: &AuthoritySnapshot) -> Result<Option<Strin
     let first = match skwd_names.first() {
         Some(name) => *name,
         None => {
-            tracing::debug!(
-                "[wallpaper] static path: no skwd layer on top; keeping wallpaper-get",
-            );
+            tracing::debug!("[wallpaper] static path: no skwd layer on top; keeping wallpaper-get",);
             return Ok(None);
         }
     };
@@ -1527,8 +1520,14 @@ mod tests {
 
     #[test]
     fn plan_maps_kind_to_capture() {
-        assert_eq!(plan_from_kind(Some(WallpaperKind::Static)), SavePlan::StaticOnly);
-        assert_eq!(plan_from_kind(Some(WallpaperKind::Video)), SavePlan::VideoOnly);
+        assert_eq!(
+            plan_from_kind(Some(WallpaperKind::Static)),
+            SavePlan::StaticOnly
+        );
+        assert_eq!(
+            plan_from_kind(Some(WallpaperKind::Video)),
+            SavePlan::VideoOnly
+        );
         assert_eq!(plan_from_kind(None), SavePlan::Unknown);
     }
 
@@ -1592,7 +1591,10 @@ mod tests {
             ]}"#,
         );
         let old_path = std::env::var("PATH").ok();
-        std::env::set_var("PATH", format!("{}:{}", bin.display(), old_path.clone().unwrap_or_default()));
+        std::env::set_var(
+            "PATH",
+            format!("{}:{}", bin.display(), old_path.clone().unwrap_or_default()),
+        );
 
         let live = query_live_backgrounds();
 
@@ -1625,7 +1627,10 @@ mod tests {
             }
         }
         let old_path = std::env::var("PATH").ok();
-        std::env::set_var("PATH", format!("{}:{}", bin.display(), old_path.clone().unwrap_or_default()));
+        std::env::set_var(
+            "PATH",
+            format!("{}:{}", bin.display(), old_path.clone().unwrap_or_default()),
+        );
 
         let live = query_live_backgrounds();
 
@@ -1698,7 +1703,11 @@ mod tests {
         // mpvpaper is video by nature: no daemon signal needed, even when
         // the daemon insists everything is static.
         let json = layers_doc(
-            &format!("{},{}", layer("skwd-paper", 1.0, 439101), layer("mpvpaper", 1.0, 507331)),
+            &format!(
+                "{},{}",
+                layer("skwd-paper", 1.0, 439101),
+                layer("mpvpaper", 1.0, 507331)
+            ),
             &layer("skwd-paper", 1.0, 439101),
         );
         let daemon = r#"{"outputs": [
@@ -1719,7 +1728,11 @@ mod tests {
         // so its kind comes from the daemon — a static report decides
         // static, and a video report would decide video (never the name).
         let json = layers_doc(
-            &format!("{},{}", layer("mpvpaper", 1.0, 507331), layer("skwd-paper", 1.0, 439101)),
+            &format!(
+                "{},{}",
+                layer("mpvpaper", 1.0, 507331),
+                layer("skwd-paper", 1.0, 439101)
+            ),
             &layer("skwd-paper", 1.0, 439101),
         );
         let outputs = parse_compositor_layers(&json).unwrap();
@@ -1791,7 +1804,11 @@ mod tests {
         // so save keeps the legacy capture-everything behaviour. The
         // namespace is kept for the honest log line.
         let json = layers_doc(
-            &format!("{},{}", layer("skwd-paper", 1.0, 439101), layer("mystery-layer", 1.0, 999)),
+            &format!(
+                "{},{}",
+                layer("skwd-paper", 1.0, 439101),
+                layer("mystery-layer", 1.0, 999)
+            ),
             &layer("skwd-paper", 1.0, 439101),
         );
         let outputs = parse_compositor_layers(&json).unwrap();
@@ -1840,7 +1857,11 @@ mod tests {
         // topmost opaque layer is video means a live video is visible.
         let json = layers_doc(
             &layer("skwd-paper", 1.0, 439101),
-            &format!("{},{}", layer("skwd-paper", 1.0, 439101), layer("mpvpaper", 1.0, 507331)),
+            &format!(
+                "{},{}",
+                layer("skwd-paper", 1.0, 439101),
+                layer("mpvpaper", 1.0, 507331)
+            ),
         );
         let daemon = r#"{"outputs": [
             {"name": "HDMI-A-1", "current": "/pic/a.png", "path": "/pic/a.png",
@@ -1903,12 +1924,18 @@ mod tests {
             outputs.iter().all(|o| o.kind == Some(WallpaperKind::Video)),
             "video on top on every output must decide video, got {outputs:?}"
         );
-        assert_eq!(decide_active_kind(Some(json), None), Some(WallpaperKind::Video));
+        assert_eq!(
+            decide_active_kind(Some(json), None),
+            Some(WallpaperKind::Video)
+        );
     }
 
     #[test]
     fn classify_painter_maps_known_painters() {
-        assert_eq!(classify_painter("mpvpaper", None), Some(WallpaperKind::Video));
+        assert_eq!(
+            classify_painter("mpvpaper", None),
+            Some(WallpaperKind::Video)
+        );
         // Skwd-suite layers never classify by name: their kind comes from
         // the daemon (the suite paints animated wallpapers too).
         assert_eq!(classify_painter("skwd-paper", None), None);
@@ -1920,7 +1947,10 @@ mod tests {
             classify_painter("mystery-layer", Some("mpvpaper")),
             Some(WallpaperKind::Video)
         );
-        assert_eq!(classify_painter("mystery-layer", Some("skwd-wall-vk")), None);
+        assert_eq!(
+            classify_painter("mystery-layer", Some("skwd-wall-vk")),
+            None
+        );
     }
 
     #[test]
@@ -1936,8 +1966,14 @@ mod tests {
         ] {
             assert_eq!(layer_owner(name, None), LayerOwner::Skwd, "{}", name);
         }
-        assert_eq!(layer_owner("wallpaper", Some("skwd-paper-v2")), LayerOwner::Skwd);
-        assert_eq!(layer_owner("wallpaper", Some("skwd-wall-vk")), LayerOwner::Skwd);
+        assert_eq!(
+            layer_owner("wallpaper", Some("skwd-paper-v2")),
+            LayerOwner::Skwd
+        );
+        assert_eq!(
+            layer_owner("wallpaper", Some("skwd-wall-vk")),
+            LayerOwner::Skwd
+        );
         assert_eq!(layer_owner("mpvpaper", None), LayerOwner::Video);
         assert_eq!(layer_owner("mystery-layer", None), LayerOwner::Unknown);
     }
@@ -2080,7 +2116,10 @@ mod tests {
     #[test]
     fn active_kind_dedicated_video_painter_is_video() {
         // mpvpaper paints video by nature: no daemon signal needed.
-        let json = layers_doc(&layer("mpvpaper", 1.0, 507331), &layer("mpvpaper", 1.0, 507331));
+        let json = layers_doc(
+            &layer("mpvpaper", 1.0, 507331),
+            &layer("mpvpaper", 1.0, 507331),
+        );
         assert_eq!(
             decide_active_kind(Some(&json), None),
             Some(WallpaperKind::Video)
@@ -2473,7 +2512,8 @@ mod tests {
         assert_eq!(
             extract_video_path_from_argv(&skwd_wall_vk_argv()),
             Some(
-                "/home/ximo/Pictures/LiveWallpapers/slugcat-rain-world-moewalls-com.mp4".to_string()
+                "/home/ximo/Pictures/LiveWallpapers/slugcat-rain-world-moewalls-com.mp4"
+                    .to_string()
             )
         );
     }
@@ -2496,7 +2536,8 @@ mod tests {
         assert_eq!(
             extract_video_path_from_argv(&argv),
             Some(
-                "/home/ximo/Pictures/LiveWallpapers/slugcat-rain-world-moewalls-com.mp4".to_string()
+                "/home/ximo/Pictures/LiveWallpapers/slugcat-rain-world-moewalls-com.mp4"
+                    .to_string()
             )
         );
     }
@@ -2592,7 +2633,8 @@ mod tests {
         assert_eq!(
             daemon_video_current(&daemon, "DP-3"),
             Some(
-                "/home/ximo/Pictures/LiveWallpapers/slugcat-rain-world-moewalls-com.mp4".to_string()
+                "/home/ximo/Pictures/LiveWallpapers/slugcat-rain-world-moewalls-com.mp4"
+                    .to_string()
             )
         );
         assert_eq!(daemon_video_current(&daemon, "NOPE"), None);
@@ -2751,7 +2793,11 @@ mod tests {
             "width": 2560, "height": 1440, "x": 0, "y": 0, "scale": 1.0
         }]"#;
         assert_eq!(
-            decide_active_kind_with_monitors(Some(&json), Some(&daemon_kind_doc("video")), Some(monitors)),
+            decide_active_kind_with_monitors(
+                Some(&json),
+                Some(&daemon_kind_doc("video")),
+                Some(monitors)
+            ),
             None
         );
     }
@@ -2826,7 +2872,10 @@ mod tests {
             ]}"#,
         )
         .unwrap();
-        let json = layers_doc(&layer("skwd-paper", 1.0, 439101), &layer("skwd-paper", 1.0, 439101));
+        let json = layers_doc(
+            &layer("skwd-paper", 1.0, 439101),
+            &layer("skwd-paper", 1.0, 439101),
+        );
         let compositor = parse_compositor_layers(&json).unwrap();
         assert_eq!(
             resolve_static_path(&compositor, &daemon),
