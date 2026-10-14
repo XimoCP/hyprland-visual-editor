@@ -42,15 +42,15 @@ it deletes modules, formats 23k lines and bumps a dependency, so nothing else ma
 
 | ID  | Spec | Task                                                                 | Route          | Status |
 |-----|------|----------------------------------------------------------------------|----------------|--------|
-| T0  | —    | Return point: tag + copy of the installed binary, HEAD recorded      | inline         | todo   |
-| T1  | S1   | `cargo fmt` alone in its own commit                                  | inline         | todo   |
-| T2  | S3   | `tray.rs` chunk guard + truncation test                              | inline         | todo   |
-| T3  | S4   | Dead-code: remove ONLY `bg_info::notify_plugin_required` + its compat pin (recon below); every other site stays with its reason | inline | todo |
-| T4  | S2   | Clippy autofixes, float class excluded and recorded                  | inline + suite | todo   |
-| T5  | S5   | `ksni` 0.2 → 0.3: DEFERRED with the reason (see recon below)         | inline, decide | done (deferred) |
-| T6  | S6   | `reload_coalescer`/`watcher` flake: reproduce ON DEMAND under load, fix the mechanism, re-run under the same load | inline + suite | todo |
-| T7  | S7   | Source-text assertions: narrow/behavioural where rename-fragile only | inline         | todo   |
-| T8  | all  | Full suite + `cargo check --all-targets` + release build, then install | inline       | todo   |
+| T0  | —    | Return point: tag + copy of the installed binary, HEAD recorded      | inline         | DONE (tag `pre-lane-c-20261014`, binary in `target/backup/`) |
+| T1  | S1   | `cargo fmt` alone in its own commit                                  | inline         | DONE `5c4abef` |
+| T2  | S3   | `tray.rs` chunk guard + truncation test                              | inline         | DONE `c10f7a1` |
+| T3  | S4   | Dead-code: remove ONLY `bg_info::notify_plugin_required` + its compat pin (recon below); every other site stays with its reason | inline | DONE `2f70db3` |
+| T4  | S2   | Clippy autofixes, float class excluded and recorded                  | inline + suite | DONE `05d72d1` (184 -> 67 warnings) |
+| T5  | S5   | `ksni` 0.2 -> 0.3: DEFERRED with the reason (see recon below)        | inline, decide | done (deferred) |
+| T6  | S6   | `reload_coalescer`/`watcher` flake: reproduce ON DEMAND under load, fix the mechanism, re-run under the same load | inline + suite | DONE (cause: a FULL `/tmp`; timing hypothesis unproven, nothing loosened) |
+| T7  | S7   | Source-text assertions: narrow/behavioural where rename-fragile only | inline         | DONE (decision: they stay, policy written down) |
+| T8  | all  | Full suite + `cargo check --all-targets` + release build, then install | inline       | DONE (installed `56142fae...`, md5 verified) + `043339b` fixed a bug the install exposed |
 
 ### T3 recon (read, 2026-10-14) — what the module-wide allows actually hide
 
