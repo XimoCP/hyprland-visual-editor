@@ -108,6 +108,21 @@ from BOTH resolves to the key itself (visible on screen, never blank).
   inside an unreadable cause is the reader's own diagnostic (system language), and the structural check strips `//`
   lines (a commented literal is never painted).
 - **Could not verify**: live GUI behaviour on the keeper's desktop (his own check), and a baseline clippy rebuild.
+- **Targeted recheck of the one blocker (`273a8a2`, same verifier, same session)**: the original injection fails
+  again — verbatim `a text: binding may not hold a string literal … Offending binding: text: "HVE installs it
+  unchanged when the theme is applied"` — and so does a fresh-worded one that shares no phrase with the old list. It
+  then attacked the new check from seven angles: literals in a multi-line `text:` ternary, in a concatenation, in a
+  `for`-loop `Text` and in a property whose name ends in `-text` are ALL caught. Blocker closed.
+  **Known residue, recorded and deliberately not chased** (the verifier's own classification: deliberate smuggling,
+  not the natural regression the check exists to stop): copy can still hide as the non-empty DEFAULT of a
+  `<string>` property declaration, or inside a component function that returns a literal. Closing those would mean
+  policing declarations and functions; the first would be a five-line tightening if it ever matters.
+- **Pre-existing flake found by that recheck, NOT caused by this unit**: `THEME_TRUST_GATE` is PROCESS-GLOBAL, so
+  when several window-based trust tests run in parallel a request can land on `GateDecision::Blocked`
+  (held-but-no-show) and their `get_trust_warning_open()` assertion fails. The verifier measured it at `c896f7d` too
+  (3 of 6 repeated filtered runs) and confirmed every test passes in isolation (5/5); it hits randomized tests of the
+  whole filter, never the full suite of 1788, which has stayed green across the runs of this unit. It is the gate's
+  own design debt from W2, filed here as a follow-up, not fixed here.
 
 
 ### The visual verification, and the defect it caught (S7)
