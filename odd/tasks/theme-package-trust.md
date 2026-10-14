@@ -734,10 +734,20 @@ class W2c-d existed to close. Measured name sweep (1,348 minimal presets, counte
 - **The W4/W5 MEDIUM — RESOLVED, see L4 and W4b above**: the contract's line was the correct intent and the CODE was
   wrong (nothing about a disabled plugin needs the media resolved, and the download is driven by untrusted theme
   input). The check moves before the resolve/download loop; the unit is queued as W4b.
-- **Lane C (health, serial and alone — start it only when nothing else is in flight)**: `cargo fmt` (23,362 diff
-  lines — a dedicated commit, never mixed), the ~70 autofixable clippy lints (NEVER the float-comparison class —
-  it changes NaN semantics the layout relies on), the `tray.rs` pixel-chunk guard, the dead-code suppressions that
-  silence whole modules, the source-text tests and the sleep-based tests, and the `ksni` 0.2 → 0.3 bump.
+- **Lane C (health, serial and alone — start it only when nothing else is in flight)** — **DONE on 2026-10-14, moved to
+  its own document: `odd/tasks/lane-c-health.md`** (specs, per-task evidence, what each task measured). Summary of its
+  outcome: `cargo fmt` in a dedicated commit; clippy 184 → 67 with the float-comparison class left VISIBLE on purpose;
+  `tray.rs`'s only real panic candidate guarded; the `notify_plugin_required` compat path deleted; **the corroborated
+  "flake" turned out to be a FULL `/tmp`** (a 16 GiB tmpfs at 100 %, filled by previous verification rounds' scratch),
+  reproduced as `Os { code: 28, kind: StorageFull }` and cleaned, with the timing hypothesis unproven in 8 targeted
+  rounds and NOTHING loosened for it; the ~65 source-text assertions KEPT with the policy written down; and the
+  release build installed after a return point. **The one item deferred is the `ksni` 0.2 → 0.3 bump**, with the
+  measured reason and the exact next steps in that document (it changes the tray's failure semantics and needs a live
+  `StatusNotifierHost` to check). Original scope, kept for the record:
+  - `cargo fmt` (23,362 diff lines — a dedicated commit, never mixed), the ~70 autofixable clippy lints (NEVER the
+    float-comparison class — it changes NaN semantics the layout relies on), the `tray.rs` pixel-chunk guard, the
+    dead-code suppressions that silence whole modules, the source-text tests and the sleep-based tests, and the
+    `ksni` 0.2 → 0.3 bump.
   - W14 has MORE work than when this contract opened: `317d55e` added a source-text assertion test
     (`trust_warning_keyboard_wiring_is_pinned_by_construction`) and the W7/W10c units added more of the same
     pattern; they are named here so the cleanup is not read as a regression.
