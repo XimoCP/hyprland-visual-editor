@@ -50,16 +50,19 @@ Deferred from Lane C (S5 / T5, `odd/tasks/lane-c-health.md`), which holds the re
   `menu()` reads the hidden state through `try_global_controller()` instead; a stale label for one paint is the
   accepted price and the next refresh corrects it.
 - **S9 — the shape of the fix is pinned by a test.** A deterministic test fails if the production body of
-  `src/tray.rs` contains `block_on`, if a third `.update(` call site appears outside the worker's two arms, or if
-  `menu()` waits for the controller lock. The test scans the PRODUCTION body only (it names the forbidden thing
-  itself, exactly like `architecture_contract` and `checks_build` do).
+  `src/tray.rs` contains `block_on`, if `TrayHandle`'s own methods reach `.update(` at all (the worker has to stay
+  its only owner — counting call sites alone cannot see a call MOVED into a caller), or if the part of `menu()` the
+  tray thread runs — everything before its `vec!`, since the item closures are deferred to the UI thread through
+  `slint::invoke_from_event_loop` — waits for the controller lock. The test scans the PRODUCTION body only (it names
+  the forbidden thing itself, exactly like `architecture_contract` and `checks_build` do).
 
 ## Tasks
 
 | ID | Specs | Route | Status | Commit |
 |----|-------|-------|--------|--------|
 | T1 | S1-S7 | inline (parent writes; high risk → independent verifier after) | DONE, verified by `opencode-go/mimo-v2.6-flash` (no blockers) | `deps(tray): bump ksni 0.2 -> 0.3 and survive a missing tray` |
-| T2 | S8-S9 | inline (fix written 2026-10-14; checks, install and record completed 2026-10-15) | DONE, cross-model verification PENDING | `fix(tray): stop the ksni 0.3 update from deadlocking the hide path` |
+| T2 | S8-S9 | inline (fix written 2026-10-14; checks, install and record completed 2026-10-15) | DONE, verified by `opencode/mimo-v2.6-flash-free` (no blockers; 4 advisories) | `fix(tray): stop the ksni 0.3 update from deadlocking the hide path` |
+| T3 | S9 | inline, Tier 1 (test-only; no production behaviour changes) | DONE, self-checked (RED proved against `e9396df`, suite green) | `test(tray): pin where the blocking update is called, not how often` |
 
 ### T1 evidence
 
@@ -156,6 +159,40 @@ keeper's report that the tray had no menu.
 - **Only the keeper can check the rest**: press Escape to hide — HVE must stay alive and answer (no ANR dialog), and
   the tray's Hide/Show label must follow the window.
 
+### T2 independent verification (2026-10-15)
+
+- **Verifier: `opencode/mimo-v2.6-flash-free`** — a different model from the writer (`opencode-go/deepseek-v4.1-flash`,
+  and free, on the keeper's instruction while credit is tight), fresh context, explicitly asked to REFUTE.
+- **Result: SOUND, no blockers.** It re-proved the root cause from the dependency's own source rather than from the
+  commit message: `ksni-0.3.5/src/blocking.rs:206-207` (`update` = `compat::block_on(self.0.update(f))`, resolving to
+  `async_io::block_on` under HVE's features), `lib.rs:518-531` (the async update waits for the ack),
+  `service.rs:169-173` (the ack is sent only AFTER `service.update(...)`, which rebuilds the menu —
+  `service.rs:344-347` → `:291` `menu_flatten(self.tray.menu())`), and `ksni-0.2.2/src/lib.rs:182-186` (0.2 only set
+  a `need_update` flag and returned). That is the whole wedge: under 0.3 every update the UI thread made while
+  holding the controller lock waited for a menu rebuild that needed the same lock.
+- **It also confirmed the call-site map**: `update_icon`/`refresh_menu` have no caller outside the UI thread, no
+  direct ksni handle exists outside `src/tray.rs`, every `HveTray` method that ksni calls on the tray thread is pure
+  except `menu()`, and the one remaining blocking `global_controller()` (`tray.rs:335`) sits inside a closure handed
+  to `slint::invoke_from_event_loop`, so it runs on the UI thread.
+- **Advisories it raised, and what was done with each**: (1) the `.update(` count pin cannot see WHERE a call sits —
+  a call moved into a caller keeps the count at 2, so it would stay green through a regression: **fixed in T3**;
+  (2) the 1200-character window past `fn menu(&self)` was blind to a blocking read added deeper inside `menu()`:
+  **fixed in T3** (the pin now scopes to the part of `menu()` the tray thread actually runs, up to its `vec!`, and
+  says why the closures are out of scope); (3) a worker thread that panicked would stop tray updates without a log
+  line: **accepted**, not a defect this commit caused, and it needs a panic that cannot now happen on that thread
+  (its two arms are a struct-field assignment and a no-op); (4) "the next refresh corrects it" is loose wording for
+  the stale label — a rebuild that computes the same label emits no change signal, so it corrects on the next
+  TOGGLE: **accepted**, recorded in S8 as the price of not waiting.
+- **What it could not verify, and said so**: whether the keeper's panel draws the icon and whether his ANR dialog is
+  gone — both need his live session. It ran no live-bus probe on purpose (it would register a second
+  StatusNotifierItem in his panel, the reason the project's temporary probe is deleted before each commit).
+- **Checks it re-ran on `287528a`**: full suite `1789 passed / 0 failed` (165.24 s), `cargo fmt --check` clean,
+  `cargo clippy --all-targets` 67 warnings with none from `src/tray.rs` — all matching the writer's claims.
+- **Workspace left clean**: `git status --porcelain` empty, no new file, no worktree, scratch dir deleted.
+- **Not a blocker but worth keeping**: the pin's RED is carried by its menu assertions, not by the count — on the old
+  body the old file already had exactly two `.update(` sites, so the count assertion passed while the shape was
+  wrong. T3 is the direct answer to that.
+
 ## Log
 
 - **L1 (2026-10-14, the keeper, verbatim)**: `arranca con ksni 2.2`
@@ -186,3 +223,11 @@ keeper's report that the tray had no menu.
   was blocked on the controller lock the UI thread held. (4) STILL OPEN, the keeper's decision, unanswered since
   2026-10-14: whether to disable `enable_anr_dialog` (or raise `anr_missed_pings`) in his Hyprland config, so a slow
   app is not killed while the compositor waits.
+- **L7 (2026-10-15, the parent, T3)**: the independent verifier's two pin advisories were taken as real and fixed,
+  because the pin is the ONLY thing standing between the keeper and the same hang coming back: the assertion now
+  scopes to the `TrayHandle` impl (no `.update(` may appear there at all) and to the part of `menu()` the tray thread
+  runs (up to its `vec!`, since the item closures are deferred to the UI thread). RED re-proved by running the same
+  algorithm over `git show e9396df:src/tray.rs`: on the old body the count assertion PASSED (exactly two sites) while
+  the three shape assertions failed, which is exactly the hole the count left. GREEN after: full suite
+  **1789 passed / 0 failed**, `cargo fmt --check` clean. The rest of the advisories were accepted with a reason, not
+  silently dropped.

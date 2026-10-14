@@ -398,15 +398,36 @@ mod tests {
             "the blocking `update` may only be called by the tray worker (its two arms: the \
              icon and the menu refresh); a third call site means a caller can wait again"
         );
-        // The TRAY THREAD is the one that must never wait for that lock, and
-        // the only tray-thread read of it is in `menu()`: it must use the
-        // non-blocking `try_global_controller`. The `global_controller()` call
-        // further down is legitimate — it runs on the UI thread, inside
-        // `slint::invoke_from_event_loop`.
+        // Counting call sites is not enough: a third `.update(` is not the only
+        // way back to the bug, a call MOVED into one of these methods keeps the
+        // count at two. Pin the place, not the tally: no `TrayHandle` method may
+        // reach `update` at all — the worker is its only owner.
+        let handle_at = code
+            .find("impl TrayHandle {")
+            .expect("the gate must keep a `TrayHandle` impl");
+        let handle = code[handle_at..]
+            .split("\n}")
+            .next()
+            .expect("the `TrayHandle` impl must close at column 0");
+        assert!(
+            !handle.contains(".update("),
+            "a `TrayHandle` method must only ENQUEUE; a `.update(` here is a caller that waits \
+             for the tray service (the deadlock of 2026-10-14)"
+        );
+        // The TRAY THREAD is the one that must never wait for that lock. Every
+        // ksni method runs on it, but the menu ITEM CLOSURES do not: they are
+        // handed to `slint::invoke_from_event_loop` and run on the UI thread, so
+        // the legitimately blocking `global_controller()` inside the Toggle
+        // Window item is fine. What runs on the tray thread when the service
+        // asks for the menu is the part BEFORE the `vec!` — that is the scope
+        // this pin owns, and it must not widen into the closures.
         let menu_at = code
             .find("fn menu(&self)")
             .expect("the gate must keep a `menu()` for the tray");
-        let menu: String = code[menu_at..].chars().take(1200).collect();
+        let menu = code[menu_at..]
+            .split("vec![")
+            .next()
+            .expect("the gate must keep the `vec!` menu body");
         assert!(
             menu.contains("crate::composer::try_global_controller("),
             "`menu()` runs on the tray thread and must read the hidden state WITHOUT waiting \
@@ -414,8 +435,8 @@ mod tests {
         );
         assert!(
             !menu.contains("crate::composer::global_controller("),
-            "`menu()` must not WAIT for the composer's controller lock (the UI thread holds \
-             it while it asks the tray to refresh)"
+            "the part of `menu()` the tray thread runs must not WAIT for the composer's \
+             controller lock (the UI thread holds it while it asks the tray to refresh)"
         );
     }
 
