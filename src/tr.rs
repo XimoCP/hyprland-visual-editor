@@ -7,6 +7,23 @@ use serde_json::Value;
 static EN_JSON: &str = include_str!("../i18n/en.json");
 static ES_JSON: &str = include_str!("../i18n/es.json");
 
+/// Every dot-notation key the active language is missing is resolved against
+/// this parsed English map (parsed once, on first use).
+static EN_MAP: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+
+fn en_map() -> &'static Value {
+    EN_MAP.get_or_init(|| serde_json::from_str(EN_JSON).expect("en.json is embedded, valid JSON"))
+}
+
+/// Walk a dot-notation path inside an already-parsed map.
+fn lookup<'a>(map: &'a Value, key: &str) -> Option<&'a str> {
+    let mut current = map;
+    for part in key.split('.') {
+        current = current.get(part)?;
+    }
+    current.as_str()
+}
+
 /// Holds the loaded translation map and the active language code.
 pub struct Tr {
     data: Value,
@@ -53,6 +70,24 @@ impl Tr {
     /// Resolve a key, falling back to the given string if not found.
     pub fn tr_or<'a>(&'a self, key: &str, fallback: &'a str) -> &'a str {
         self.tr(key).unwrap_or(fallback)
+    }
+
+    /// Resolve a key for the ACTIVE language, falling back to the ENGLISH text
+    /// of the same key — the middle step of this module's documented chain
+    /// (selected → en → raw key), done here so an English literal never has to
+    /// be repeated in Rust.
+    ///
+    /// A duplicated literal is not just redundancy: the consent gate's copy is
+    /// pinned in `i18n/{en,es}.json` (`odd/tasks/trust-warning-i18n.md`), and a
+    /// copy of it in `src/main.rs` re-introduced a `hyprland` mention that
+    /// `architecture_contract` polices — the pin caught the duplication before
+    /// the two copies could drift. Returns the raw KEY when the text is
+    /// missing from both maps, which is visible on screen instead of blank.
+    pub fn tr_or_en(&self, key: &str) -> String {
+        match self.tr(key) {
+            Some(text) => text.to_string(),
+            None => lookup(en_map(), key).unwrap_or(key).to_string(),
+        }
     }
 
     /// Convenience: resolve a key and return as `SharedString` for Slint bindings.
@@ -115,6 +150,37 @@ fn load_embedded(lang: &str) -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The chain's middle step, which the consent gate's copy depends on: a key
+    /// the ACTIVE language does not carry resolves to the ENGLISH text of the
+    /// same key — never to the raw key, and never to an empty string.
+    #[test]
+    fn tr_or_en_falls_back_to_the_english_text_of_the_same_key() {
+        // A language whose map carries nothing. The embedded files are
+        // complete, so this partial map is built here.
+        let partial = Tr {
+            data: serde_json::json!({}),
+            lang: "xx".to_string(),
+        };
+        assert_eq!(
+            partial.tr_or_en("trust.title"),
+            "This theme carries code",
+            "a missing key must resolve to its English text"
+        );
+        assert_eq!(partial.tr_or_en("trust.cancel"), "Cancel");
+
+        // The active language still wins when it carries the key: the fallback
+        // must not override a complete translation.
+        assert_eq!(
+            Tr::with_lang("es").tr_or_en("trust.cancel"),
+            "Cancelar",
+            "Spanish must win over English"
+        );
+
+        // Missing from BOTH maps: the key itself, which is visible on screen
+        // instead of a blank label (the chain's last step).
+        assert_eq!(partial.tr_or_en("trust.nope"), "trust.nope");
+    }
     use super::*;
     use serial_test::serial;
 

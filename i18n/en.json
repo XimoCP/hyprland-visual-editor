@@ -591,5 +591,23 @@
     },
     "save_section": "Save Current State",
     "list_section": "My Themes"
+  },
+  "trust": {
+    "title": "This theme carries code",
+    "intro": "\"{theme}\" carries the content below. HVE installs it unchanged when the theme is applied — nothing is removed or rewritten.",
+    "hooks_heading": "Shell hooks ({count})",
+    "hooks_desc": "Commands this theme's provider runs on its own events (start, wallpaper change, colour change, shutdown).",
+    "presets_heading": "Lua presets ({count})",
+    "presets_desc": "Files copied into your preset store and read by Hyprland when it assembles the overlay.",
+    "remembered": "Only continue if you trust where this theme came from. The commands and scripts above run with your own permissions — the same access you have in a terminal. Continuing remembers this acceptance: with this name and this content, HVE will not ask again, and it asks again as soon as either changes.",
+    "not_remembered": "Only continue if you trust where this theme came from. The commands and scripts above run with your own permissions — the same access you have in a terminal. HVE cannot remember a decision for this package — part of it could not be read in full, or it is too big for HVE to record — so it asks again the next time you apply this theme.",
+    "not_a_sandbox": "This is a consent gate, not a sandbox: HVE does not filter, block or isolate any of it. If you continue, this theme's code runs as you.",
+    "kbd_hint": "↑↓ scroll the list • ←→ pick a button • Enter/Space activate • Esc cancel",
+    "cancel": "Cancel",
+    "continue": "Continue",
+    "cause_budget_spent": "the preset {path} was not read by this scan: this package's code already fills the {limit}-byte budget for a theme HVE can remember, so the rest of its presets are not listed here",
+    "cause_too_large": "the preset {path} could not be KEPT by this scan: it is {bytes} bytes, over the {limit}-byte bound for a preset HVE can remember, so its contents are not shown here",
+    "cause_over_budget": "the preset {path} could not be KEPT by this scan: it would push this package's code past the {limit}-byte budget for a theme HVE can remember, so its contents are not shown here",
+    "cause_unreadable": "the preset {path} could not be read by this scan: {error}; it may carry code that is not shown here"
   }
 }

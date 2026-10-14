@@ -20447,68 +20447,321 @@ fn theme_trust_notices_a_rewritten_preset_body() {
 /// say what the package carries, ask the keeper to judge the source, and
 /// must NEVER be worded as if HVE prevented anything (it is a consent
 /// gate, not a sandbox — nothing is stripped or filtered).
+///
+/// `trust-warning-i18n` (odd/tasks/trust-warning-i18n.md): the copy moved OUT
+/// of the `.slint` and INTO `i18n/{en,es}.json`, so the claims are now pinned
+/// where they live — in BOTH languages, because a Spanish keeper reads the
+/// Spanish copy and that copy carries exactly the same promise.
 #[test]
-fn theme_trust_warning_copy_states_the_honest_limit() {
+fn trust_gate_copy_lives_in_the_i18n_files_and_keeps_the_honest_limit() {
+    // ── 1. No literal copy left in the component (comments do not count) ──
     let src = std::fs::read_to_string("ui/gallery/TrustWarning.slint")
         .expect("ui/gallery/TrustWarning.slint must exist");
-    let lower = src.to_lowercase();
+    let code: String = src
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    for hardcoded in [
+        "This theme carries code",
+        "Shell hooks",
+        "Lua presets",
+        "Continue",
+        "Cancel",
+        "Only continue if you trust",
+        "not a sandbox",
+        "consent gate",
+    ] {
+        assert!(
+            !code.contains(hardcoded),
+            "the gate's copy must live in i18n/{{en,es}}.json and reach the UI as a property — \
+             found {hardcoded:?} in ui/gallery/TrustWarning.slint"
+        );
+    }
     assert!(
-        lower.contains("consent gate, not a sandbox"),
-        "the copy must state plainly that this is a consent gate, not a sandbox"
+        code.contains("root.acceptance-remembered"),
+        "the copy must still branch on whether the decision can be remembered"
+    );
+
+    // ── 2. Every key the gate needs exists in BOTH languages ──
+    const KEYS: [&str; 16] = [
+        "trust.title",
+        "trust.intro",
+        "trust.hooks_heading",
+        "trust.hooks_desc",
+        "trust.presets_heading",
+        "trust.presets_desc",
+        "trust.remembered",
+        "trust.not_remembered",
+        "trust.not_a_sandbox",
+        "trust.kbd_hint",
+        "trust.cancel",
+        "trust.continue",
+        "trust.cause_budget_spent",
+        "trust.cause_too_large",
+        "trust.cause_over_budget",
+        "trust.cause_unreadable",
+    ];
+    for lang in ["en", "es"] {
+        let tr = crate::tr::Tr::with_lang(lang);
+        for key in KEYS {
+            let value = tr.tr(key).unwrap_or_else(|| {
+                panic!("{key} is missing from i18n/{lang}.json: the gate would show a raw key")
+            });
+            assert!(
+                !value.trim().is_empty(),
+                "{key} must not be empty in i18n/{lang}.json"
+            );
+        }
+        // The two states differ, and the copy must say so in this language.
+        let remembered = tr.tr_or("trust.remembered", "");
+        let not_remembered = tr.tr_or("trust.not_remembered", "");
+        assert_ne!(
+            remembered, not_remembered,
+            "the remembered and not-remembered copies must differ ({lang})"
+        );
+    }
+
+    // ── 3. The claims themselves, in each language ──
+    let en = crate::tr::Tr::with_lang("en");
+    assert!(
+        en.tr_or("trust.not_a_sandbox", "")
+            .to_lowercase()
+            .contains("consent gate, not a sandbox"),
+        "the EN copy must state plainly that this is a consent gate, not a sandbox"
     );
     assert!(
-        lower.contains("only continue if you trust where this theme came from"),
-        "the copy must ask the keeper to judge where the theme came from"
+        en.tr_or("trust.remembered", "")
+            .contains("Only continue if you trust where this theme came from"),
+        "the EN copy must ask the keeper to judge where the theme came from"
     );
     assert!(
-        lower.contains("shell hook"),
-        "the copy must name the shell hooks"
-    );
-    assert!(
-        lower.contains("lua preset"),
-        "the copy must name the Lua presets"
-    );
-    assert!(
-        lower.contains("cancel") && lower.contains("continue"),
-        "both decisions must be offered"
-    );
-    // W2c: Continue is no longer a one-shot — the copy must SAY what it
-    // remembers, in both states, because the two states differ.
-    assert!(
-        lower.contains("continuing remembers this acceptance"),
-        "the copy must state that Continue remembers the acceptance"
-    );
-    assert!(
-        lower.contains("with this name and this content"),
-        "the copy must scope the silence to BOTH the name and the content — \
+        en.tr_or("trust.remembered", "")
+            .contains("with this name and this content"),
+        "the EN copy must scope the silence to BOTH the name and the content — \
          a rename re-warns, so a promise about the content alone would be false"
     );
     assert!(
-        lower.contains("it asks again as soon as either changes"),
-        "the copy must say the warning returns when either of the two changes"
+        en.tr_or("trust.remembered", "")
+            .contains("it asks again as soon as either changes"),
+        "the EN copy must say the warning returns when either of the two changes"
     );
     assert!(
-        lower.contains("hve cannot remember a decision for this package"),
+        en.tr_or("trust.not_remembered", "")
+            .to_lowercase()
+            .contains("hve cannot remember a decision for this package"),
         "a package that could not be read in full, or that carries more code than \
          HVE records, must not be presented as remembered"
     );
     assert!(
-        src.contains("root.acceptance-remembered"),
-        "the copy must branch on whether the decision can be remembered"
+        en.tr_or("trust.hooks_heading", "")
+            .to_lowercase()
+            .contains("shell hook")
+            && en
+                .tr_or("trust.presets_heading", "")
+                .to_lowercase()
+                .contains("lua preset"),
+        "the copy must name the shell hooks and the Lua presets"
     );
-    for banned in [
-        "prevents execution",
-        "blocks execution",
-        "runs in a sandbox",
-        "harmless",
-        "we remove",
-        "is stripped",
-        "safe to apply",
-        "sanitiz",
+    assert!(
+        en.tr_or("trust.intro", "").contains("{theme}"),
+        "the intro takes the theme name as a placeholder, filled by Rust"
+    );
+
+    let es = crate::tr::Tr::with_lang("es");
+    assert!(
+        es.tr_or("trust.not_a_sandbox", "")
+            .to_lowercase()
+            .contains("puerta de consentimiento"),
+        "the ES copy must state plainly that this is a consent gate, not a sandbox"
+    );
+    assert!(
+        es.tr_or("trust.remembered", "")
+            .to_lowercase()
+            .contains("si confiás en de dónde salió"),
+        "the ES copy must ask the keeper to judge where the theme came from"
+    );
+    assert!(
+        es.tr_or("trust.remembered", "")
+            .contains("con este nombre y este contenido"),
+        "the ES copy must scope the silence to BOTH the name and the content"
+    );
+    assert!(
+        es.tr_or("trust.remembered", "")
+            .contains("te lo vuelve a preguntar en cuanto cambie"),
+        "the ES copy must say the warning returns when either of the two changes"
+    );
+    assert!(
+        es.tr_or("trust.not_remembered", "")
+            .to_lowercase()
+            .contains("no puede recordar"),
+        "the ES copy must state the case it cannot remember"
+    );
+    assert!(
+        es.tr_or("trust.hooks_heading", "")
+            .to_lowercase()
+            .contains("hooks")
+            && es
+                .tr_or("trust.presets_heading", "")
+                .to_lowercase()
+                .contains("presets"),
+        "the ES copy must name the shell hooks and the Lua presets"
+    );
+
+    // ── 4. No copy in either language may claim prevention ──
+    for (lang, banned) in [
+        (
+            "en",
+            &[
+                "prevents execution",
+                "blocks execution",
+                "runs in a sandbox",
+                "harmless",
+                "we remove",
+                "is stripped",
+                "safe to apply",
+                "sanitiz",
+            ][..],
+        ),
+        (
+            "es",
+            &[
+                "impide que se ejecute",
+                "bloquea la ejecución",
+                "se ejecuta aislado",
+                "inofensivo",
+                "eliminamos",
+                "se elimina",
+                "seguro de aplicar",
+                "sanitiz",
+                "sanead",
+            ][..],
+        ),
     ] {
+        let tr = crate::tr::Tr::with_lang(lang);
+        let all: String = KEYS
+            .iter()
+            .map(|k| tr.tr_or(k, "").to_lowercase())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for claim in banned {
+            assert!(
+                !all.contains(claim),
+                "the warning must not claim to prevent execution — found {claim:?} in the {lang} copy"
+            );
+        }
+    }
+}
+
+/// `trust-warning-i18n` S3: the gate speaks the language the APP was started
+/// with — the window's own `language`, which Rust fills from `cfg.language` —
+/// and it does so through the REAL path (`trust_gate_request`, the same door
+/// both apply callbacks use). Both languages are checked on the SAME package,
+/// so this cannot pass by accident of the copy being empty or equal.
+#[test]
+fn theme_trust_warning_speaks_the_app_language() {
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+    crate::wire_theme_trust_gate(&win);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("themes");
+    let store_path = tmp.path().join("theme-trust.toml");
+    let settings = root.join("Risky").join("providers").join("noctalia-v5");
+    std::fs::create_dir_all(&settings).unwrap();
+    std::fs::write(
+        settings.join("settings.toml"),
+        "[hooks]\nstarted = \"sddm-watch.sh\"\n",
+    )
+    .unwrap();
+
+    for (lang, title, cancel, continue_label) in [
+        ("en", "This theme carries code", "Cancel", "Continue"),
+        ("es", "Este tema trae código", "Cancelar", "Continuar"),
+    ] {
+        win.set_language(lang.into());
+        let may_apply = crate::trust_gate_request(
+            &win,
+            "Risky",
+            0,
+            crate::theme_trust::ApplyOrigin::Gallery,
+            &root,
+            &store_path,
+        );
         assert!(
-            !lower.contains(banned),
-            "the warning must not claim to prevent execution — found {banned:?}"
+            !may_apply,
+            "a package carrying a hook must be held, whatever the language ({lang})"
+        );
+        assert!(
+            win.get_trust_warning_open(),
+            "the warning must be showing ({lang})"
+        );
+
+        assert_eq!(
+            win.get_trust_warning_title().as_str(),
+            title,
+            "the title must be in the app's language ({lang})"
+        );
+        assert_eq!(
+            win.get_trust_warning_cancel().as_str(),
+            cancel,
+            "the Cancel button must be in the app's language ({lang})"
+        );
+        assert_eq!(
+            win.get_trust_warning_continue().as_str(),
+            continue_label,
+            "the Continue button must be in the app's language ({lang})"
+        );
+        // The placeholders are FILLED, not shown: the theme name in the intro
+        // and the carrier count in the heading.
+        let intro = win.get_trust_warning_intro().to_string();
+        assert!(
+            intro.contains("Risky") && !intro.contains("{theme}"),
+            "the intro must name the theme and keep no placeholder ({lang}), got: {intro}"
+        );
+        let heading = win.get_trust_warning_hooks_heading().to_string();
+        assert!(
+            heading.contains('1') && !heading.contains("{count}"),
+            "the hooks heading must carry the count and keep no placeholder ({lang}), got: {heading}"
+        );
+        // Every copy property is filled: a raw key or an empty string would
+        // paint a broken gate.
+        for (field, value) in [
+            ("title", win.get_trust_warning_title().to_string()),
+            ("intro", intro),
+            ("hooks-heading", heading),
+            ("hooks-desc", win.get_trust_warning_hooks_desc().to_string()),
+            (
+                "presets-heading",
+                win.get_trust_warning_presets_heading().to_string(),
+            ),
+            (
+                "presets-desc",
+                win.get_trust_warning_presets_desc().to_string(),
+            ),
+            (
+                "memory-remembered",
+                win.get_trust_warning_memory_remembered().to_string(),
+            ),
+            (
+                "memory-not-remembered",
+                win.get_trust_warning_memory_not_remembered().to_string(),
+            ),
+            ("limit", win.get_trust_warning_limit().to_string()),
+            ("kbd-hint", win.get_trust_warning_kbd_hint().to_string()),
+            ("cancel", win.get_trust_warning_cancel().to_string()),
+            ("continue", win.get_trust_warning_continue().to_string()),
+        ] {
+            assert!(
+                !value.trim().is_empty() && !value.starts_with("trust."),
+                "the {field} string must be translated copy, got: {value:?} ({lang})"
+            );
+        }
+
+        win.invoke_trust_warning_cancelled();
+        assert!(
+            !win.get_trust_warning_open(),
+            "declining must close the gate so the next language can be checked ({lang})"
         );
     }
 }
@@ -20701,6 +20954,12 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
     win.set_trust_warning_presets(ModelRc::new(VecModel::from(vec![SharedString::from(
         "animations/Space.lua",
     )])));
+    // `trust-warning-i18n`: the gate paints copy that arrives ALREADY
+    // translated, so this test must fill it exactly as the app does (one
+    // source, `crate::apply_trust_warning_copy`) — and in SPANISH, because
+    // the keeper reads Spanish and the frames are read by eye.
+    win.set_language("es".into());
+    crate::apply_trust_warning_copy(&win, "Risky", 2, 1);
 
     let settle = || {
         for _ in 0..3 {
@@ -20841,12 +21100,34 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
     // own line — a LONG line that must wrap inside the card instead of
     // pushing anything out of it. (This state always comes with the
     // not-remembered copy: a body nobody read is never rememberable.)
-    win.set_trust_warning_presets(ModelRc::new(VecModel::from(vec![SharedString::from(
-        "animations/Space.lua — the preset \
-         /home/keeper/themes/Huge/presets/animations/Space.lua could not be KEPT by this scan: \
-         it is 4194304 bytes, over the 16384-byte bound for a preset HVE can remember, so its \
-         contents are not shown here",
-    )])));
+    // The line is built by the SAME function the app uses, on a report whose
+    // preset is unreadable, so this frame shows what the app would really
+    // paint — including the TRANSLATED cause (`trust-warning-i18n`), which a
+    // hand-written English string would have hidden.
+    let unreadable_report = crate::theme_trust::ThemeTrustReport {
+        shell_hooks: vec![],
+        lua_presets: vec![crate::theme_trust::LuaPreset {
+            category: "animations".into(),
+            file_name: "Space.lua".into(),
+            body: crate::theme_trust::PresetBody::Unreadable {
+                path: "/home/keeper/themes/Huge/presets/animations/Space.lua".into(),
+                cause: crate::theme_trust::UnreadableCause::TooLarge { bytes: 4194304 },
+            },
+        }],
+    };
+    let (_, preset_lines) =
+        crate::trust_warning_lines(&unreadable_report, &crate::tr::Tr::with_lang("es"));
+    assert!(
+        preset_lines[0].contains("no se pudo RETENER") && !preset_lines[0].contains("KEPT"),
+        "the unreadable cause must be painted in the app's language, got: {}",
+        preset_lines[0]
+    );
+    assert!(
+        preset_lines[0].contains("animations/Space.lua"),
+        "the line must still name the file, got: {}",
+        preset_lines[0]
+    );
+    win.set_trust_warning_presets(ModelRc::new(VecModel::from(preset_lines)));
     settle();
     let unreadable_preset = win
         .window()
@@ -21547,12 +21828,20 @@ fn trust_warning_keyboard_wiring_is_pinned_by_construction() {
         "the carrier list must be nameable so the gate can scroll it"
     );
     // The keyboard hint mirrors the house style of SystemSection's own hint.
+    // `trust-warning-i18n`: its WORDS live in i18n/{en,es}.json, so the pin
+    // follows them there — the component only has to paint the property.
     assert!(
-        warn.contains("↑↓ scroll the list")
-            && warn.contains("←→ pick a button")
-            && warn.contains("Esc cancel"),
-        "the gate must SAY how the keyboard works — a hidden key is half a feature"
+        warn.contains("text: root.kbd-hint;"),
+        "the gate must paint the keyboard hint it is handed"
     );
+    for lang in ["en", "es"] {
+        let tr = crate::tr::Tr::with_lang(lang);
+        let hint = tr.tr_or("trust.kbd_hint", "");
+        assert!(
+            hint.contains("↑↓") && hint.contains("←→") && hint.contains("Esc"),
+            "the {lang} hint must SAY how the keyboard works — a hidden key is half a feature, got: {hint}"
+        );
+    }
     // The cursor is taken on open, with Cancel as the safe default.
     let open_at = warn
         .find("changed open")

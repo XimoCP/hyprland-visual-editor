@@ -142,10 +142,39 @@ pub enum PresetBody {
     Text(String),
     /// The file could not be read IN FULL — over
     /// [`MAX_PRESET_BODY_BYTES`], unreadable, not a regular file, not
-    /// UTF-8. The string says why, for the warning to show; a report
-    /// carrying this is never rememberable (see
+    /// UTF-8. A report carrying this is never rememberable (see
     /// [`ThemeTrustReport::is_uninspected`]).
-    Unreadable(String),
+    ///
+    /// The payload is DATA — the file and the reason — and never a sentence:
+    /// the warning paints it in the keeper's own language
+    /// (`odd/tasks/trust-warning-i18n.md`), so the detector must not choose
+    /// the words. The distinction the reasons keep — "was not read" vs "was
+    /// read but could not be KEPT" — is part of the copy's honesty and is
+    /// pinned by test.
+    Unreadable {
+        /// The path the scan looked at: the file the copy would run.
+        path: String,
+        cause: UnreadableCause,
+    },
+}
+
+/// Why a preset body is not in the report, as data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnreadableCause {
+    /// NOT opened: the package's byte budget was already spent, so the scan
+    /// stopped opening files. Saying "could not be read" of a file nobody
+    /// opened would be false.
+    BudgetSpent,
+    /// Opened and measured, but larger than a single preset may be
+    /// ([`MAX_PRESET_BODY_BYTES`]).
+    TooLarge { bytes: usize },
+    /// Opened and measured, but keeping it would push the package past
+    /// [`MAX_REMEMBERED_THEME_BYTES`].
+    OverBudget,
+    /// The file could not be read at all (an I/O or encoding failure); the
+    /// payload is the reader's own message, which is an OS/diagnostic detail,
+    /// not copy.
+    ReadFailed(String),
 }
 
 /// The worst-case cost of ONE byte of text in the store's format: a control
@@ -263,7 +292,7 @@ impl ThemeTrustReport {
             || self
                 .lua_presets
                 .iter()
-                .any(|p| matches!(p.body, PresetBody::Unreadable(_)))
+                .any(|p| matches!(p.body, PresetBody::Unreadable { .. }))
     }
 
     /// How many bytes of a stored entry this report accounts for: EVERY field
@@ -308,7 +337,7 @@ impl ThemeTrustReport {
                 PresetBody::Text(text) => {
                     preset_entry_bytes(&p.category, &p.file_name, text.len(), key_cost)
                 }
-                PresetBody::Unreadable(_) => 0,
+                PresetBody::Unreadable { .. } => 0,
             })
             .sum();
         hooks + presets
@@ -598,7 +627,8 @@ fn lua_presets(theme_dir: &Path, already_spent: usize, key_cost: usize) -> Vec<L
 /// truncated (a truncated comparison would make two different bodies compare
 /// equal) and never read at all once the theme's budget is spent, which the
 /// cause says, because a report that deliberately did not open a file must be
-/// honest about it.
+/// honest about it. The cause is DATA: the sentence the keeper reads is built
+/// from it, in his language, where the warning is painted.
 fn preset_body(
     path: &Path,
     category: &str,
@@ -606,44 +636,30 @@ fn preset_body(
     spent: &mut usize,
     key_cost: usize,
 ) -> PresetBody {
+    let unreadable = |cause: UnreadableCause| PresetBody::Unreadable {
+        path: path.display().to_string(),
+        cause,
+    };
     if *spent >= MAX_REMEMBERED_THEME_BYTES {
-        return PresetBody::Unreadable(format!(
-            "the preset {} was not read by this scan: this package's code already fills the \
-             {MAX_REMEMBERED_THEME_BYTES}-byte budget for a theme HVE can remember, so the rest \
-             of its presets are not listed here",
-            path.display()
-        ));
+        return unreadable(UnreadableCause::BudgetSpent);
     }
     match crate::theme_package::read_theme_text(path) {
-        Ok(text) if text.len() > MAX_PRESET_BODY_BYTES => PresetBody::Unreadable(format!(
-            "the preset {} could not be KEPT by this scan: it is {} bytes, over the \
-             {MAX_PRESET_BODY_BYTES}-byte bound for a preset HVE can remember, so its contents \
-             are not shown here",
-            path.display(),
-            text.len()
-        )),
+        Ok(text) if text.len() > MAX_PRESET_BODY_BYTES => {
+            unreadable(UnreadableCause::TooLarge { bytes: text.len() })
+        }
         Ok(text)
             if *spent + preset_entry_bytes(category, file_name, text.len(), key_cost)
                 > MAX_REMEMBERED_THEME_BYTES =>
         {
             // This one WAS read — it just does not fit the budget, and saying
             // "was not read" of a file that was opened would be false.
-            PresetBody::Unreadable(format!(
-                "the preset {} could not be KEPT by this scan: it would push this package's code \
-                 past the {MAX_REMEMBERED_THEME_BYTES}-byte budget for a theme HVE can remember, \
-                 so its contents are not shown here",
-                path.display()
-            ))
+            unreadable(UnreadableCause::OverBudget)
         }
         Ok(text) => {
             *spent += preset_entry_bytes(category, file_name, text.len(), key_cost);
             PresetBody::Text(text)
         }
-        Err(e) => PresetBody::Unreadable(format!(
-            "the preset {} could not be read by this scan: {e}; \
-             it may carry code that is not shown here",
-            path.display()
-        )),
+        Err(e) => unreadable(UnreadableCause::ReadFailed(e.to_string())),
     }
 }
 
@@ -2474,11 +2490,20 @@ mod tests {
         let report = inspect_theme_package(&theme);
 
         match &report.lua_presets[0].body {
-            PresetBody::Unreadable(cause) => assert!(
-                cause.contains("could not be KEPT"),
-                "the cause must be TRUE of the file it names: this one WAS read (the scan \
-                 counted its bytes), it just does not fit the bound, got: {cause}"
-            ),
+            PresetBody::Unreadable { path, cause } => {
+                assert_eq!(
+                    cause,
+                    &UnreadableCause::TooLarge {
+                        bytes: MAX_PRESET_BODY_BYTES + 1
+                    },
+                    "the cause must be TRUE of the file it names: this one WAS read (the scan \
+                     counted its bytes), it just does not fit the bound"
+                );
+                assert!(
+                    path.ends_with("animations/Space.lua"),
+                    "the cause must name the file it is about, got: {path}"
+                );
+            }
             other => panic!("an over-bound body must be UNREADABLE, got {other:?}"),
         }
         assert!(
@@ -2508,7 +2533,13 @@ mod tests {
         let report = inspect_theme_package(&theme);
 
         assert!(
-            matches!(&report.lua_presets[0].body, PresetBody::Unreadable(cause) if cause.contains("could not be read")),
+            matches!(
+                &report.lua_presets[0].body,
+                PresetBody::Unreadable {
+                    cause: UnreadableCause::ReadFailed(_),
+                    ..
+                }
+            ),
             "a refused preset body must be reported with its cause, got: {:?}",
             report.lua_presets
         );
@@ -2587,7 +2618,7 @@ mod tests {
         let unread = report
             .lua_presets
             .iter()
-            .filter(|p| matches!(p.body, PresetBody::Unreadable(_)))
+            .filter(|p| matches!(p.body, PresetBody::Unreadable { .. }))
             .count();
         assert!(
             unread >= 1,
@@ -2598,14 +2629,32 @@ mod tests {
             report.is_uninspected(),
             "and that makes the report uninspected, so nothing is remembered for it"
         );
-        for p in &report.lua_presets {
-            if let PresetBody::Unreadable(cause) = &p.body {
-                assert!(
-                    cause.contains("budget for a theme HVE can remember"),
-                    "the cause must name the budget that stopped it, got: {cause}"
-                );
-            }
-        }
+        // The cause must be TRUE of the file it names, and the two budget
+        // reasons are not the same claim: the preset the scan OPENED and then
+        // could not keep is OverBudget, the ones it never opened (the budget
+        // was spent by then) are BudgetSpent. Saying "not read" of a file that
+        // was read would be the lie this distinction exists to prevent.
+        let causes: Vec<&UnreadableCause> = report
+            .lua_presets
+            .iter()
+            .filter_map(|p| match &p.body {
+                PresetBody::Unreadable { cause, .. } => Some(cause),
+                PresetBody::Text(_) => None,
+            })
+            .collect();
+        assert!(
+            causes.iter().all(|c| matches!(
+                c,
+                UnreadableCause::BudgetSpent | UnreadableCause::OverBudget
+            )),
+            "every cause must name a budget, got: {causes:?}"
+        );
+        assert!(
+            causes
+                .iter()
+                .any(|c| matches!(c, UnreadableCause::OverBudget)),
+            "the preset that WAS read and did not fit must say so, got: {causes:?}"
+        );
     }
 
     /// W2c-c: hooks are always reported IN FULL — the warning shows their
@@ -2647,8 +2696,16 @@ mod tests {
         write_preset(&theme, "animations", "Space.lua");
         let with_a_preset = inspect_theme_package(&theme);
         assert!(
-            matches!(with_a_preset.lua_presets[0].body, PresetBody::Unreadable(_)),
-            "with the budget spent, the preset is not read — and the report says so"
+            matches!(
+                &with_a_preset.lua_presets[0].body,
+                PresetBody::Unreadable {
+                    cause: UnreadableCause::BudgetSpent,
+                    ..
+                }
+            ),
+            "with the budget spent the preset is never OPENED, and the cause says exactly \
+             that — 'could not be read' of a file nobody opened would be false, got: {:?}",
+            with_a_preset.lua_presets[0].body
         );
         assert!(
             with_a_preset.is_uninspected(),

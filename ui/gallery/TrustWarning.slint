@@ -8,6 +8,12 @@
 // applies the package exactly as an ungated apply would, Cancel changes
 // nothing.
 //
+// i18n (odd/tasks/trust-warning-i18n.md): this component holds NO literal
+// copy. Every string it paints arrives already translated, in the language
+// the app was started with, and the claims themselves live in
+// `i18n/{en,es}.json` — pinned there by test, in both languages, so a
+// translation cannot quietly drop one.
+//
 // Honest limit, stated IN the copy (and pinned by test): this is a
 // CONSENT GATE, not a sandbox. Confirming lets the package's code run
 // with the keeper's own permissions, and the copy must never be worded
@@ -38,9 +44,25 @@ import { HveColors } from "../theme.slint";
 
 export component TrustWarning inherits Rectangle {
     // What the detector reported, formatted by Rust as display lines.
-    in property <string> theme-name: "";
     in property <[string]> hook-lines: [];
     in property <[string]> preset-lines: [];
+    // The copy, already translated: this component paints text, it does not
+    // own it. `intro-text` carries the theme name already filled in.
+    in property <string> title-text: "";
+    in property <string> intro-text: "";
+    in property <string> hooks-heading: "";
+    in property <string> hooks-desc: "";
+    in property <string> presets-heading: "";
+    in property <string> presets-desc: "";
+    // The two memory paragraphs are NOT interchangeable — one promises the
+    // acceptance is remembered, the other says it cannot be — so the branch
+    // below is what keeps the painted copy honest.
+    in property <string> memory-note-remembered: "";
+    in property <string> memory-note-not-remembered: "";
+    in property <string> limit-text: "";
+    in property <string> kbd-hint: "";
+    in property <string> cancel-text: "";
+    in property <string> continue-text: "";
     // W2c: whether Continue will remember this acceptance. False when part
     // of the package could not be inspected — HVE records nothing it could
     // not read, so the copy must not promise a silence it will not keep.
@@ -141,7 +163,7 @@ export component TrustWarning inherits Rectangle {
             spacing: 12px;
 
             Text {
-                text: "This theme carries code";
+                text: root.title-text;
                 font-family: SkwdTokens.font-heading;
                 font-size: SkwdTokens.size-18;
                 font-weight: 700;
@@ -149,7 +171,7 @@ export component TrustWarning inherits Rectangle {
             }
 
             Text {
-                text: "\"" + root.theme-name + "\" carries the content below. HVE installs it unchanged when the theme is applied — nothing is removed or rewritten.";
+                text: root.intro-text;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-13;
                 color: HveColors.text;
@@ -172,14 +194,14 @@ export component TrustWarning inherits Rectangle {
                     if (root.hook-lines.length > 0) : VerticalLayout {
                         spacing: 6px;
                         Text {
-                            text: "Shell hooks (" + root.hook-lines.length + ")";
+                            text: root.hooks-heading;
                             font-family: SkwdTokens.font-heading;
                             font-size: SkwdTokens.size-13;
                             font-weight: 700;
                             color: HveColors.accent-amber;
                         }
                         Text {
-                            text: "Commands this theme's provider runs on its own events (start, wallpaper change, colour change, shutdown).";
+                            text: root.hooks-desc;
                             font-family: SkwdTokens.font-body;
                             font-size: SkwdTokens.size-12;
                             color: HveColors.text-muted;
@@ -197,14 +219,14 @@ export component TrustWarning inherits Rectangle {
                     if (root.preset-lines.length > 0) : VerticalLayout {
                         spacing: 6px;
                         Text {
-                            text: "Lua presets (" + root.preset-lines.length + ")";
+                            text: root.presets-heading;
                             font-family: SkwdTokens.font-heading;
                             font-size: SkwdTokens.size-13;
                             font-weight: 700;
                             color: HveColors.accent-amber;
                         }
                         Text {
-                            text: "Files copied into your preset store and read by Hyprland when it assembles the overlay.";
+                            text: root.presets-desc;
                             font-family: SkwdTokens.font-body;
                             font-size: SkwdTokens.size-12;
                             color: HveColors.text-muted;
@@ -223,8 +245,8 @@ export component TrustWarning inherits Rectangle {
 
             Text {
                 text: root.acceptance-remembered
-                    ? "Only continue if you trust where this theme came from. The commands and scripts above run with your own permissions — the same access you have in a terminal. Continuing remembers this acceptance: with this name and this content, HVE will not ask again, and it asks again as soon as either changes."
-                    : "Only continue if you trust where this theme came from. The commands and scripts above run with your own permissions — the same access you have in a terminal. HVE cannot remember a decision for this package — part of it could not be read in full, or it is too big for HVE to record — so it asks again the next time you apply this theme.";
+                    ? root.memory-note-remembered
+                    : root.memory-note-not-remembered;
                 font-family: SkwdTokens.font-body;
                 font-size: SkwdTokens.size-13;
                 color: HveColors.text;
@@ -242,7 +264,7 @@ export component TrustWarning inherits Rectangle {
                 VerticalLayout {
                     padding: 10px;
                     Text {
-                        text: "This is a consent gate, not a sandbox: HVE does not filter, block or isolate any of it. If you continue, this theme's code runs as you.";
+                        text: root.limit-text;
                         font-family: SkwdTokens.font-body;
                         font-size: SkwdTokens.size-12;
                         color: HveColors.accent-amber;
@@ -258,7 +280,7 @@ export component TrustWarning inherits Rectangle {
                 // The keyboard is not discoverable by itself: the same hint
                 // style SystemSection uses, on the row it describes.
                 Text {
-                    text: "↑↓ scroll the list • ←→ pick a button • Enter/Space activate • Esc cancel";
+                    text: root.kbd-hint;
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-12;
                     color: HveColors.text-muted;
@@ -278,7 +300,7 @@ export component TrustWarning inherits Rectangle {
                     border-width: self.key-focused ? 1.5px : 1px;
                     border-color: self.key-focused ? #8fd8ff : HveColors.border;
                     Text {
-                        text: "Cancel";
+                        text: root.cancel-text;
                         font-family: SkwdTokens.font-body;
                         font-size: SkwdTokens.size-12;
                         font-weight: 600;
@@ -307,7 +329,7 @@ export component TrustWarning inherits Rectangle {
                     border-width: self.key-focused ? 1.5px : 0px;
                     border-color: #8fd8ff;
                     Text {
-                        text: "Continue";
+                        text: root.continue-text;
                         font-family: SkwdTokens.font-body;
                         font-size: SkwdTokens.size-12;
                         font-weight: 700;

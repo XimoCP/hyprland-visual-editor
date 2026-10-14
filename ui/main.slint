@@ -343,9 +343,28 @@ export component MainWindow inherits Window {
     // shows what the report found. Continue / Cancel / Escape travel back
     // through the two callbacks (one shared Cancel route).
     in property <bool> trust-warning-open: false;
+    // The name of the theme the gate is about. It is NOT painted as its own
+    // line any more — the intro sentence carries it, filled in by Rust — but
+    // it stays part of the payload: it is what the acceptance is keyed by and
+    // what the tests observe.
     in property <string> trust-warning-theme-name: "";
     in property <[string]> trust-warning-hooks: [];
     in property <[string]> trust-warning-presets: [];
+    // ── The gate's copy, translated by Rust (odd/tasks/trust-warning-i18n.md) ──
+    // The component holds no literal text: every string it paints arrives
+    // here, in the language the app was started with.
+    in property <string> trust-warning-title: "";
+    in property <string> trust-warning-intro: "";
+    in property <string> trust-warning-hooks-heading: "";
+    in property <string> trust-warning-hooks-desc: "";
+    in property <string> trust-warning-presets-heading: "";
+    in property <string> trust-warning-presets-desc: "";
+    in property <string> trust-warning-memory-remembered: "";
+    in property <string> trust-warning-memory-not-remembered: "";
+    in property <string> trust-warning-limit: "";
+    in property <string> trust-warning-kbd-hint: "";
+    in property <string> trust-warning-cancel: "";
+    in property <string> trust-warning-continue: "";
     // W2c: whether pressing Continue will remember this acceptance (false
     // when part of the package could not be inspected, so the copy must not
     // promise a silence HVE will not keep) — bridged like the payload above.
@@ -660,6 +679,18 @@ export component MainWindow inherits Window {
         trust-warning-hooks: root.trust-warning-hooks;
         trust-warning-presets: root.trust-warning-presets;
         trust-warning-remembered: root.trust-warning-remembered;
+        trust-warning-title: root.trust-warning-title;
+        trust-warning-intro: root.trust-warning-intro;
+        trust-warning-hooks-heading: root.trust-warning-hooks-heading;
+        trust-warning-hooks-desc: root.trust-warning-hooks-desc;
+        trust-warning-presets-heading: root.trust-warning-presets-heading;
+        trust-warning-presets-desc: root.trust-warning-presets-desc;
+        trust-warning-memory-remembered: root.trust-warning-memory-remembered;
+        trust-warning-memory-not-remembered: root.trust-warning-memory-not-remembered;
+        trust-warning-limit: root.trust-warning-limit;
+        trust-warning-kbd-hint: root.trust-warning-kbd-hint;
+        trust-warning-cancel: root.trust-warning-cancel;
+        trust-warning-continue: root.trust-warning-continue;
         trust-warning-confirmed => { root.trust-warning-confirmed(); }
         trust-warning-cancelled => { root.trust-warning-cancelled(); }
         panel-back => { root.panel-back(); }

@@ -149,9 +149,28 @@ export component ShellRoot inherits Rectangle {
     // AND Escape (the gallery keyboard branch below, and the panel
     // keyboard through the absorbed dialog mode further down).
     in property <bool> trust-warning-open: false;
+    // The name of the theme the gate is about. It is NOT painted as its own
+    // line any more — the intro sentence carries it, filled in by Rust — but
+    // it stays part of the payload: it is what the acceptance is keyed by and
+    // what the tests observe.
     in property <string> trust-warning-theme-name: "";
     in property <[string]> trust-warning-hooks: [];
     in property <[string]> trust-warning-presets: [];
+    // ── The gate's copy, translated by Rust (odd/tasks/trust-warning-i18n.md) ──
+    // The component holds no literal text: every string it paints arrives
+    // here, in the language the app was started with.
+    in property <string> trust-warning-title: "";
+    in property <string> trust-warning-intro: "";
+    in property <string> trust-warning-hooks-heading: "";
+    in property <string> trust-warning-hooks-desc: "";
+    in property <string> trust-warning-presets-heading: "";
+    in property <string> trust-warning-presets-desc: "";
+    in property <string> trust-warning-memory-remembered: "";
+    in property <string> trust-warning-memory-not-remembered: "";
+    in property <string> trust-warning-limit: "";
+    in property <string> trust-warning-kbd-hint: "";
+    in property <string> trust-warning-cancel: "";
+    in property <string> trust-warning-continue: "";
     // W2c: whether pressing Continue will REMEMBER this acceptance. It will
     // not when part of the package could not be inspected — HVE cannot
     // record content it never read, and a file nobody could read can change
@@ -1025,7 +1044,18 @@ export component ShellRoot inherits Rectangle {
         height: 100%;
         open: root.trust-warning-open;
         reduced-motion: root.gallery-reduced-motion;
-        theme-name: root.trust-warning-theme-name;
+        title-text: root.trust-warning-title;
+        intro-text: root.trust-warning-intro;
+        hooks-heading: root.trust-warning-hooks-heading;
+        hooks-desc: root.trust-warning-hooks-desc;
+        presets-heading: root.trust-warning-presets-heading;
+        presets-desc: root.trust-warning-presets-desc;
+        memory-note-remembered: root.trust-warning-memory-remembered;
+        memory-note-not-remembered: root.trust-warning-memory-not-remembered;
+        limit-text: root.trust-warning-limit;
+        kbd-hint: root.trust-warning-kbd-hint;
+        cancel-text: root.trust-warning-cancel;
+        continue-text: root.trust-warning-continue;
         hook-lines: root.trust-warning-hooks;
         preset-lines: root.trust-warning-presets;
         acceptance-remembered: root.trust-warning-remembered;

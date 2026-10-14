@@ -144,7 +144,7 @@ impl Accepted {
                     file_name: p.file_name.clone(),
                     body: match &p.body {
                         crate::theme_trust::PresetBody::Text(text) => Some(text.clone()),
-                        crate::theme_trust::PresetBody::Unreadable(_) => None,
+                        crate::theme_trust::PresetBody::Unreadable { .. } => None,
                     },
                 })
                 .collect(),

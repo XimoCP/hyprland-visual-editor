@@ -1452,10 +1452,63 @@ fn theme_trust_gate() -> std::sync::MutexGuard<'static, crate::theme_trust::Trus
     THEME_TRUST_GATE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Fill `{token}` placeholders in a translated template. The i18n layer is a
+/// flat key → text map with no formatter, and a sentence that names the theme
+/// or a byte budget has to be filled where the copy is chosen.
+fn fill_tokens(template: &str, tokens: &[(&str, String)]) -> String {
+    let mut out = template.to_string();
+    for (name, value) in tokens {
+        out = out.replace(&format!("{{{name}}}"), value);
+    }
+    out
+}
+
+/// The detector's reason for an unreadable preset, said in the keeper's own
+/// language. The detector carries the cause as DATA
+/// ([`crate::theme_trust::UnreadableCause`]) precisely so the words can be
+/// chosen here and translated; the English text is the fallback, so a missing
+/// key still reads honestly instead of showing a raw key.
+fn unreadable_cause_text(
+    cause: &crate::theme_trust::UnreadableCause,
+    path: &str,
+    tr: &Tr,
+) -> String {
+    use crate::theme_trust::{UnreadableCause, MAX_PRESET_BODY_BYTES, MAX_REMEMBERED_THEME_BYTES};
+
+    let (key, limit, extra): (&str, usize, Vec<(&str, String)>) = match cause {
+        UnreadableCause::BudgetSpent => (
+            "trust.cause_budget_spent",
+            MAX_REMEMBERED_THEME_BYTES,
+            Vec::new(),
+        ),
+        UnreadableCause::TooLarge { bytes } => (
+            "trust.cause_too_large",
+            MAX_PRESET_BODY_BYTES,
+            vec![("bytes", bytes.to_string())],
+        ),
+        UnreadableCause::OverBudget => (
+            "trust.cause_over_budget",
+            MAX_REMEMBERED_THEME_BYTES,
+            Vec::new(),
+        ),
+        UnreadableCause::ReadFailed(error) => (
+            "trust.cause_unreadable",
+            MAX_REMEMBERED_THEME_BYTES,
+            vec![("error", error.clone())],
+        ),
+    };
+
+    let mut tokens = vec![("path", path.to_string()), ("limit", limit.to_string())];
+    tokens.extend(extra);
+    fill_tokens(&tr.tr_or_en(key), &tokens)
+}
+
 /// The detector's report as display lines for the warning: hook entries
-/// as `key — command`, presets as `category/file.lua`.
-fn trust_warning_lines(
+/// as `key — command`, presets as `category/file.lua` plus the translated
+/// cause when the scan could not read the body in full.
+pub(crate) fn trust_warning_lines(
     report: &crate::theme_trust::ThemeTrustReport,
+    tr: &Tr,
 ) -> (Vec<slint::SharedString>, Vec<slint::SharedString>) {
     let hooks = report
         .shell_hooks
@@ -1471,12 +1524,61 @@ fn trust_warning_lines(
             // could not be read, and this is where he sees WHICH part.
             let cause = match &p.body {
                 crate::theme_trust::PresetBody::Text(_) => String::new(),
-                crate::theme_trust::PresetBody::Unreadable(cause) => format!(" — {cause}"),
+                crate::theme_trust::PresetBody::Unreadable { path, cause } => {
+                    format!(" — {}", unreadable_cause_text(cause, path, tr))
+                }
             };
             slint::SharedString::from(format!("{}/{}{cause}", p.category, p.file_name))
         })
         .collect();
     (hooks, presets)
+}
+
+/// Fill every string the gate PAINTS, in the language the window carries.
+///
+/// The gate speaks the language the APP was started with (`cfg.language`,
+/// which the window holds in `language`) — never the system locale, so the
+/// keeper's own choice wins, exactly as it does everywhere else.
+///
+/// ONE source for the copy: `show_trust_warning` and the render test both call
+/// this, so a test can never paint a warning the app itself would not.
+pub(crate) fn apply_trust_warning_copy(
+    window: &MainWindow,
+    name: &str,
+    hooks: usize,
+    presets: usize,
+) {
+    let tr = Tr::with_lang(window.get_language().as_str());
+    let count = |n: usize| vec![("count", n.to_string())];
+    window.set_trust_warning_title(slint::SharedString::from(tr.tr_or_en("trust.title")));
+    window.set_trust_warning_intro(slint::SharedString::from(fill_tokens(
+        &tr.tr_or_en("trust.intro"),
+        &[("theme", name.to_string())],
+    )));
+    window.set_trust_warning_hooks_heading(slint::SharedString::from(fill_tokens(
+        &tr.tr_or_en("trust.hooks_heading"),
+        &count(hooks),
+    )));
+    window.set_trust_warning_hooks_desc(slint::SharedString::from(tr.tr_or_en("trust.hooks_desc")));
+    window.set_trust_warning_presets_heading(slint::SharedString::from(fill_tokens(
+        &tr.tr_or_en("trust.presets_heading"),
+        &count(presets),
+    )));
+    window.set_trust_warning_presets_desc(slint::SharedString::from(
+        tr.tr_or_en("trust.presets_desc"),
+    ));
+    window.set_trust_warning_memory_remembered(slint::SharedString::from(
+        tr.tr_or_en("trust.remembered"),
+    ));
+    window.set_trust_warning_memory_not_remembered(slint::SharedString::from(
+        tr.tr_or_en("trust.not_remembered"),
+    ));
+    window.set_trust_warning_limit(slint::SharedString::from(
+        tr.tr_or_en("trust.not_a_sandbox"),
+    ));
+    window.set_trust_warning_kbd_hint(slint::SharedString::from(tr.tr_or_en("trust.kbd_hint")));
+    window.set_trust_warning_cancel(slint::SharedString::from(tr.tr_or_en("trust.cancel")));
+    window.set_trust_warning_continue(slint::SharedString::from(tr.tr_or_en("trust.continue")));
 }
 
 /// Show the warning for one held attempt. Order: payload, then the
@@ -1487,7 +1589,14 @@ fn show_trust_warning(
     name: &str,
     report: &crate::theme_trust::ThemeTrustReport,
 ) {
-    let (hooks, presets) = trust_warning_lines(report);
+    let tr = Tr::with_lang(window.get_language().as_str());
+    let (hooks, presets) = trust_warning_lines(report, &tr);
+    apply_trust_warning_copy(
+        window,
+        name,
+        report.shell_hooks.len(),
+        report.lua_presets.len(),
+    );
     window.set_trust_warning_theme_name(slint::SharedString::from(name));
     window.set_trust_warning_hooks(slint::ModelRc::new(slint::VecModel::from(hooks)));
     window.set_trust_warning_presets(slint::ModelRc::new(slint::VecModel::from(presets)));
@@ -6794,7 +6903,12 @@ mod tests {
             lua_presets: vec![crate::theme_trust::LuaPreset {
                 category: "animations".into(),
                 file_name: "Space.lua".into(),
-                body: PresetBody::Unreadable("could not be read in full".into()),
+                body: PresetBody::Unreadable {
+                    path: "/themes/Unread/presets/animations/Space.lua".into(),
+                    cause: crate::theme_trust::UnreadableCause::ReadFailed(
+                        "could not be read in full".into(),
+                    ),
+                },
             }],
         };
         assert!(
