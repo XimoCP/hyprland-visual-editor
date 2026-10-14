@@ -396,7 +396,12 @@ export component ShellRoot inherits Rectangle {
         if (root.mounted-screen != 1 && root.gallery-info-open) {
             root.gallery-info-close();
         }
-        shell-kbd.focus();
+        // W2b: a queued mount reseed can land AFTER the gate opened (the
+        // callbacks fire on the next event-loop tick), and it used to take the
+        // keyboard back from the modal — the same hazard as the reseeds below.
+        if (!root.trust-warning-open) {
+            shell-kbd.focus();
+        }
     }
     // ── Theme-trust gate, panel Escape route (W2) ──
     // While the gate is open it borrows the panel's dialog mode with a
@@ -413,17 +418,21 @@ export component ShellRoot inherits Rectangle {
     // Theme transition END: the apply cycle dropped Slint's internal focus,
     // so hand the gallery keyboard back to shell-kbd — unless something else
     // legitimately owns it (panel open, shell mutating, a drawer open, or a
-    // screen that is not the gallery). Never steals from the panel.
-    changed theme-transitioning => { if (!root.theme-transitioning && root.mounted-screen == 1 && !root.is-panel-open && !root.is-mutating && !root.gallery-top-open && !root.gallery-bottom-open) { shell-kbd.focus(); } }
+    // screen that is not the gallery). Never steals from the panel, and never
+    // from the OPEN trust gate (W2b): a reseed landing under the modal left it
+    // keyboard-deaf — the risky theme stayed held, but the keys went back to
+    // the gallery behind it.
+    changed theme-transitioning => { if (!root.theme-transitioning && !root.trust-warning-open && root.mounted-screen == 1 && !root.is-panel-open && !root.is-mutating && !root.gallery-top-open && !root.gallery-bottom-open) { shell-kbd.focus(); } }
     // Late restore pings: the provider re-assert's templates-apply lands
     // seconds after the transition ended, dropping focus again. Same guards
     // as above — a ping restores the gallery keyboard but never fights a
-    // user who moved focus deliberately (panel, drawer, mutating, screen).
-    changed focus-restore-nonce => { if (root.mounted-screen == 1 && !root.is-panel-open && !root.is-mutating && !root.gallery-top-open && !root.gallery-bottom-open) { shell-kbd.focus(); } }
-    changed gallery-top-open => { if (!root.gallery-top-open && !root.gallery-bottom-open && !root.is-panel-open && !root.is-mutating) { shell-kbd.focus(); } }
-    changed gallery-bottom-open => { if (!root.gallery-top-open && !root.gallery-bottom-open && !root.is-panel-open && !root.is-mutating) { shell-kbd.focus(); } }
-    changed is-panel-open => { if (!root.is-panel-open && !root.is-mutating && !root.gallery-top-open && !root.gallery-bottom-open) { shell-kbd.focus(); } }
-    changed is-mutating => { if (!root.is-panel-open && !root.is-mutating && !root.gallery-top-open && !root.gallery-bottom-open) { shell-kbd.focus(); } }
+    // user who moved focus deliberately (panel, drawer, mutating, screen) or
+    // the open trust gate.
+    changed focus-restore-nonce => { if (!root.trust-warning-open && root.mounted-screen == 1 && !root.is-panel-open && !root.is-mutating && !root.gallery-top-open && !root.gallery-bottom-open) { shell-kbd.focus(); } }
+    changed gallery-top-open => { if (!root.trust-warning-open && !root.gallery-top-open && !root.gallery-bottom-open && !root.is-panel-open && !root.is-mutating) { shell-kbd.focus(); } }
+    changed gallery-bottom-open => { if (!root.trust-warning-open && !root.gallery-top-open && !root.gallery-bottom-open && !root.is-panel-open && !root.is-mutating) { shell-kbd.focus(); } }
+    changed is-panel-open => { if (!root.trust-warning-open && !root.is-panel-open && !root.is-mutating && !root.gallery-top-open && !root.gallery-bottom-open) { shell-kbd.focus(); } }
+    changed is-mutating => { if (!root.trust-warning-open && !root.is-panel-open && !root.is-mutating && !root.gallery-top-open && !root.gallery-bottom-open) { shell-kbd.focus(); } }
     // ── Theme-trust gate keyboard handback (W2b) ──
     // The gate takes the keyboard while it is open (TrustWarning focuses
     // its own scope) and must not leave it dangling on that hidden scope

@@ -25,7 +25,8 @@
 // The component takes the keyboard when it opens: its own observer on
 // `open` focuses `trust-kbd`, the gate's FocusScope, so the modal owns
 // every key while it is up (Left/Right/Tab move the cursor between
-// Cancel and Continue, Return/Space activate it, Escape declines).
+// Cancel and Continue, Up/Down and PageUp/PageDown scroll the carrier
+// list, Return/Space activate the cursor, Escape declines).
 // When it closes, `ui/shell.slint` hands the keyboard back — never
 // leaving focus on this hidden scope.
 //
@@ -75,6 +76,26 @@ export component TrustWarning inherits Rectangle {
             root.focused-button = 0;
             trust-kbd.focus();
         }
+    }
+
+    // ── Keyboard scrolling of the carrier list (W2b residual 1) ──
+    // The list is the only part of the gate that can be longer than the
+    // card, and a long package could only be read with the wheel: Slint
+    // delivers a key to the focused item and up its ANCESTOR chain only,
+    // so an Up/Down this scope rejected went nowhere (it never reached the
+    // gallery either — `shell-kbd` is a sibling). The gate scrolls its own
+    // list instead.
+    //
+    // `viewport-y` grows toward the TOP: 0 is the first line, and the
+    // lowest legal offset is the negative amount the content overflows by.
+    // Both ends clamp, so a key at the top or the bottom paints the same
+    // frame instead of drifting.
+    private property <length> scroll-step: 40px;
+    private property <length> carriers-end: Math.min(0px, carriers.visible-height - carriers.viewport-height);
+
+    // Scroll the carrier list DOWN by `by` (a negative `by` scrolls up).
+    function scroll-carriers(by: length) {
+        carriers.viewport-y = Math.max(root.carriers-end, Math.min(0px, carriers.viewport-y - by));
     }
 
     width: 100%;
@@ -136,9 +157,10 @@ export component TrustWarning inherits Rectangle {
             }
 
             // The carriers themselves, straight from the report. Scrolls
-            // when a package carries more than fits; the buttons below
-            // stay outside it and are always reachable.
-            ScrollView {
+            // when a package carries more than fits — with the wheel, or
+            // from the keyboard through `scroll-carriers` above; the buttons
+            // below stay outside it and are always reachable.
+            carriers := ScrollView {
                 vertical-stretch: 1;
                 VerticalLayout {
                     // Pack the carriers at the top (repo convention, see
@@ -233,6 +255,18 @@ export component TrustWarning inherits Rectangle {
                 spacing: 8px;
                 alignment: end;
 
+                // The keyboard is not discoverable by itself: the same hint
+                // style SystemSection uses, on the row it describes.
+                Text {
+                    text: "↑↓ scroll the list • ←→ pick a button • Enter/Space activate • Esc cancel";
+                    font-family: SkwdTokens.font-body;
+                    font-size: SkwdTokens.size-12;
+                    color: HveColors.text-muted;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    wrap: word-wrap;
+                }
+
                 Rectangle {
                     width: 96px;
                     height: 32px;
@@ -310,6 +344,19 @@ export component TrustWarning inherits Rectangle {
             if (event.text == Key.Escape) { root.cancelled(); return accept; }
             if (event.text == Key.LeftArrow) { root.focused-button = 0; return accept; }
             if (event.text == Key.RightArrow) { root.focused-button = 1; return accept; }
+            // W2b: the carrier list scrolls from here — one step per key, a
+            // whole view for PageUp/PageDown, clamped at both ends by the
+            // function above.
+            if (event.text == Key.DownArrow) { root.scroll-carriers(root.scroll-step); return accept; }
+            if (event.text == Key.UpArrow) { root.scroll-carriers(-root.scroll-step); return accept; }
+            if (event.text == Key.PageDown) {
+                root.scroll-carriers(carriers.visible-height - root.scroll-step);
+                return accept;
+            }
+            if (event.text == Key.PageUp) {
+                root.scroll-carriers(root.scroll-step - carriers.visible-height);
+                return accept;
+            }
             if (event.text == Key.Tab || event.text == Key.Backtab) {
                 root.focused-button = root.focused-button == 0 ? 1 : 0;
                 return accept;

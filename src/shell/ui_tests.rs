@@ -6225,6 +6225,20 @@ fn focus_press_key(win: &crate::MainWindow, key: slint::platform::Key) {
     }
 }
 
+/// Dispatch a key press + release pair carrying raw TEXT — the production path
+/// for character keys (`i` opens the Slider's info face, the way a real
+/// keyboard delivers a letter).
+fn focus_press_text(win: &crate::MainWindow, text: &str) {
+    use slint::ComponentHandle as _;
+    use slint::platform::WindowEvent;
+    let text: slint::SharedString = text.into();
+    win.window().dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+    win.window().dispatch_event(WindowEvent::KeyReleased { text });
+    for _ in 0..2 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+}
+
 /// Dispatch a key press + release pair while Control is held. The modifier
 /// state is tracked by the window from the individual `Control` key events
 /// (`i-slint-core` `state_update`), so the arrow event then carries
@@ -19958,6 +19972,144 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
     );
 }
 
+/// W2b residual 1, the visual half: with the gate up, Up/Down scroll the
+/// carrier list and STOP at both ends. The frames land in this run's artifact
+/// directory; the exact-equality assertions are the clamp (a key at either end
+/// changes no pixel) and the top frame coming back byte for byte after the list
+/// is walked the other way.
+#[test]
+fn theme_trust_warning_scrolls_the_carrier_list_with_the_keyboard() {
+    use slint::platform::Key;
+    use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
+
+    i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                threading: false,
+                renderer_name: Some(slint::SharedString::from("software")),
+                ..Default::default()
+            },
+        ),
+    ))
+    .expect("platform already initialized");
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1);
+    win.set_expanded(true);
+    win.set_gallery_empty(false);
+    win.set_gallery_style(0);
+    win.set_gallery_focused(0);
+    // Reduced motion: the gate's fade is 0ms, so every frame is settled.
+    win.set_gallery_reduced_motion(true);
+    win.set_is_mutating(false);
+    win.set_is_panel_open(false);
+    win.set_panel_section(0);
+
+    // A carrier list that cannot fit: 40 preset lines at ~28px each inside a
+    // list pane of a few hundred pixels.
+    win.set_trust_warning_theme_name("Long".into());
+    win.set_trust_warning_hooks(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
+    win.set_trust_warning_presets(ModelRc::new(VecModel::from(
+        (0..40)
+            .map(|i| SharedString::from(format!("animations/preset-{i:02}.lua")))
+            .collect::<Vec<SharedString>>(),
+    )));
+    win.set_trust_warning_open(true);
+
+    let settle = || {
+        for _ in 0..3 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+    };
+    // Like production: the window has settled (its own focus seeding flushed)
+    // before the gate opens from an apply.
+    settle();
+    win.set_trust_warning_open(true);
+    let frame = |name: &str| {
+        let buf = win
+            .window()
+            .take_snapshot()
+            .unwrap_or_else(|e| panic!("snapshot {name}: {e}"));
+        save_slice_png(buf.clone(), &format!("trust_warning_scroll_{name}.png"));
+        buf
+    };
+    // The card BODY only: the list lives here and the buttons sit below it, so
+    // a changed pixel in this region is the list moving and nothing else.
+    let body = |a: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+                b: &slint::SharedPixelBuffer<slint::Rgba8Pixel>| {
+        count_buffer_diff_region(a, b, 660, 280, 1260, 786)
+    };
+
+    settle();
+    let top = frame("top");
+
+    // At the top, Up is a no-op: the list cannot go further up.
+    focus_press_key(&win, Key::UpArrow);
+    let top_after_up = frame("top_after_up");
+    assert_eq!(
+        body(&top, &top_after_up),
+        0,
+        "Up at the top of the list must change nothing (clamped)"
+    );
+
+    // Down moves it — that is the residual this test closes.
+    for _ in 0..60 {
+        focus_press_key(&win, Key::DownArrow);
+    }
+    let bottom = frame("bottom_scrolled");
+    let scrolled = body(&top, &bottom);
+    assert!(
+        scrolled > 1000,
+        "Down must scroll the carrier list — got {scrolled} changed pixels in the card body"
+    );
+
+    // ...and it stops there: more Downs paint the same frame.
+    for _ in 0..20 {
+        focus_press_key(&win, Key::DownArrow);
+    }
+    let bottom_again = frame("bottom_scrolled_again");
+    assert_eq!(
+        body(&bottom, &bottom_again),
+        0,
+        "Down at the end of the list must change nothing (clamped)"
+    );
+
+    // Walking back up lands on the top frame, pixel for pixel.
+    for _ in 0..120 {
+        focus_press_key(&win, Key::UpArrow);
+    }
+    let back_to_top = frame("back_to_top");
+    assert_eq!(
+        body(&top, &back_to_top),
+        0,
+        "the list must return to exactly the frame it started on"
+    );
+
+    // PageDown/PageUp cover a whole view. The list pane is far shorter than the
+    // card body, so one page is a smaller offset than the list's own maximum —
+    // a page and 60 steps cannot land on the same place.
+    focus_press_key(&win, Key::PageDown);
+    let page_down = frame("page_down");
+    assert!(
+        body(&top, &page_down) > 1000,
+        "PageDown must scroll the carrier list"
+    );
+    assert_ne!(
+        body(&bottom, &page_down),
+        0,
+        "a page and 60 single steps must not land on the same offset"
+    );
+    focus_press_key(&win, Key::PageUp);
+    let page_up = frame("page_up");
+    assert_eq!(
+        body(&top, &page_up),
+        0,
+        "PageUp from one page down must come back to the top (clamped)"
+    );
+}
+
 /// Icy focus-ring pixels inside a rectangle of the frame (W2b). The two
 /// gate buttons sit at fixed geometry, so the cursor's ring can be read
 /// per button: a high count = the ring is on that button, ~0 = it is not.
@@ -20108,6 +20260,172 @@ fn theme_trust_warning_is_operable_from_the_keyboard() {
     );
 }
 
+/// W2b residual 1, the modality half. The gate is MODAL, and this pins what
+/// that means for the keys it does not
+/// use. Slint delivers a key to the focused item and up its ANCESTOR chain
+/// only, so a rejection inside the gate never reaches `shell-kbd` — a sibling,
+/// not a parent: measured before the scroll keys were added, Up/Down were
+/// silently dead rather than leaking. Up/Down now belong to the gate (they
+/// scroll its carrier list), and the keys that WOULD act behind it — the
+/// drawer keys and `i` — must stay inert while it is open. The gate's own keys
+/// keep working after all of it.
+#[test]
+fn theme_trust_warning_keeps_the_gallery_keys_inert_while_it_is_open() {
+    use slint::platform::Key;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let win = focus_open_system_panel();
+    let confirmed: Rc<RefCell<u32>> = Rc::new(RefCell::new(0));
+    {
+        let confirmed = confirmed.clone();
+        win.on_trust_warning_confirmed(move || {
+            *confirmed.borrow_mut() += 1;
+        });
+    }
+    let moves: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_nav_move({
+        let moves = moves.clone();
+        move |dir| moves.borrow_mut().push(dir.to_string())
+    });
+    let info: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_gallery_info_requested({
+        let info = info.clone();
+        move |idx| info.borrow_mut().push(idx)
+    });
+
+    // Gallery with the panel closed: shell-kbd owns the keyboard behind the gate.
+    win.set_is_panel_open(false);
+    win.set_gallery_top_open(false);
+    win.set_gallery_bottom_open(false);
+    let settle = || {
+        for _ in 0..4 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+    };
+    settle();
+
+    win.set_trust_warning_open(true);
+    settle();
+
+    // Up/Down: the gate's own scroll keys now, never the gallery's navigation.
+    focus_press_key(&win, Key::DownArrow);
+    focus_press_key(&win, Key::UpArrow);
+    assert!(
+        moves.borrow().is_empty(),
+        "Up/Down must never navigate the gallery behind the gate — got {:?}",
+        moves.borrow()
+    );
+
+    // Ctrl+Up/Down deploy the behind-drawers in the gallery: not behind a modal.
+    focus_press_key_with_ctrl(&win, Key::DownArrow);
+    focus_press_key_with_ctrl(&win, Key::UpArrow);
+    assert!(
+        !win.get_gallery_bottom_open() && !win.get_gallery_top_open(),
+        "the drawer keys must not deploy a drawer behind the modal"
+    );
+
+    // `i` opens the Slider's info face for the focused card: inert here too.
+    focus_press_text(&win, "i");
+    assert!(
+        info.borrow().is_empty(),
+        "`i` must not open the info face behind the modal — got {:?}",
+        info.borrow()
+    );
+
+    // The gate itself still works after all of that.
+    focus_press_key(&win, Key::RightArrow);
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        *confirmed.borrow(),
+        1,
+        "Continue must still be reachable once the gallery keys are inert"
+    );
+    assert!(
+        moves.borrow().is_empty(),
+        "not even the gate's own keys may leak — got {:?}",
+        moves.borrow()
+    );
+}
+
+/// W2b residual 2: a shell reseed must not steal the keyboard from the gate.
+/// Several shell observers call `shell-kbd.focus()` — a transition ending, a
+/// late restore ping landing, a drawer or the panel closing. Landing while the
+/// gate is UP left the modal keyboard-deaf: the risky theme stayed held, but
+/// every key went back to the gallery behind it, so the question could only be
+/// answered with the mouse. The gate owns the keyboard until it closes.
+#[test]
+fn theme_trust_warning_keeps_the_keyboard_when_the_shell_reseeds() {
+    use slint::ComponentHandle as _;
+    use slint::platform::Key;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let win = focus_open_system_panel();
+    let confirmed: Rc<RefCell<u32>> = Rc::new(RefCell::new(0));
+    {
+        let confirmed = confirmed.clone();
+        let weak = win.as_weak();
+        win.on_trust_warning_confirmed(move || {
+            *confirmed.borrow_mut() += 1;
+            if let Some(w) = weak.upgrade() {
+                w.set_trust_warning_open(false);
+            }
+        });
+    }
+    let moves: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    win.on_nav_move({
+        let moves = moves.clone();
+        move |dir| moves.borrow_mut().push(dir.to_string())
+    });
+
+    win.set_is_panel_open(false);
+    let settle = || {
+        for _ in 0..4 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+    };
+    settle();
+
+    // 1) A late restore ping lands while the gate is up: the provider
+    //    re-asserting its templates does this seconds after an apply.
+    win.set_trust_warning_open(true);
+    settle();
+    win.set_focus_restore_nonce(win.get_focus_restore_nonce() + 1);
+    settle();
+    // The cursor starts on CANCEL, so the gate has to be asked for Continue.
+    focus_press_key(&win, Key::RightArrow);
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        *confirmed.borrow(),
+        1,
+        "a restore ping must not take the keyboard from the open gate"
+    );
+
+    // 2) An earlier transition ending under the gate: the same reseed path
+    //    (`changed theme-transitioning` ends in `shell-kbd.focus()`). The
+    //    drawer and panel variants are covered at the source level by the
+    //    wiring test, since those closings are also owned by their own layers.
+    win.set_trust_warning_open(true);
+    settle();
+    win.set_theme_transitioning(true);
+    settle();
+    win.set_theme_transitioning(false);
+    settle();
+    focus_press_key(&win, Key::RightArrow);
+    focus_press_key(&win, Key::Return);
+    assert_eq!(
+        *confirmed.borrow(),
+        2,
+        "a transition end must not take the keyboard from the open gate"
+    );
+    assert!(
+        moves.borrow().is_empty(),
+        "the gate must keep swallowing the arrows after a reseed — got {:?}",
+        moves.borrow()
+    );
+}
+
 /// The gate borrows the keyboard while open; closing it must hand it back
 /// to whoever owned it — panel-kbd over the panel, shell-kbd over the
 /// gallery — never leaving focus dangling on the hidden gate scope (where
@@ -20191,7 +20509,7 @@ fn trust_warning_keyboard_wiring_is_pinned_by_construction() {
         warn.contains("focus-on-click: false;"),
         "the gate scope must never grab focus from a click (double-click barrier)"
     );
-    let kbd: String = warn[kbd_at..].chars().take(1600).collect();
+    let kbd: String = warn[kbd_at..].chars().take(2600).collect();
     assert!(
         kbd.contains("if (!root.open)"),
         "the scope must ignore keys while the gate is closed"
@@ -20215,6 +20533,39 @@ fn trust_warning_keyboard_wiring_is_pinned_by_construction() {
     assert!(
         kbd.contains("root.confirmed()"),
         "the focused button must be able to confirm — Continue must not be mouse-only"
+    );
+    // W2b residual 1: the gate owns Up/Down (they scroll its own carrier
+    // list), PageUp/PageDown cover a whole view, and the clamp is what keeps
+    // a key at either end from changing anything.
+    assert!(
+        kbd.contains("Key.DownArrow")
+            && kbd.contains("Key.UpArrow")
+            && kbd.contains("Key.PageDown")
+            && kbd.contains("Key.PageUp"),
+        "the gate scope must own Up/Down and PageUp/PageDown for the carrier list"
+    );
+    let scroll_fn = warn
+        .find("function scroll-carriers")
+        .expect("the gate must scroll its list through one clamped function");
+    let scroll: String = warn[scroll_fn..].chars().take(700).collect();
+    assert!(
+        scroll.contains("viewport-y"),
+        "scrolling must move the list's viewport offset"
+    );
+    assert!(
+        scroll.contains("Math.max") && scroll.contains("Math.min"),
+        "the offset must be clamped at BOTH ends (a key at either end is a no-op)"
+    );
+    assert!(
+        warn.contains("carriers := ScrollView"),
+        "the carrier list must be nameable so the gate can scroll it"
+    );
+    // The keyboard hint mirrors the house style of SystemSection's own hint.
+    assert!(
+        warn.contains("↑↓ scroll the list")
+            && warn.contains("←→ pick a button")
+            && warn.contains("Esc cancel"),
+        "the gate must SAY how the keyboard works — a hidden key is half a feature"
     );
     // The cursor is taken on open, with Cancel as the safe default.
     let open_at = warn
@@ -20257,6 +20608,49 @@ fn trust_warning_keyboard_wiring_is_pinned_by_construction() {
     assert!(
         shell.matches("trust-gate-open: root.trust-warning-open;").count() == 2,
         "the gate flag must be bound into BOTH conditional layers (gallery + panel)"
+    );
+    // W2b residual 2: EVERY reseed observer must stand down while the gate is
+    // open. A reseed landing under the modal called `shell-kbd.focus()`, and
+    // the gate went keyboard-deaf: the theme stayed held, but the keys went
+    // back to the gallery behind it. Scanned line by line so a NEW reseed
+    // observer cannot be added without the guard.
+    let reseed_block: String = shell
+        .split("// Theme transition END:")
+        .nth(1)
+        .expect("the shell must carry the reseed observers")
+        .split("changed trust-warning-open")
+        .next()
+        .expect("the gate's own handback must close the reseed block")
+        .to_string();
+    let mut reseed_observers = 0usize;
+    for line in reseed_block.lines() {
+        if !line.contains("shell-kbd.focus()") {
+            continue;
+        }
+        reseed_observers += 1;
+        assert!(
+            line.contains("!root.trust-warning-open"),
+            "every reseed observer must stand down while the gate is open: {line}"
+        );
+    }
+    assert_eq!(
+        reseed_observers, 6,
+        "all six reseed observers must be covered (the transition end, the \
+         restore ping, both drawers, the panel, and the mutation finish)"
+    );
+    // The MOUNT reseed is the same hazard one step earlier: its `changed`
+    // callback fires on the next event-loop tick, so a screen mount queued
+    // BEFORE the gate opened used to take the keyboard back from it.
+    let mount_reseed: String = shell
+        .split("changed mounted-screen")
+        .nth(1)
+        .expect("the shell must carry the mount reseed")
+        .chars()
+        .take(400)
+        .collect();
+    assert!(
+        mount_reseed.contains("!root.trust-warning-open"),
+        "the mount reseed must stand down while the gate is open"
     );
 
     let panel = std::fs::read_to_string("ui/panel/PanelRoot.slint")

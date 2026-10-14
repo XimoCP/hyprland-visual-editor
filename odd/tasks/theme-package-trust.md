@@ -697,13 +697,16 @@ class W2c-d existed to close. Measured name sweep (1,348 minimal presets, counte
   moving from Cancel to Continue with identical geometry). It also corrected two of the pre-written assertions that
   demanded `export function` — syntax Slint 1.17 REJECTS (only `public`/`protected` parse); the fix was legitimate,
   not a weakening.
-  **Its two residuals, deliberately not fixed** (the parent can queue them):
-  1. The carriers list does not scroll from the keyboard while the gate holds focus — the arrows move the BUTTON
-     cursor, so a long list can only be scrolled with the wheel.
-  2. If a shell reseed fires while the gate is open (an earlier transition finishing, or the panel closing),
-     `shell-kbd.focus()` steals focus from the modal and the keys go back to the gallery behind it. NOT a security
-     hole — the risky theme stays held — but the modal goes keyboard-deaf. Stated one-line fix: add
-     `&& !root.trust-warning-open` to those observers.
+  **Its two residuals — CLOSED on 2026-10-14 as W2b-r; see the section at the end of this file**:
+  1. The carriers list could not be scrolled from the keyboard while the gate held focus. MEASURED before fixing,
+     and the premise of this line was WRONG: Up/Down were not moving the button cursor, they were silently DEAD —
+     Slint delivers a key to the focused item and up its ANCESTOR chain only, and `shell-kbd` is a SIBLING of the
+     gate, so a rejected Up/Down reached nothing at all. The list was mouse-only exactly as stated: the cause was
+     "nowhere to go", not "the wrong thing moved".
+  2. The reseed steal — CONFIRMED by test before it was fixed (`left: 0, right: 1`), and the class was WIDER than
+     this line said: the `changed mounted-screen` observer, three lines above those quoted, was unguarded too, and a
+     mount reseed QUEUED BEFORE the gate opened landed after it and took the keyboard back from the modal. Every
+     reseed observer in the shell now stands down while the gate is open.
 - **W2c — DONE** (`9d2bcf8`, corrected by `d9e12af`), and it went through the harshest review this contract has had: a
   dual adversarial review by two blind judges (MiMo v2.6-flash and GLM-5.3-Flash) which BOTH refuted the first commit
   for the same blocker — a preset's BODY was not in the acceptance key, so a theme could keep the name, rewrite the
@@ -772,3 +775,63 @@ class W2c-d existed to close. Measured name sweep (1,348 minimal presets, counte
 - **Deliberately NOT bounded** (named by W10b, do not "fix" blindly): binary MEDIA reads (`theme_manager.rs:841/
   858/876`, `shell/gallery/thumbs.rs`) because a wallpaper or video legitimately exceeds the 4 MiB TEXT bound, and
   live-config reads (`noctalia.rs`, `preset_store.rs`) which are not theme files.
+
+## W2b-r — the gate's own keyboard, closed (2026-10-14)
+
+**Opened** on the keeper's instruction `hazlo como creas que es mejor`, choosing W2b's two residuals BEFORE Lane C
+(they close a unit; Lane C removes whole modules and must run alone, on a clean tree). **Route**: the parent writes
+inline — small, understood, contained — then **Tier 3 cross-model verification**, because it changes the consent
+gate's own input surface, which is the boundary this whole contract defends, and touches the shell focus plumbing
+shared with the panel, the drawers and the screens.
+
+### Specs
+
+- **S1** — With the gate OPEN, Up/Down scroll its carrier list one step and PageUp/PageDown one whole view. The list
+  is the only part of the gate that can outgrow the card.
+- **S2** — Both ends CLAMP: a key at the top, or at the bottom, paints the identical frame — no drift, no bounce.
+- **S3** — The gate is MODAL for real: no key acts on the gallery behind it while it is open, and the keys the gate
+  does not use (the drawer keys, `i`) act on nothing.
+- **S4** — The keyboard is DISCOVERABLE: the gate says how it works, in the style of the panel's own hint.
+- **S5** — A shell reseed NEVER takes the keyboard from the open gate: the transition end, the late restore ping,
+  both drawers, the panel, the mutation finish, and a screen mount QUEUED before the gate opened.
+- **S6** — Closing the gate still hands the keyboard back exactly as W2b left it.
+
+### Evidence
+
+- RED, observed verbatim before any fix: `Down must scroll the carrier list — got 0 changed pixels in the card body`
+  and `a restore ping must not take the keyboard from the open gate` (`left: 0, right: 1`).
+- GREEN: the gate's own `debug()` prints NOTHING in tests (no `log` subscriber is installed), so the scroll was
+  measured with a temporary visible probe inside the card. It printed `0|917|325|-40|-592` — the list's offset, its
+  content height, the visible pane, the step, and the computed end of the list. The probe was removed before the
+  commit; it is named here so nobody wonders what the extra frames in that run were.
+- The frames of the run were read BY EYE (AGENTS.md): the list at the top, scrolled to `preset-39` with the scrollbar
+  thumb at the bottom, and one page down (`preset-12`..`preset-27`, clipped cleanly at the pane edge). The card, the
+  copy and the button row keep their geometry in every one of them.
+- The first FULL-suite run caught a real slip: the hint used `size-11` and this project's UI font floor is 12px
+  (`no_ui_font_size_sits_below_the_raised_floor`). Fixed to `size-12`, the same size the panel's hint uses.
+- Full suite `1781 passed / 0 failed`; `cargo check --all-targets` clean.
+- Tests added: `theme_trust_warning_scrolls_the_carrier_list_with_the_keyboard` (render, 7 frames, both clamps and a
+  page), `theme_trust_warning_keeps_the_keyboard_when_the_shell_reseeds` (real key events after a reseed),
+  `theme_trust_warning_keeps_the_gallery_keys_inert_while_it_is_open`, and the wiring pin extended with the scroll
+  keys, the clamp, the hint, and a LINE-BY-LINE scan of the shell that fails if a NEW reseed observer appears
+  without the guard.
+
+### What this work corrected in the contract's own understanding
+
+- **A rejected key does not fall through to a SIBLING.** Slint delivers a key to the focused item and up its
+  ANCESTOR chain; the gallery's keyboard lives in a sibling scope, so "the modal let keys through" was never
+  possible here. The real defect was a DEAD key, and the wording this file carried said the opposite.
+- **A queued `changed` callback is a reseed too.** The mount observer was not on the original list and it was the one
+  that actually bit: the callbacks fire on the next event-loop tick, so a screen mount queued before the gate opened
+  landed after it and took the keyboard back.
+- **A keyboard feature nobody is told about is half a feature**: the gate now prints its own keys, and the copy is
+  pinned by the wiring test so a future edit cannot drop it silently.
+
+### Log
+
+- **L11 (2026-10-14, the keeper, verbatim)**: `hazlo como creas que es mejor` — the authorization for this unit and
+  for the order chosen (residuals first, Lane C after, serial).
+- **L12 (2026-10-14, the parent, a premise corrected by measurement, not by argument)**: residual 1's stated cause
+  ("the arrows move the BUTTON cursor") was wrong. Measured: Up/Down were dead. Recorded here because the same wrong
+  mental model would otherwise be re-derived by the next reader of this file.
+
