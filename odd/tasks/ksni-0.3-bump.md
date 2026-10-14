@@ -42,12 +42,24 @@ Deferred from Lane C (S5 / T5, `odd/tasks/lane-c-health.md`), which holds the re
   namespace (`unshare -r`), not just an unset variable.
 - **S7 — the docs say what happens now.** `docs/wiki/Tray-and-Automation.md` states that when the tray cannot be
   created, HVE warns and keeps running without it.
+- **S8 — the bump must not make HVE hang when it is hidden.** Hiding the window (Escape / the tray's Hide item /
+  the Toggle callback) must return, and the app must keep answering the compositor. Concretely: no caller on the UI
+  thread may wait for `ksni::blocking::Handle::update` (0.3's version is `compat::block_on`, it WAITS for the
+  service, where 0.2 only enqueued), and the tray thread must never wait for the composer's controller mutex
+  (`crate::composer::global_controller()`), which the UI thread holds while it asks for that refresh. The tray's
+  `menu()` reads the hidden state through `try_global_controller()` instead; a stale label for one paint is the
+  accepted price and the next refresh corrects it.
+- **S9 — the shape of the fix is pinned by a test.** A deterministic test fails if the production body of
+  `src/tray.rs` contains `block_on`, if a third `.update(` call site appears outside the worker's two arms, or if
+  `menu()` waits for the controller lock. The test scans the PRODUCTION body only (it names the forbidden thing
+  itself, exactly like `architecture_contract` and `checks_build` do).
 
 ## Tasks
 
 | ID | Specs | Route | Status | Commit |
 |----|-------|-------|--------|--------|
 | T1 | S1-S7 | inline (parent writes; high risk → independent verifier after) | DONE, verified by `opencode-go/mimo-v2.6-flash` (no blockers) | `deps(tray): bump ksni 0.2 -> 0.3 and survive a missing tray` |
+| T2 | S8-S9 | inline (fix written 2026-10-14; checks, install and record completed 2026-10-15) | DONE, cross-model verification PENDING | `fix(tray): stop the ksni 0.3 update from deadlocking the hide path` |
 
 ### T1 evidence
 
@@ -117,6 +129,33 @@ Deferred from Lane C (S5 / T5, `odd/tasks/lane-c-health.md`), which holds the re
 - **Workspace left clean by the verifier**: `git status --porcelain` empty, all its probes and scratch deleted, no
   new files and no worktrees left behind.
 
+## T2 — the hang the bump introduced (2026-10-15)
+
+Root cause, proven in code: `ksni 0.3`'s blocking `Handle::update` is `compat::block_on(...)` — it waits for the
+tray service, where 0.2 only enqueued. The hide path (`src/main.rs`: `toggle_tray` + `refresh_global_menu()`) runs
+on the UI thread while HOLDING the composer's controller mutex (`global_controller()` returns the locked guard), and
+the tray's `menu()` — on the tray thread — needs that same lock. Both sides waited for each other: the UI thread
+stopped answering Hyprland's pings, the compositor showed its ANR dialog (`hyprland-dialog`, driven by
+`enable_anr_dialog` / `anr_missed_pings`), and choosing close SIGKILLed the process. The same wedge explains the
+keeper's report that the tray had no menu.
+
+- **Fix**: (1) one worker thread owns the blocking `update`; `TrayHandle::update_icon`/`refresh_menu` only enqueue a
+  `TrayTask` over an `mpsc` channel; (2) `HveTray::menu()` reads the hidden state with `try_global_controller()`;
+  (3) the pin in S9. If the worker thread cannot start, `start_tray` warns and returns `None` rather than leaving
+  callers that can block.
+- **RED/GREEN**: the pin `tray::tests::tray_updates_never_block_the_caller` failed first against the pre-fix body
+  (which called `update` directly on the caller and `global_controller()` in `menu()`); GREEN after the rewrite →
+  `test tray::tests::tray_updates_never_block_the_caller ... ok`.
+- **Checks on the frozen bytes**: `cargo fmt --check` clean (it caught one stray blank line, removed);
+  `cargo clippy --all-targets` → **67 warnings, the same count Lane C and T1 left** (none from `src/tray.rs`);
+  full suite **1789 passed / 0 failed / 0 ignored** in 164.83 s. This unit adds exactly ONE test.
+- **Install (2026-10-15)**: `cargo build --release` → md5 **`ee79e79031ba2da6bf0da8c57b523364`**, installed by
+  RENAME (temp file + `mv`) into `~/.local/bin/hve`; installed md5 equals the build; `~/.local/bin/hve --version`
+  → `hve 1.0.0`. The previously installed bytes (`0841f9b10cb2c71a4b18790846c8284c`, the i18n build) did NOT contain
+  this fix, which is why the keeper's app still hung on hide.
+- **Only the keeper can check the rest**: press Escape to hide — HVE must stay alive and answer (no ANR dialog), and
+  the tray's Hide/Show label must follow the window.
+
 ## Log
 
 - **L1 (2026-10-14, the keeper, verbatim)**: `arranca con ksni 2.2`
@@ -135,3 +174,15 @@ Deferred from Lane C (S5 / T5, `odd/tasks/lane-c-health.md`), which holds the re
   already does observably — a panic nobody sees does not stop the editor. (2) `assume_sni_available(true)` is NOT
   slipped in as a preference: without it the bump regresses the case where HVE starts before the panel.
   (3) `system_active` moves to the caller (S5) so the `None` case does not need a fake Arc.
+- **L4 (2026-10-14, the keeper, verbatim)**: `cada vez que aprieto Escape y lo mando a ocultar me mata HVE`,
+  plus `se ha quedado pillado, hay que matarlo` and the report that the tray had lost its menu.
+- **L5 (2026-10-15, the keeper, verbatim)**: `arregle hve anda` — read as: finish the fix and hand back a working
+  app. What was still missing at that point: the worker rewrite was WRITTEN in the working tree but unverified,
+  uncommitted and NOT in the installed binary.
+- **L6 (2026-10-15, the parent, decisions)**: (1) the fix restores 0.2's ENQUEUE shape on 0.3 rather than moving the
+  whole hide path off the lock — smaller blast radius, and the lock's owner stays where it is. (2) `menu()` accepts a
+  momentarily stale Hide/Show label instead of waiting: the label is cosmetic, the wedge is fatal. (3) The report
+  `HVE en el tray ahora no tiene el menú` is treated as the SAME defect, not a second one, because the tray thread
+  was blocked on the controller lock the UI thread held. (4) STILL OPEN, the keeper's decision, unanswered since
+  2026-10-14: whether to disable `enable_anr_dialog` (or raise `anr_missed_pings`) in his Hyprland config, so a slow
+  app is not killed while the compositor waits.

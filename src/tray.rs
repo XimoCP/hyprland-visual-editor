@@ -1,4 +1,4 @@
-use ksni::blocking::{Handle, TrayMethods};
+use ksni::blocking::TrayMethods;
 use slint::ComponentHandle;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -8,9 +8,31 @@ use crate::tr::Tr;
 /// Global tray handle so IPC commands (refresh-theme) can update the tray icon.
 static GLOBAL_TRAY: OnceLock<Mutex<TrayHandle>> = OnceLock::new();
 
-/// Handle to control the tray icon after creation.
+/// One request for the tray WORKER thread.
+///
+/// Why a worker and not a direct call: ksni 0.3's blocking
+/// [`ksni::blocking::Handle::update`] WAITS for the tray service to apply the
+/// change (`compat::block_on`), where 0.2 only ENQUEUED it. The callers of
+/// [`TrayHandle::update_icon`] and [`TrayHandle::refresh_menu`] run on the UI
+/// thread — the hide path (`main.rs`, "toggle_tray" + refresh) is one of them —
+/// and that path HOLDS the composer's controller mutex, which the tray's own
+/// `menu()` needs on the tray thread (`crate::composer::global_controller()`).
+/// Waiting there is a deadlock: the UI thread waits for the tray while the tray
+/// waits for the UI thread's lock. The UI thread then stops answering
+/// Hyprland's pings, the compositor shows its ANR ("not responding") dialog,
+/// and choosing close SIGKILLs the process — observed live on 2026-10-14,
+/// after every hide. Enqueueing restores 0.2's shape on 0.3.
+enum TrayTask {
+    /// New RGBA icon pixels, already converted to the BGRA ksni wants.
+    Icon(Vec<u8>),
+    /// Rebuild the menu so it reads fresh controller state.
+    RefreshMenu,
+}
+
+/// Handle to control the tray icon after creation. Every method only ENQUEUES
+/// work for the tray worker thread, so a caller can never wait on the tray.
 pub struct TrayHandle {
-    handle: Handle<HveTray>,
+    tx: std::sync::mpsc::Sender<TrayTask>,
 }
 
 /// Convert one RGBA buffer to the BGRA (Cairo ARGB32 little-endian) order ksni
@@ -29,19 +51,17 @@ fn rgba_to_bgra(rgba: &[u8]) -> Vec<u8> {
 }
 
 impl TrayHandle {
-    /// Force a tray menu refresh so the UI picks up the latest visibility state.
+    /// Force a tray menu refresh so the UI picks up the latest visibility
+    /// state. Enqueued, never waited for: see [`TrayTask`].
     pub fn refresh_menu(&self) {
-        // `update` answers `None` once the service has shut down (ksni 0.3);
-        // there is nothing to refresh then, and nothing to report.
-        let _ = self.handle.update(|_| {});
+        let _ = self.tx.send(TrayTask::RefreshMenu);
     }
 
-    /// Update the tray icon with new RGBA pixel data (will be converted to BGRA internally).
+    /// Update the tray icon with new RGBA pixel data (converted to BGRA here,
+    /// on the caller's thread, so the worker only moves bytes). Enqueued, never
+    /// waited for: see [`TrayTask`].
     pub fn update_icon(&self, rgba: Vec<u8>) {
-        let bgra = rgba_to_bgra(&rgba);
-        let _ = self.handle.update(move |tray: &mut HveTray| {
-            tray.icon_bgra = bgra;
-        });
+        let _ = self.tx.send(TrayTask::Icon(rgba_to_bgra(&rgba)));
     }
 }
 
@@ -111,7 +131,34 @@ pub fn start_tray(
     // missing watcher is a soft error routed to `Tray::watcher_offline`
     // (default: keep running) and the item registers when the panel shows up.
     match tray.assume_sni_available(true).spawn() {
-        Ok(handle) => Some(TrayHandle { handle }),
+        Ok(handle) => {
+            // ONE worker thread owns the blocking `update`: every caller only
+            // enqueues (see `TrayTask`).
+            let (tx, rx) = std::sync::mpsc::channel::<TrayTask>();
+            let worker = handle.clone();
+            let spawned = std::thread::Builder::new()
+                .name("hve-tray-updates".to_string())
+                .spawn(move || {
+                    while let Ok(task) = rx.recv() {
+                        match task {
+                            TrayTask::Icon(bgra) => {
+                                let _ = worker.update(move |t: &mut HveTray| t.icon_bgra = bgra);
+                            }
+                            TrayTask::RefreshMenu => {
+                                let _ = worker.update(|_| {});
+                            }
+                        }
+                    }
+                });
+            if let Err(err) = spawned {
+                // No worker: the tray exists but its icon/menu cannot be
+                // updated. Log it and drop the handle rather than let every
+                // update block the UI thread (the bug this worker fixes).
+                tracing::warn!("tray update worker could not start: {err}");
+                return None;
+            }
+            Some(TrayHandle { tx })
+        }
         Err(err) => {
             tracing::warn!(
                 "system tray unavailable, continuing without a tray icon: {err} \
@@ -155,8 +202,13 @@ impl ksni::Tray for HveTray {
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         use ksni::menu::StandardItem;
 
-        // Read hidden state from Controller (the single source of truth).
-        let is_hidden = crate::composer::global_controller()
+        // Read the hidden state from the Controller (the single source of
+        // truth) WITHOUT waiting for it: this runs on the tray thread while the
+        // UI thread may hold that lock (any hide path does), and waiting here
+        // wedges the tray service — no menu for the panel, and — through the
+        // blocking update this struct no longer uses — the whole app. A
+        // momentary stale label is the price, and the next refresh corrects it.
+        let is_hidden = crate::composer::try_global_controller()
             .map(|c| c.window_hidden())
             .unwrap_or(false);
 
@@ -314,6 +366,59 @@ impl ksni::Tray for HveTray {
 
 #[cfg(test)]
 mod tests {
+    /// The tray must NEVER make a caller wait for it.
+    ///
+    /// Regression pin for the 2026-10-14 hang: ksni 0.3's blocking
+    /// `Handle::update` waits for the tray service, and its callers run on the
+    /// UI thread while holding the composer's controller mutex — which the
+    /// tray's own `menu()` needs. Both sides waited for each other, the UI
+    /// thread stopped answering Hyprland, the compositor showed its ANR dialog
+    /// and the app had to be killed. Every update must go through the worker
+    /// channel, and the menu must read the state WITHOUT waiting.
+    #[test]
+    fn tray_updates_never_block_the_caller() {
+        let src = std::fs::read_to_string("src/tray.rs").expect("src/tray.rs must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        // The PRODUCTION body only: this test's own source names the thing it
+        // forbids, so it must not be scanned (the same cut `architecture_contract`
+        // makes with its own `production_body`).
+        let code = code.split("#[cfg(test)]").next().unwrap_or(&code);
+        assert!(
+            !code.contains("block_on"),
+            "the tray must not block a caller: `update` waits for the service, so it belongs \
+             on the worker thread"
+        );
+        assert_eq!(
+            code.matches(".update(").count(),
+            2,
+            "the blocking `update` may only be called by the tray worker (its two arms: the \
+             icon and the menu refresh); a third call site means a caller can wait again"
+        );
+        // The TRAY THREAD is the one that must never wait for that lock, and
+        // the only tray-thread read of it is in `menu()`: it must use the
+        // non-blocking `try_global_controller`. The `global_controller()` call
+        // further down is legitimate — it runs on the UI thread, inside
+        // `slint::invoke_from_event_loop`.
+        let menu_at = code
+            .find("fn menu(&self)")
+            .expect("the gate must keep a `menu()` for the tray");
+        let menu: String = code[menu_at..].chars().take(1200).collect();
+        assert!(
+            menu.contains("crate::composer::try_global_controller("),
+            "`menu()` runs on the tray thread and must read the hidden state WITHOUT waiting \
+             for the controller lock"
+        );
+        assert!(
+            !menu.contains("crate::composer::global_controller("),
+            "`menu()` must not WAIT for the composer's controller lock (the UI thread holds \
+             it while it asks the tray to refresh)"
+        );
+    }
+
     use super::{rgba_to_bgra, start_tray};
     use slint::ComponentHandle;
     use std::sync::Arc;
