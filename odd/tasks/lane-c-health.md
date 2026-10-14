@@ -103,9 +103,74 @@ present: features + `spawn()` result + the "no tray" path + a `dbus-run-session`
 
 ## Evidence to record per task
 
-- The command run and its OBSERVED output (counts, not adjectives).
+- The command run and its OBSERVED output (counts, not adjectives). ✅ recorded below.
 - For the flake: the failing assertion reproduced, and the number of consecutive clean full-suite runs after.
-- For the dependency bump: the `cargo tree` before/after and what could NOT be verified.
+- For the dependency bump: the `cargo tree` before/after and what could NOT be verified. ✅ (T5 recon)
+
+## Progress and evidence (2026-10-14)
+
+| ID | Status | Evidence |
+|----|--------|----------|
+| T0 | DONE | tag `pre-lane-c-20261014` → `caf4adc`; installed binary copied to `target/backup/hve-pre-lane-c-caf4adc`, md5 `a43243ec25cd4a3db1c44fc6dc0b5080` (identical to `~/.local/bin/hve` at that moment) |
+| T1 | DONE `5c4abef` | `cargo fmt`: 60 files, 9682 insertions / 3563 deletions, alone in its commit. Full suite run AFTER it: 1784 passed / 0 failed — **none of the ~65 source-text assertions broke on the reformat**, which is direct evidence for T7's decision |
+| T2 | DONE `c10f7a1` | RED verbatim: `index out of bounds: the len is 3 but the index is 3` (src/tray.rs:21). Fix: `chunks_exact(4)` via one helper shared by its two call sites. Tests: truncated buffer converts its whole pixels, empty stays empty, 1x1 keeps R/B swapped |
+| T3 | DONE `2f70db3` | removed `bg_info::notify_plugin_required` + the half of the mpvpaper compat re-export + the test binding that was its only consumer, and dropped the name from the routing pin's list. bg_info 20 passed; full suite 1784. KEPT with their in-file reasons: `mpvpaper::save_manifest` (a test compares both paths byte-for-byte), the `gallery/views` module allows (the engines own geometry the headless tests verify), the `ShellProvider`/`NoShell` seam |
+| T4 | DONE `05d72d1` | clippy 184 → 67 warnings. Autofixable class fixed (13 files; the diff was read line by line: the two float hunks it touched are `Range::contains` rewrites whose NaN behaviour is identical). The 15 `neg_cmp_op_on_partial_ord` sites were located BEFORE the run (main.rs 5, mosaic.rs 6, slice.rs 4), skipped by rule (`-A`), and re-located after: still 15. The 56 `needless_update` were one literal repeated in `ui_tests.rs` → one documented helper; that file shrank 286 lines |
+| T5 | DEFERRED | see the recon above; the reason and the exact next steps are written there |
+| T6 | DONE (cause found, nothing to loosen) | see below |
+| T7 | DONE (decision) | see below |
+| T8 | in progress | final suite + release build + install |
+
+### T6 — what the "corroborated flake" actually was
+
+1. **A reproducible cause of the exact signature was found and removed: the environment ran out of `/tmp`.** `/tmp`
+   here is a 16 GiB tmpfs and it was **100 % full** (`df -h /tmp` → `16G 16G 0 100%`), filled by the scratch of
+   previous sessions' verification rounds (`/tmp/w2c-target` alone: 9.0 G of cargo target, plus source copies and
+   probes). Under that condition a full-suite run fails `No space left on device` in EVERY test that writes a file —
+   a different set each run, all passing in isolation. Verbatim: `panicked at src/config.rs:404:57: write junk:
+   Os { code: 28, kind: StorageFull, message: "No space left on device" }`, with 25 unrelated tests failing in the
+   same run. After the cleanup (`/tmp` back to 29 %, 12 G free) the same suite is green.
+2. **The timing hypothesis could NOT be reproduced, and nothing was loosened because of it.** Measured, with the
+   machine loaded by busy workers: `reload_coalescer` 17 tests × 5 rounds under 4 workers — green, 6.2 s each;
+   `watcher` 19 tests × 2 rounds under 4 workers — green; the FULL suite under 4 workers — 1784 passed / 0 failed;
+   and a `reload_coalescer` round under 16 workers (100 % saturation) — green. No assertion, deadline or timeout was
+   relaxed: loosening one would hide a real loss of coalescing, which is the whole point of those tests.
+3. **Stated plainly**: the previous session's note ("two different tests failed under full-suite load, both pass
+   isolated") is CONSISTENT with the tmpfs filling up during that run, but that is not proof, and the timing
+   hypothesis is neither confirmed nor refuted — only unproven, with 8 targeted rounds against it.
+
+### T7 — the source-text assertions: the decision, with the reason
+
+~65 sites read `src/**` or `include_str!` a `.slint` file and assert its text (46 + 19). **They stay.** The policy,
+in one line: *a source-text pin is legitimate when it pins a property a behaviour test cannot reach, and it must
+narrow to that property.*
+
+- Legitimate today, each verified by reading it: guard-before-the-first-fallible-op ordering in `skwd_policy`'s
+  atomic write (fault injection does not exist, so the ORDER is the only way to prove the cleanup guard arms first);
+  "no unbounded call shape exists in this module" in `noctalia_runtime`; the UI wiring with no headless hook (the
+  consent gate's keyboard, the font floor); the doc-honesty pins (a comment repeating a claim the code no longer
+  makes).
+- The cost they carry is real and is paid at RENAME time: `cargo fmt` did NOT break one of them (measured, T1), so
+  the fragility is against renaming the code they quote — which is exactly when a reviewer wants to look anyway.
+- What this lane DID change: the `notify_plugin_required` name was dropped from a routing pin's item list (T3),
+  because a name no path exposes is dead weight inside a test. That is the shape of the only edit this decision
+  justifies today; no other site was found to be a mere rename-restatement.
+- What this lane did NOT do, deliberately: delete them, or rewire ~65 sites into behaviour tests that would need
+  fault injection and headless hooks this repo does not have. That would be a project of its own, and it would trade
+  real coverage for a cleaner grep.
+
+### What remains in `cargo clippy` after T4 (67 warnings), and why
+
+- **15** `neg_cmp_op_on_partial_ord` — the forbidden class, deliberately visible (S2). Do not "fix" them.
+- **11** `field_reassign_with_default` — clippy marks this class MaybeIncorrect, so every site needs a human read of
+  whether the assignments are conditional before it can become a literal. Deferred WITH the reason; it is a
+  mechanical pass for a lane that can afford it, not a defect.
+- **6** `redundant redefinition of a binding`, **6** doc-list indentation, **7** doc-comment blank lines, **2**
+  unused `lang`, **2** unnecessary parens, **2** `let...else`, **2** identical `if` blocks, **2** manual
+  `Range::contains`, **2** stripping a prefix, **1** each of boolean simplification, index-loop, `iter().last()`
+  style — small, safe cleanups that the next lane can take in one pass.
+- **3 + 2 + 1** "too many arguments", **3** "very complex type" — structural: fixing them means introducing parameter
+  structs and type aliases, i.e. real design work, not a lint pass. Recorded, not touched.
 - Anything deferred, with the reason, in this file — never silently.
 
 ## Log
