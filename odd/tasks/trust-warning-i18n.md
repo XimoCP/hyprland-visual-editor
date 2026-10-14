@@ -22,8 +22,12 @@ Delivery: one work-unit commit (i18n + the detector's causes + the wiring + test
 - **S3 — the language follows the app's setting, not the system locale.** The gate is translated with the language
   the app was started with (`cfg.language` → the window's `language` property), so the same strings the rest of the
   UI already uses.
-- **S4 — no English left in the gate.** A test proves the `.slint` holds no literal copy (every `Text` takes its text
-  from a property) and that every key the gate needs exists in BOTH `i18n/en.json` and `i18n/es.json`.
+- **S4 — no English left in the gate.** A test proves the `.slint` holds no literal copy, STRUCTURALLY — every `text:`
+  binding must read a property (or the loop variable), so any sentence smuggled back into a `Text` fails, not just the
+  ones a phrase list happens to name — and that every key the gate needs exists in BOTH `i18n/en.json` and
+  `i18n/es.json`. Known limit: the check strips `//` lines, so a literal hidden in a comment is invisible to it (it is
+  never painted). The `{error}` an unreadable preset carries is the reader's own diagnostic and stays in the system's
+  language, by design — the copy around it is translated.
 - **S5 — nothing else changes.** The gate's geometry, its keyboard (Cancel first, Escape declines), both gated apply
   paths and the acceptance store behave exactly as before.
 - **S6 — the causes become structured data.** `PresetBody::Unreadable(String)` carries pre-formatted English
@@ -47,7 +51,7 @@ Delivery: one work-unit commit (i18n + the detector's causes + the wiring + test
   (`trust_gate_copy_lives_in_the_i18n_files_and_keeps_the_honest_limit`) failed against the untouched component with
   `the gate's copy must live in i18n/{en,es}.json and reach the UI as a property — found "This theme carries code" in
   ui/gallery/TrustWarning.slint`.
-- **GREEN**: `cargo test --bin hve trust` → **86 passed / 0 failed**, including the new
+- **GREEN**: `cargo test --bin hve trust` → **87 passed / 0 failed** (measured serially), including the new
   `theme_trust_warning_speaks_the_app_language`, which drives the REAL path (`trust_gate_request`) twice on the same
   package and checks the title, both buttons, the filled `{theme}`/`{count}` placeholders and that all twelve copy
   properties are non-empty in `en` and in `es`.
@@ -82,6 +86,28 @@ every literal in the gate's copy block was deleted. So `src/main.rs` now carries
 the single source — and the pin stays at 12. New test `tr::tests::tr_or_en_falls_back_to_the_english_text_of_the_same_key`
 covers all three steps: the active language wins, a key missing there resolves to its English text, and a key missing
 from BOTH resolves to the key itself (visible on screen, never blank).
+
+
+### Independent verification (c896f7d, `opencode-go/mimo-v2.6-flash`)
+
+- **Verifier**: a different model from the writer (`deepseek-v4.1-flash`), fresh subagent, explicitly asked to refute.
+- **Verdicts**: S1, S2, S3, S5, S6 and S7 SOUND — it re-measured the suite (1788/0), clippy (67, no warning in the
+  changed hunks), fmt, reproduced the render run and read five frames with its own eyes, and checked each cause
+  variant against the constant that actually stops it (`TooLarge` → the 16 KiB per-preset bound; `BudgetSpent` /
+  `OverBudget` → the 128 KiB theme budget; the "was read / was not read" distinction intact).
+- **ONE BLOCKER, and it was right**: S4's claim was stronger than the test. The pin listed eight fixed phrases, so
+  ANY other English sentence could return to the component unnoticed — the verifier proved it by injecting the old
+  intro sentence into a `Text` and watching the whole trust suite stay green. **Fixed** by making the check
+  STRUCTURAL (every `text:` binding must read a property; a literal fails), and the fix was proved by re-running the
+  verifier's exact injection: it now fails with `a text: binding may not hold a string literal … Offending binding:
+  text: "HVE installs it unchanged when the theme is applied"`, and the component was restored to green afterwards.
+- **Advisories folded in**: the `tr_or_en` panic text was inaccurate (a missing key falls back to the English TEXT,
+  a raw key only if English lost it too); the render fixture left stale carrier COUNTS in the headings of two frames
+  (a frame saying "Hooks de shell (2)" over one line misleads the eye that verifies it — the copy is now refilled per
+  frame); the S6 number was corrected to the serially measured 87. Left as documented, deliberate limits: the `{error}`
+  inside an unreadable cause is the reader's own diagnostic (system language), and the structural check strips `//`
+  lines (a commented literal is never painted).
+- **Could not verify**: live GUI behaviour on the keeper's desktop (his own check), and a baseline clippy rebuild.
 
 
 ### The visual verification, and the defect it caught (S7)

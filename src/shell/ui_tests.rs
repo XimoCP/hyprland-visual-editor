@@ -20462,20 +20462,27 @@ fn trust_gate_copy_lives_in_the_i18n_files_and_keeps_the_honest_limit() {
         .filter(|l| !l.trim_start().starts_with("//"))
         .collect::<Vec<_>>()
         .join("\n");
-    for hardcoded in [
-        "This theme carries code",
-        "Shell hooks",
-        "Lua presets",
-        "Continue",
-        "Cancel",
-        "Only continue if you trust",
-        "not a sandbox",
-        "consent gate",
-    ] {
+    // STRUCTURAL, not a phrase list: every `text:` BINDING must read a property
+    // (or the loop variable), so ANY English sentence smuggled back into a
+    // `Text` fails here — a fixed list of phrases only catches the ones it
+    // names, which is how the whole old copy could have returned unnoticed.
+    // Property DECLARATIONS (`in property <string> title-text: "";`) are the
+    // one place a `"` belongs, and they are skipped.
+    for statement in code.split(';') {
+        let is_declaration = statement.lines().any(|l| {
+            let t = l.trim_start();
+            t.starts_with("in property")
+                || t.starts_with("out property")
+                || t.starts_with("private property")
+        });
+        if is_declaration || !statement.contains("text:") {
+            continue;
+        }
         assert!(
-            !code.contains(hardcoded),
-            "the gate's copy must live in i18n/{{en,es}}.json and reach the UI as a property — \
-             found {hardcoded:?} in ui/gallery/TrustWarning.slint"
+            !statement.contains('"'),
+            "a `text:` binding may not hold a string literal: the gate's copy must live in \
+             i18n/{{en,es}}.json and reach the UI as a property. Offending binding:{}",
+            statement
         );
     }
     assert!(
@@ -20506,7 +20513,10 @@ fn trust_gate_copy_lives_in_the_i18n_files_and_keeps_the_honest_limit() {
         let tr = crate::tr::Tr::with_lang(lang);
         for key in KEYS {
             let value = tr.tr(key).unwrap_or_else(|| {
-                panic!("{key} is missing from i18n/{lang}.json: the gate would show a raw key")
+                panic!(
+                    "{key} is missing from i18n/{lang}.json: the gate would fall back to the \
+                     English text (or show the raw key if English lost it too)"
+                )
             });
             assert!(
                 !value.trim().is_empty(),
@@ -21039,8 +21049,14 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
     let many_presets: Vec<SharedString> = (0..24)
         .map(|i| SharedString::from(format!("animations/preset-{i:02}.lua")))
         .collect();
+    let many_hook_count = many_hooks.len();
+    let many_preset_count = many_presets.len();
     win.set_trust_warning_hooks(ModelRc::new(VecModel::from(many_hooks)));
     win.set_trust_warning_presets(ModelRc::new(VecModel::from(many_presets)));
+    // The headings carry the COUNT, and this frame replaces the models, so the
+    // copy is refilled for it: a frame whose heading says 2 over a list of 18
+    // would mislead the eye that verifies it.
+    crate::apply_trust_warning_copy(&win, "Risky", many_hook_count, many_preset_count);
     win.set_trust_warning_open(true);
     win.set_is_panel_open(false);
     settle();
@@ -21063,8 +21079,9 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
         "started — sddm-watch.sh",
     )]));
     let no_presets = ModelRc::new(VecModel::from(Vec::<SharedString>::new()));
-    win.set_trust_warning_hooks(one_hook);
-    win.set_trust_warning_presets(no_presets);
+    win.set_trust_warning_hooks(one_hook.clone());
+    win.set_trust_warning_presets(no_presets.clone());
+    crate::apply_trust_warning_copy(&win, "Risky", 1, 0);
     settle();
     let remembered_single = win
         .window()
@@ -21127,7 +21144,9 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
         "the line must still name the file, got: {}",
         preset_lines[0]
     );
+    let unreadable_count = preset_lines.len();
     win.set_trust_warning_presets(ModelRc::new(VecModel::from(preset_lines)));
+    crate::apply_trust_warning_copy(&win, "Risky", 1, unreadable_count);
     settle();
     let unreadable_preset = win
         .window()
