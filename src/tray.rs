@@ -14,6 +14,21 @@ pub struct TrayHandle {
     handle: Handle<HveTray>,
 }
 
+/// Convert one RGBA buffer to the BGRA (Cairo ARGB32 little-endian) order ksni
+/// wants. Extracted so the conversion — the only place a malformed icon could
+/// take the process down — is testable without a live tray service.
+///
+/// `chunks_exact(4)`, not `chunks(4)`: a buffer whose length is not a multiple
+/// of 4 has a short LAST chunk, and indexing `p[2]`/`p[3]` on it panics
+/// (`index out of bounds: the len is 3 but the index is 3`). A truncated icon is
+/// malformed data, not a reason to lose the process: the tail below one whole
+/// pixel is dropped.
+fn rgba_to_bgra(rgba: &[u8]) -> Vec<u8> {
+    rgba.chunks_exact(4)
+        .flat_map(|p| [p[2], p[1], p[0], p[3]])
+        .collect()
+}
+
 impl TrayHandle {
     /// Force a tray menu refresh so the UI picks up the latest visibility state.
     pub fn refresh_menu(&self) {
@@ -22,10 +37,7 @@ impl TrayHandle {
 
     /// Update the tray icon with new RGBA pixel data (will be converted to BGRA internally).
     pub fn update_icon(&self, rgba: Vec<u8>) {
-        let bgra: Vec<u8> = rgba
-            .chunks(4)
-            .flat_map(|p| [p[2], p[1], p[0], p[3]])
-            .collect();
+        let bgra = rgba_to_bgra(&rgba);
         self.handle.update(move |tray: &mut HveTray| {
             tray.icon_bgra = bgra;
         });
@@ -72,10 +84,7 @@ pub fn start_tray(
     icon_h: u32,
 ) -> TrayHandle {
     // Convert RGBA → BGRA (ksni expects Cairo ARGB32 = BGRA in LE)
-    let icon_bgra: Vec<u8> = icon_rgba
-        .chunks(4)
-        .flat_map(|p| [p[2], p[1], p[0], p[3]])
-        .collect();
+    let icon_bgra = rgba_to_bgra(&icon_rgba);
 
     let system_active = Arc::new(AtomicBool::new(false));
     let tray = HveTray {
@@ -282,5 +291,38 @@ impl ksni::Tray for HveTray {
             }
             .into(),
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rgba_to_bgra;
+
+    /// Lane C, S3: the conversion indexes `p[2]`/`p[3]` for every chunk, so a
+    /// buffer whose length is not a multiple of 4 PANICS on its last, short
+    /// chunk — a malformed icon taking the process down (the audit's only real
+    /// panic candidate outside `Mutex::lock().unwrap()`). Only whole pixels are
+    /// pixels: the tail is dropped and the conversion keeps going.
+    #[test]
+    fn rgba_to_bgra_drops_a_truncated_tail_instead_of_panicking() {
+        // Two whole pixels plus three stray bytes.
+        let rgba = vec![10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110];
+        assert_eq!(
+            rgba_to_bgra(&rgba),
+            vec![30, 20, 10, 40, 70, 60, 50, 80],
+            "the channels swap (R and B) and the truncated tail is dropped"
+        );
+    }
+
+    /// The cases the tray actually feeds it: a 1x1 icon and an empty buffer.
+    #[test]
+    fn rgba_to_bgra_converts_whole_pixels() {
+        assert_eq!(rgba_to_bgra(&[]), Vec::<u8>::new(), "empty stays empty");
+        assert_eq!(rgba_to_bgra(&[1, 2, 3, 4]), vec![3, 2, 1, 4]);
+        assert_eq!(
+            rgba_to_bgra(&[255, 0, 128, 255]),
+            vec![128, 0, 255, 255],
+            "a 1x1 icon: only R and B move"
+        );
     }
 }
