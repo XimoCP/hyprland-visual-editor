@@ -63,14 +63,14 @@ use crate::providers::noctalia_runtime::{
 // this backend (capability routing: a backend never calls another one).
 // These are re-exports of the ONE implementation, which sits in `bg_info`.
 pub use crate::providers::bg_info::{MpvpaperManifest, MpvpaperVideo, MANIFEST_FILE};
-// Compatibility re-exports: the historical `mpvpaper::save_manifest` and
-// `mpvpaper::notify_plugin_required` paths must keep resolving (pinned by
-// the `bg_info` compatibility tests), while production code reaches them
-// through `bg_info`. Nothing in the binary calls them through THIS path,
-// hence the allow — the one implementation still lives in `bg_info`.
-pub(crate) use crate::providers::bg_info::{live_assignments_path, LiveAssignments};
+// Compatibility re-exports: the historical `mpvpaper::save_manifest` path must
+// keep resolving (pinned by the `bg_info` compatibility test, which compares its
+// output byte-for-byte with the neutral path), while production code reaches it
+// through `bg_info`. `notify_plugin_required` was removed by Lane C: nothing
+// called it through ANY path and its only consumer was a signature binding.
 #[allow(unused_imports)]
-pub use crate::providers::bg_info::{notify_plugin_required, save_manifest};
+pub use crate::providers::bg_info::save_manifest;
+pub(crate) use crate::providers::bg_info::{live_assignments_path, LiveAssignments};
 
 /// How long to wait after `clear-all` for the plugin to extract the static
 /// frame (async ffmpeg) before HVE applies its own static wallpaper.

@@ -299,17 +299,12 @@ pub fn notify_video_backend(notice: &VideoBackendNotice) {
         .output();
 }
 
-/// Historical API-compat shell: notify the user that the mpvpaper plugin is
-/// required but not available. The production path raises the decision's own
-/// notice through [`notify_video_backend`]; this keeps the historical
-/// `bg_info::notify_plugin_required` / `mpvpaper::notify_plugin_required`
-/// paths resolving (pinned by the `bg_info` compatibility test) with the
-/// plugin remedy of the manifest leg. Nothing in the binary calls it, hence
-/// the allow — same reasoning as the `mpvpaper` re-export's `unused_imports`.
-#[allow(dead_code)]
-pub fn notify_plugin_required() {
-    notify_video_backend(&VideoBackendNotice::for_missing_backend(VideoWant::None));
-}
+/// Historical API-compat shell removed by Lane C (2026-10-14, S4): it existed
+/// only to keep `bg_info::notify_plugin_required` / `mpvpaper::notify_plugin_required`
+/// resolving, nothing in the binary called it, and its only consumer was a
+/// signature binding in a test — a compat path kept alive by the pin that pinned
+/// it. The production path is [`notify_video_backend`], called by
+/// `providers::background` with the decision's own notice.
 
 // ── Video-backend notice (theme-packages T6) ────────────────────────────
 
@@ -487,11 +482,12 @@ mod tests {
             Some(format!("{home}/Videos/movie.mp4").as_str())
         );
 
-        // API compatibility: the historical `mpvpaper` path must keep
-        // resolving for every moved item. No call here — the binding only
-        // proves the re-export exists with the same signature.
-        let _notify: fn() = crate::providers::mpvpaper::notify_plugin_required;
-
+        // API compatibility: the historical `mpvpaper::save_manifest` path must
+        // keep resolving (no call here — the pin below compares its output with
+        // the neutral path byte-for-byte).
+        //
+        // Lane C removed the `notify_plugin_required` half of this compat surface:
+        // it was reachable only through this binding, which never called it.
         drop(env);
     }
 
@@ -499,12 +495,14 @@ mod tests {
     /// mpvpaper backend for the shared background information — each of
     /// these items has exactly one implementation, in `bg_info`. The
     /// third-party plugin id, comments, and the policy calls reserved for
-    /// the next unit are not this test's business.
+    /// the next unit are not this test's business. (`notify_plugin_required`
+    /// was on this list until Lane C removed it everywhere; a name no path
+    /// exposes is dead weight in a routing pin.)
     #[test]
     fn noctalia_reads_shared_background_info_from_bg_info() {
         let src = std::fs::read_to_string("src/providers/noctalia.rs")
             .expect("src/providers/noctalia.rs must exist");
-        for item in ["save_manifest", "MANIFEST_FILE", "notify_plugin_required"] {
+        for item in ["save_manifest", "MANIFEST_FILE"] {
             let needle = format!("crate::providers::mpvpaper::{item}");
             assert!(
                 !src.contains(&needle),
