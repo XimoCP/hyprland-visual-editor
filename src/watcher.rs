@@ -387,7 +387,7 @@ mod tests {
         .unwrap();
         std::fs::write(stubs.join("noctalia"), "#!/bin/bash\nexit 0\n").unwrap();
         for name in ["inotifywait", "noctalia"] {
-            std::fs::set_permissions(&stubs.join(name), std::fs::Permissions::from_mode(0o755))
+            std::fs::set_permissions(stubs.join(name), std::fs::Permissions::from_mode(0o755))
                 .unwrap();
         }
         let path_with_stubs = format!(
@@ -649,7 +649,7 @@ mod tests {
         std::fs::write(stubs.join("inotifywait"), "#!/bin/bash\nexec sleep 2\n").unwrap();
         std::fs::write(stubs.join("noctalia"), "#!/bin/bash\nexit 0\n").unwrap();
         for name in ["inotifywait", "noctalia"] {
-            std::fs::set_permissions(&stubs.join(name), std::fs::Permissions::from_mode(0o755))
+            std::fs::set_permissions(stubs.join(name), std::fs::Permissions::from_mode(0o755))
                 .unwrap();
         }
         let path_with_stubs = format!(
@@ -663,7 +663,7 @@ mod tests {
             .arg("--exact")
             .arg("watcher::tests::watcher_child_dies_when_hve_dies_end_to_end")
             .env("HVE_WATCHER_PDEATH_HELPER", "1")
-            .env("HVE_HELPER_ROOT", &root)
+            .env("HVE_HELPER_ROOT", root)
             .env("HVE_PDEATH_PID_FILE", &pid_file)
             .env("HOME", &home)
             .env("HVE_CACHE_DIR", &cache)
@@ -813,7 +813,7 @@ mod tests {
         let mut guard = result.expect("the k+1th attempt (a live child) must succeed");
         assert_eq!(spawn_count, 3, "died 2 times, then success on attempt 3");
         assert!(
-            matches!(guard.child.try_wait().unwrap(), None),
+            guard.child.try_wait().unwrap().is_none(),
             "the success guard must hold a LIVE child — no success outcome \
              for a dead one"
         );
@@ -841,7 +841,7 @@ mod tests {
         let mut guard = result.expect("a child alive at the grace end is a real start");
         assert_eq!(spawn_count, 1, "success must land on the first attempt");
         assert!(
-            matches!(guard.child.try_wait().unwrap(), None),
+            guard.child.try_wait().unwrap().is_none(),
             "the success guard must hold a LIVE child"
         );
         let pid = guard.child.id();
@@ -907,7 +907,7 @@ mod tests {
         std::fs::write(stubs.join("inotifywait"), "#!/bin/bash\nexec sleep 2\n").unwrap();
         std::fs::write(stubs.join("noctalia"), "#!/bin/bash\nexit 0\n").unwrap();
         for name in ["inotifywait", "noctalia"] {
-            std::fs::set_permissions(&stubs.join(name), std::fs::Permissions::from_mode(0o755))
+            std::fs::set_permissions(stubs.join(name), std::fs::Permissions::from_mode(0o755))
                 .unwrap();
         }
         let path_with_stubs = format!(
@@ -1085,7 +1085,7 @@ mod tests {
         std::fs::write(stubs.join("inotifywait"), "#!/bin/bash\nexec sleep 2\n").unwrap();
         std::fs::write(stubs.join("noctalia"), "#!/bin/bash\nexit 0\n").unwrap();
         for name in ["inotifywait", "noctalia"] {
-            std::fs::set_permissions(&stubs.join(name), std::fs::Permissions::from_mode(0o755))
+            std::fs::set_permissions(stubs.join(name), std::fs::Permissions::from_mode(0o755))
                 .unwrap();
         }
 
@@ -1256,7 +1256,7 @@ mod tests {
         )
         .unwrap();
         std::fs::set_permissions(
-            &stubs.join("noctalia"),
+            stubs.join("noctalia"),
             std::fs::Permissions::from_mode(0o755),
         )
         .unwrap();
@@ -1293,7 +1293,7 @@ mod tests {
         .unwrap();
         std::fs::copy(repo_scripts.join("utils.sh"), scripts.join("utils.sh")).unwrap();
         std::fs::copy(repo_scripts.join("colors.sh"), scripts.join("colors.sh")).unwrap();
-        copy_color_sources_dir(&repo_scripts, &scripts);
+        copy_color_sources_dir(&repo_scripts, scripts);
         let assemble_marker = cache.join("assemble_runs");
         std::fs::write(
             scripts.join("assemble.sh"),
@@ -1376,7 +1376,7 @@ mod tests {
         std::fs::create_dir_all(&stubs).unwrap();
         std::fs::write(stubs.join("inotifywait"), "#!/bin/bash\nexec sleep 2\n").unwrap();
         std::fs::set_permissions(
-            &stubs.join("inotifywait"),
+            stubs.join("inotifywait"),
             std::fs::Permissions::from_mode(0o755),
         )
         .unwrap();
@@ -1507,7 +1507,7 @@ mod tests {
         std::fs::create_dir_all(&stubs).unwrap();
         std::fs::write(stubs.join("inotifywait"), "#!/bin/bash\nexec sleep 2\n").unwrap();
         std::fs::set_permissions(
-            &stubs.join("inotifywait"),
+            stubs.join("inotifywait"),
             std::fs::Permissions::from_mode(0o755),
         )
         .unwrap();
@@ -1616,7 +1616,7 @@ mod tests {
         std::fs::create_dir_all(&stubs).unwrap();
         std::fs::write(stubs.join("inotifywait"), "#!/bin/bash\nexec sleep 2\n").unwrap();
         std::fs::set_permissions(
-            &stubs.join("inotifywait"),
+            stubs.join("inotifywait"),
             std::fs::Permissions::from_mode(0o755),
         )
         .unwrap();
@@ -1715,7 +1715,7 @@ mod tests {
         std::fs::create_dir_all(&stubs).unwrap();
         std::fs::write(stubs.join("noctalia"), "#!/bin/bash\nexit 0\n").unwrap();
         std::fs::set_permissions(
-            &stubs.join("noctalia"),
+            stubs.join("noctalia"),
             std::fs::Permissions::from_mode(0o755),
         )
         .unwrap();
@@ -1842,7 +1842,7 @@ mod tests {
         )
         .unwrap();
         for name in ["inotifywait", "noctalia"] {
-            std::fs::set_permissions(&stubs.join(name), std::fs::Permissions::from_mode(0o755))
+            std::fs::set_permissions(stubs.join(name), std::fs::Permissions::from_mode(0o755))
                 .unwrap();
         }
         let path_with_stubs = format!(
@@ -1905,7 +1905,7 @@ mod tests {
         std::fs::write(&settings, "[general]\ntheme = \"amber\"\n").unwrap();
         let poll = Instant::now() + Duration::from_secs(20);
         loop {
-            if refresh_runs() == 1 && assemble_runs() >= runs_before + 1 {
+            if refresh_runs() == 1 && assemble_runs() > runs_before {
                 break;
             }
             assert!(
@@ -1946,7 +1946,7 @@ mod tests {
         std::fs::write(&wal, r#"{"wallpaper": "/other"}"#).unwrap();
         let poll = Instant::now() + Duration::from_secs(20);
         loop {
-            if assemble_runs() >= regen_before + 1 {
+            if assemble_runs() > regen_before {
                 break;
             }
             assert!(

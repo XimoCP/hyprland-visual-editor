@@ -215,15 +215,12 @@ fn refresh_resolved_colors(w: &crate::MainWindow) {
     }
     out.push(resolve_encoded_color(
         w,
-        &w.get_tune_inactive_color().to_string(),
+        w.get_tune_inactive_color().as_ref(),
     ));
+    out.push(resolve_encoded_color(w, w.get_tune_glow_color().as_ref()));
     out.push(resolve_encoded_color(
         w,
-        &w.get_tune_glow_color().to_string(),
-    ));
-    out.push(resolve_encoded_color(
-        w,
-        &w.get_tune_glow_color_inactive().to_string(),
+        w.get_tune_glow_color_inactive().as_ref(),
     ));
     w.set_tune_colors_resolved(slint::ModelRc::from(out.as_slice()));
 }
@@ -308,7 +305,7 @@ pub(crate) fn sync_border_tune_pane(
         let color_entries: Vec<slint::SharedString> = params
             .active_colors
             .iter()
-            .map(|c| slint::SharedString::from(PresetStore::encode_colors(&[c.clone()]).as_str()))
+            .map(|c| slint::SharedString::from(PresetStore::encode_colors(&[*c]).as_str()))
             .collect();
         w.set_tune_active_colors(slint::ModelRc::from(color_entries.as_slice()));
         w.set_tune_angle(params.angle);
@@ -324,10 +321,10 @@ pub(crate) fn sync_border_tune_pane(
             w.set_tune_glow_range(glow.range);
             w.set_tune_glow_render_power(glow.render_power);
             w.set_tune_glow_color(slint::SharedString::from(
-                PresetStore::encode_colors(&[glow.color.clone()]).as_str(),
+                PresetStore::encode_colors(&[glow.color]).as_str(),
             ));
             w.set_tune_glow_color_inactive(slint::SharedString::from(
-                PresetStore::encode_colors(&[glow.color_inactive.clone()]).as_str(),
+                PresetStore::encode_colors(&[glow.color_inactive]).as_str(),
             ));
         } else {
             w.set_tune_glow_enabled(false);
@@ -523,14 +520,14 @@ fn tune_params_from_window(w: &crate::MainWindow, size: i32) -> crate::border_pr
     crate::border_preset::BorderParams {
         active_colors: PresetStore::decode_colors(&read_tune_slots(w).join(",")),
         angle: w.get_tune_angle(),
-        inactive: PresetStore::decode_colors(&w.get_tune_inactive_color().to_string())
+        inactive: PresetStore::decode_colors(w.get_tune_inactive_color().as_ref())
             .into_iter()
             .next()
             .unwrap_or(BorderColor::Token(PaletteToken::SurfaceLowest)),
         border_size: Some(size),
-        glow: PresetStore::decode_glow(&w.get_tune_glow().to_string()),
+        glow: PresetStore::decode_glow(w.get_tune_glow().as_ref()),
         rule_enabled: w.get_tune_rule_enabled(),
-        animations: PresetStore::decode_animations(&w.get_tune_animations().to_string()),
+        animations: PresetStore::decode_animations(w.get_tune_animations().as_ref()),
         curves: Vec::new(),
     }
 }
@@ -731,7 +728,7 @@ pub(crate) fn refresh_theme_list(
 pub(crate) fn gallery_initial_focus(window: &crate::MainWindow) -> usize {
     use slint::Model as _;
     let cards = window.get_gallery_cards();
-    let count = cards.row_count() as usize;
+    let count = cards.row_count();
     if count == 0 {
         return 0;
     }
@@ -859,7 +856,7 @@ pub(crate) fn reaffirm_gallery_focus_on_active(window: &crate::MainWindow) -> bo
         return false;
     }
     let cards = window.get_gallery_cards();
-    let count = cards.row_count() as usize;
+    let count = cards.row_count();
     let Some(active) = (0..count).find(|&i| cards.row_data(i).is_some_and(|row| row.is_active))
     else {
         return false;
@@ -1960,7 +1957,7 @@ pub(crate) fn begin_interlude_display(win: slint::Weak<crate::MainWindow>, gen: 
                 if !st.should_move() {
                     None
                 } else {
-                    st.orig().map(|o| find_empty_workspace(o))
+                    st.orig().map(find_empty_workspace)
                 }
             };
             if let Some(target) = target {
@@ -2637,7 +2634,7 @@ pub(crate) fn reassert_gallery_fullscreen() {
     // The shared unset->set mechanics (same dispatch the reload restore
     // uses); the gallery expansion stays THIS caller's gate, re-checked at
     // step 2 so a gallery close mid-cycle cancels the set.
-    run_fullscreen_cycle(|| crate::shell::Shell::is_gallery_expanded());
+    run_fullscreen_cycle(crate::shell::Shell::is_gallery_expanded);
 }
 
 /// Timed safety net after a theme apply: REMOVED — the single unset->set
@@ -3839,7 +3836,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             };
             let cards = w.get_gallery_cards();
-            let real_count = cards.row_count() as usize;
+            let real_count = cards.row_count();
             if real_count == 0 {
                 w.set_gallery_slice_tiles(ModelRc::new(VecModel::from(
                     Vec::<crate::SliceTileData>::new(),
@@ -3958,7 +3955,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             let cards = w.get_gallery_cards();
-            let real_count = cards.row_count() as usize;
+            let real_count = cards.row_count();
             if real_count == 0 {
                 return;
             }
@@ -4034,13 +4031,13 @@ fn main() -> Result<(), slint::PlatformError> {
                     continue; // already marshaled — no duplicate work
                 }
                 let src = thumbs::plan_preview_source(&themes_root.join(row.name.as_str()));
-                sources.push((i as usize, row.name.to_string(), src));
+                sources.push((i, row.name.to_string(), src));
             }
         }
         // Priority: visible focused card first (plus neighbors) so first paint is instant.
         let mut priority = HashSet::new();
         if !sources.is_empty() {
-            let count = model.row_count() as usize;
+            let count = model.row_count();
             priority.insert(focused % count.max(1));
             if focused > 0 {
                 priority.insert((focused - 1) % count.max(1));
@@ -4096,9 +4093,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         Some(idx)
                     } else {
                         let rows: Vec<(usize, String)> = (0..model.row_count())
-                            .filter_map(|i| {
-                                model.row_data(i).map(|r| (i as usize, r.name.to_string()))
-                            })
+                            .filter_map(|i| model.row_data(i).map(|r| (i, r.name.to_string())))
                             .collect();
                         match thumbs::resolve_row_index(&rows, idx, &name) {
                             Some(found) => {
@@ -4229,7 +4224,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 // V3 directional fluid: compute shortest ring delta and animate strip
                 let do_animate = {
                     if let Some(w) = win.upgrade() {
-                        let len = w.get_gallery_cards().row_count() as usize;
+                        let len = w.get_gallery_cards().row_count();
                         if len > 0 {
                             let cur = w.get_gallery_focused().max(0) as usize;
                             let target = (idx.max(0) as usize).min(len - 1);
@@ -4602,7 +4597,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 // info face INSIDE it (the face is drawn in the card, so the
                 // card must be the expanded one).
                 if let Some(w) = win.upgrade() {
-                    let len = w.get_gallery_cards().row_count() as usize;
+                    let len = w.get_gallery_cards().row_count();
                     if len > 0 {
                         let cur = w.get_gallery_focused().max(0) as usize;
                         let target = (idx.max(0) as usize).min(len - 1);
@@ -5323,7 +5318,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             let src = thumbs::plan_preview_source(
                                 &gallery_themes_root2.join(row.name.as_str()),
                             );
-                            sources.push((i as usize, row.name.to_string(), src));
+                            sources.push((i, row.name.to_string(), src));
                         }
                     }
                     if !sources.is_empty() {
@@ -6258,16 +6253,16 @@ fn main() -> Result<(), slint::PlatformError> {
             let params = crate::border_preset::BorderParams {
                 active_colors: PresetStore::decode_colors(&colors_joined),
                 angle,
-                inactive: PresetStore::decode_colors(&inactive.to_string())
+                inactive: PresetStore::decode_colors(inactive.as_ref())
                     .into_iter()
                     .next()
                     .unwrap_or(crate::border_preset::BorderColor::Token(
                         crate::border_preset::PaletteToken::SurfaceLowest,
                     )),
                 border_size: Some(size),
-                glow: PresetStore::decode_glow(&glow.to_string()),
+                glow: PresetStore::decode_glow(glow.as_ref()),
                 rule_enabled: rule,
-                animations: PresetStore::decode_animations(&anims.to_string()),
+                animations: PresetStore::decode_animations(anims.as_ref()),
                 curves: Vec::new(),
             };
             let content = PresetStore::generate_border_lua_full("draft", &params);

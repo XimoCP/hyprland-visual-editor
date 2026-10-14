@@ -688,7 +688,7 @@ mod tests {
             "a theme over the budget is never remembered, so nothing is written at all"
         );
         assert!(
-            TrustStore::load(&path).accepts("Huge", &report) == false,
+            !TrustStore::load(&path).accepts("Huge", &report),
             "and it must never answer 'accepted' for it"
         );
     }

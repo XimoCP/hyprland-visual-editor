@@ -469,8 +469,8 @@ mod tests {
             "v2 config should be migrated to v{CONFIG_VERSION}"
         );
         assert!(cfg.is_system_active, "v2 field should be preserved");
-        assert_eq!(
-            cfg.keybinds_enabled, false,
+        assert!(
+            !cfg.keybinds_enabled,
             "keybinds_enabled should default to false after migration"
         );
     }

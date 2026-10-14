@@ -473,7 +473,7 @@ pub fn parse_compositor_layers_with_reference(
                         .filter(|e| {
                             is_background_candidate(e.alpha, e.w, e.h, reference_for_output)
                         })
-                        .last()
+                        .next_back()
                     {
                         top = Some((entry, *level_no));
                     }

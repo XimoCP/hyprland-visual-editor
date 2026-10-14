@@ -454,7 +454,7 @@ fn push_mosaic_region(
             reals.push(items[0].1);
         }
         k => {
-            let top_n = (k + 1) / 2;
+            let top_n = k.div_ceil(2);
             let (top, bottom) = items.split_at(top_n);
             for (row, y) in [(top, 0.0f32), (bottom, th + g)] {
                 if row.is_empty() {
@@ -566,7 +566,7 @@ fn nearest_in_row(tiles: &[MosaicTileRect], row: &[usize], centre: f32) -> Optio
             return Some(i);
         }
         let d = (t.x + t.w / 2.0 - centre).abs();
-        if best.map_or(true, |(_, bd)| d < bd) {
+        if best.is_none_or(|(_, bd)| d < bd) {
             best = Some((i, d));
         }
     }
@@ -699,7 +699,7 @@ impl MosaicPages {
         } else if real_count <= capacity {
             1
         } else {
-            (real_count + capacity - 1) / capacity
+            real_count.div_ceil(capacity)
         };
         Self {
             real_count,
@@ -732,7 +732,7 @@ impl MosaicPages {
         } else if real_count <= capacity {
             1
         } else {
-            (real_count + capacity - 1) / capacity
+            real_count.div_ceil(capacity)
         };
         self.real_count = real_count;
         self.capacity = capacity;
@@ -1612,8 +1612,8 @@ mod tests {
         view.set_velocity(50.0);
         view.tick_kinetic();
         let (a, b) = view.dual_stripe_offsets();
-        assert!(a >= 0.0 && a < 3000.0, "stripe A in range");
-        assert!(b >= 0.0 && b < 3000.0, "stripe B in range");
+        assert!((0.0..3000.0).contains(&a), "stripe A in range");
+        assert!((0.0..3000.0).contains(&b), "stripe B in range");
         assert!(
             (b - a - 1500.0).abs() < 1.0 || (a - b).abs() < 3000.0,
             "stripes offset by viewport"
@@ -2068,7 +2068,7 @@ mod tests {
         for i in 0..100 {
             let a = mosaic_display_aspect(i);
             assert!(
-                a >= 0.7 - 1e-6 && a <= 2.0 + 1e-6,
+                (0.7 - 1e-6..=2.0 + 1e-6).contains(&a),
                 "aspect {a} at idx {i} out of [0.7, 2.0]"
             );
         }
@@ -2144,7 +2144,7 @@ mod mosaic_pages_tests {
         } else if cap == 0 {
             1
         } else {
-            (real + cap - 1) / cap
+            real.div_ceil(cap)
         }
     }
 

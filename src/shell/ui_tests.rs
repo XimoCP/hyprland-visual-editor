@@ -11,6 +11,24 @@
 use slint::Global as _;
 use std::path::{Path, PathBuf};
 
+/// The headless backend every UI test wants: mocked time, no threads, the
+/// software renderer. Fifty-six test functions used to spell this literal out
+/// in full; the one copy lives here. It keeps `..Default::default()` ON PURPOSE
+/// — `TestingBackendOptions` belongs to the `i_slint_backend_testing` CRATE, so
+/// a dependency bump that adds a field must not turn fifty-six sites into
+/// compile errors. That is why the one remaining `clippy::needless_update` is
+/// allowed here instead of being "fixed": the lint is right about a literal that
+/// names every field TODAY, and it is not worth the forward-compat cost.
+#[allow(clippy::needless_update)]
+fn testing_backend_options() -> i_slint_backend_testing::TestingBackendOptions {
+    i_slint_backend_testing::TestingBackendOptions {
+        mock_time: true,
+        threading: false,
+        renderer_name: Some(slint::SharedString::from("software")),
+        ..Default::default()
+    }
+}
+
 /// Every mouse interaction must leave a --verbose trace: Save handlers +
 /// close + back log in Rust, Slint-only clicks (empty state, dialog
 /// cancels/opens, card bodies, mutating guard) travel through the generic
@@ -1290,12 +1308,7 @@ fn slice_focus_flow_renders_settled_and_midflight() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     // Software-rasterized headless backend (first init on this thread).
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -1574,14 +1587,7 @@ fn ctrl_drawer_deploy_renders() {
     use slint::platform::Key;
     use slint::{ComponentHandle as _, ModelRc, VecModel};
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -1689,14 +1695,7 @@ fn ctrl_drawer_deploy_renders() {
 fn shell_shortcuts_bar_renders() {
     use slint::{ComponentHandle as _, ModelRc, VecModel};
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -1765,14 +1764,7 @@ fn shell_shortcuts_bar_renders() {
 fn theme_info_panel_renders_closed_and_open() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -1909,8 +1901,9 @@ fn theme_info_panel_renders_closed_and_open() {
             // A 2px band belongs to the card: the face is flush with the card's
             // own slanted edge, so its border lands ON that edge and a sample
             // grid can straddle it. A real leak is far wider than that.
-            let inside =
-                (x as f32) >= left - 2.0 && (x as f32) <= right + 2.0 && t >= -0.01 && t <= 1.01;
+            let inside = (x as f32) >= left - 2.0
+                && (x as f32) <= right + 2.0
+                && (-0.01..=1.01).contains(&t);
             if inside {
                 if delta > 40 {
                     big_inside += 1;
@@ -1942,14 +1935,7 @@ fn theme_info_panel_renders_closed_and_open() {
 fn theme_info_face_never_shows_on_another_card() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -2041,14 +2027,7 @@ fn theme_info_face_never_shows_on_another_card() {
 fn mosaic_grown_tile_covers_only_its_own_card() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -2212,14 +2191,7 @@ fn mosaic_first_click_grows_and_the_second_applies() {
     use std::rc::Rc;
 
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -2336,14 +2308,7 @@ fn mosaic_first_click_grows_and_the_second_applies() {
 fn gallery_opens_on_active_theme() {
     use slint::{ComponentHandle as _, Model, ModelRc, SharedString, VecModel};
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -2508,14 +2473,7 @@ fn gallery_fallback_focus_reaffirms_when_active_arrives_late() {
     use slint::{ComponentHandle as _, Model, ModelRc, VecModel};
     let _latch = REAFFIRM_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -2616,14 +2574,7 @@ fn gallery_reaffirm_never_yanks_user_navigation() {
     use slint::{ComponentHandle as _, Model, ModelRc, VecModel};
     let _latch = REAFFIRM_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -2668,14 +2619,7 @@ fn gallery_reaffirm_idle_when_startup_had_active() {
     use slint::{ComponentHandle as _, ModelRc, VecModel};
     let _latch = REAFFIRM_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -2769,12 +2713,7 @@ fn mark_theme_applied_persists_active_across_restart() {
 fn save_dialogs_render_list_delete_and_rename() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -2909,12 +2848,7 @@ fn preset_rename_delete_use_shared_dialogs() {
 fn preset_dialogs_render_rename_and_delete() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
     let win = crate::MainWindow::new().unwrap();
@@ -3009,12 +2943,7 @@ fn preset_dialogs_render_rename_and_delete() {
 fn save_list_keyboard_focus_navs_and_renders() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -3099,12 +3028,7 @@ fn save_list_keyboard_focus_navs_and_renders() {
 fn panel_menu_and_engaged_slider_render() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -3179,12 +3103,7 @@ fn panel_menu_and_engaged_slider_render() {
 fn save_card_expansion_animates_like_preset_cards() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -3324,12 +3243,7 @@ fn save_card_expansion_animates_like_preset_cards() {
 fn save_scroll_follows_focus_past_the_fold() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -3410,12 +3324,7 @@ fn save_scroll_follows_focus_past_the_fold() {
 fn knob_slider_endpoints_render() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -3473,12 +3382,7 @@ fn slice_twenty_chained_steps_settle_without_drift() {
     use crate::shell::gallery::views::slice::{focus_step, scaled_metrics, slice_delta_tiles};
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .ok(); // allow already-initialized when tests share the thread
     let win = crate::MainWindow::new().unwrap();
@@ -3642,14 +3546,7 @@ fn slice_fluid_scaling_renders_small_and_large_no_clipping() {
     // Render small stage.
     let render_at = |stage_w: f32, stage_h: f32, png: &str| {
         i_slint_core::platform::set_platform(Box::new(
-            i_slint_backend_testing::TestingBackend::new(
-                i_slint_backend_testing::TestingBackendOptions {
-                    mock_time: true,
-                    threading: false,
-                    renderer_name: Some(slint::SharedString::from("software")),
-                    ..Default::default()
-                },
-            ),
+            i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
         ))
         .ok(); // allow already-initialized when tests run in same thread
         let win = crate::MainWindow::new().unwrap();
@@ -3740,12 +3637,7 @@ fn mosaic_hero_centered_renders_with_pagination() {
     };
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -4184,12 +4076,7 @@ fn mosaic_curtain_phase_driven_renders_mid_and_settled() {
     };
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -4397,12 +4284,7 @@ fn mosaic_curtain_respects_reduced_motion() {
     };
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -4527,12 +4409,7 @@ fn mosaic_curtain_respects_reduced_motion() {
 fn panel_morph_midflight_renders() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -4661,12 +4538,7 @@ fn panel_morph_midflight_renders() {
 fn panel_save_renders() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -4803,12 +4675,7 @@ fn panel_save_renders() {
 fn panel_borders_pick_renders() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -4933,12 +4800,7 @@ fn panel_borders_pick_renders() {
 fn panel_borders_tune_renders() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -5069,12 +4931,7 @@ fn panel_borders_tune_renders() {
 fn panel_borders_two_pane_and_stacked_render() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -5314,12 +5171,7 @@ fn assert_slot_corners_are_panel_ink(snap: &slint::SharedPixelBuffer<slint::Rgba
 fn panel_curve_preview_renders() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -5448,12 +5300,7 @@ fn panel_curve_preview_renders() {
 fn panel_filters_renders() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -5684,12 +5531,7 @@ fn test_system_rows_render() {
 fn panel_system_renders() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -6072,12 +5914,7 @@ fn theme_fade_region_modal_fraction(buf: &slint::SharedPixelBuffer<slint::Rgba8P
 fn theme_fade_renders_settled_dissolved_and_reappeared() {
     use slint::ComponentHandle as _;
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -6132,12 +5969,7 @@ fn save_section_renders_list_search_and_cards() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     // Software-rasterized headless backend (same as slice_focus_flow test).
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
     let win = crate::MainWindow::new().unwrap();
@@ -6182,12 +6014,7 @@ fn save_section_renders_list_search_and_cards() {
 fn motion_last_slider_renders_unclipped() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .ok(); // allow already-initialized when tests share the thread
 
@@ -6570,14 +6397,7 @@ fn motion_curve_preview_stacked_spans_the_tune_pane() {
 fn focus_open_system_panel() -> crate::MainWindow {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
     let win = crate::MainWindow::new().unwrap();
     win.window().set_size(slint::PhysicalSize::new(1920, 1080));
@@ -9061,14 +8881,7 @@ fn motion_preset_card_click_applies_the_file_not_the_title() {
     use std::rc::Rc;
 
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -9144,14 +8957,7 @@ fn motion_preset_apply_reflects_the_file_in_the_tune_pane() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
 
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -9627,14 +9433,7 @@ fn borders_chip_resolved() -> Vec<slint::Color> {
 fn borders_tune_pane_fixture(colors: &[&str]) -> crate::MainWindow {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
     let win = crate::MainWindow::new().unwrap();
     win.window().set_size(slint::PhysicalSize::new(1920, 1080));
@@ -11180,14 +10979,7 @@ fn the_preset_card_apply_hover_help_renders() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
 
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
     let win = crate::MainWindow::new().unwrap();
     win.window().set_size(slint::PhysicalSize::new(1920, 1080));
@@ -11280,14 +11072,7 @@ fn preset_card_apply_switch_is_vertically_centred_in_the_card() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
 
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -11487,14 +11272,7 @@ fn sibling_card_lists_keep_their_apply_control_centred() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
 
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -11678,14 +11456,7 @@ fn the_theme_card_apply_hover_help_renders() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
 
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
     let win = crate::MainWindow::new().unwrap();
     win.window().set_size(slint::PhysicalSize::new(1920, 1080));
@@ -12496,7 +12267,7 @@ fn borders_strip_flow_renders() {
 /// exactly one does. Each chip paints its resolved colour as a 16×16 swatch;
 /// the ring is the icy border around one swatch bbox (same ±40 tolerance and
 /// >30px threshold as the chip-count test, so the numeric label ink, ~58 away
-/// on red, never reads as a ring).
+/// > on red, never reads as a ring).
 fn strip_ring_chip(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>, n: usize) -> Option<usize> {
     let mut found = None;
     for i in 0..n {
@@ -12777,14 +12548,7 @@ fn borders_tune_zero_colours_has_no_ghost_stops() {
 fn borders_tune_pane_renders_with_dynamic_slots() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -12919,14 +12683,7 @@ fn borders_tune_pane_renders_with_dynamic_slots() {
 fn borders_glow_group_renders_addable_and_expanded() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -13163,14 +12920,7 @@ fn borders_glow_switch_renders_off_and_on() {
 fn borders_tune_full_focus_reaches_last_and_middle() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -13358,14 +13108,7 @@ fn borders_tune_full_focus_reaches_last_and_middle() {
 fn borders_tune_glow_fixture() -> crate::MainWindow {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
     let win = crate::MainWindow::new().unwrap();
     // Expanded, opaque panel: without it the shell keeps the panel translucent
@@ -14546,8 +14289,7 @@ fn last_button_hover_box(
     }
     bands
         .into_iter()
-        .filter(|(top, bottom, _, _)| (22..=34).contains(&(bottom - top + 1)))
-        .next_back()
+        .rfind(|(top, bottom, _, _)| (22..=34).contains(&(bottom - top + 1)))
         .map(|(top, bottom, x0, x1)| (x0, top, x1, bottom))
 }
 
@@ -15218,7 +14960,7 @@ fn borders_colour_swatches_are_vertically_centred_in_their_containers() {
         (30..=34).contains(&chip_height),
         "the icy ring pair {chip_top}..{chip_bottom} must be a 40x32 strip chip ({chip_height}px)"
     );
-    let strip_centre = (chip_top + chip_bottom + 1) / 2;
+    let strip_centre = (chip_top + chip_bottom).div_ceil(2);
     let swatch_centre = (sy0 + sy1) / 2;
     if swatch_centre.abs_diff(strip_centre) > 1 {
         wrong.push(format!(
@@ -15876,14 +15618,7 @@ fn glow_row_centring_problems(
 fn borders_tune_glow_color_cards_render_inside_their_box() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -16184,7 +15919,7 @@ fn borders_glow_body_folds_open_instead_of_jumping() {
     // …and not merely one row in, nor all but there: both margins are wide
     // enough that neither a crawling fold nor a nearly-finished one passes.
     assert!(
-        rows_mid.len() + 1 <= rows_settled.len() && gap_settled - gap_mid >= 80,
+        rows_mid.len() < rows_settled.len() && gap_settled - gap_mid >= 80,
         "the mid-flight frame must be well inside the fold: {} of the body's {} rows revealed, \
          and the block below is {}px short of its settled place",
         rows_mid.len() - CLOSED_ROWS,
@@ -16686,14 +16421,7 @@ fn glow_header_ring(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>) -> (usize
 fn borders_tune_custom_picker_opens_for_one_channel() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -16813,14 +16541,7 @@ fn borders_tune_custom_picker_opens_for_one_channel() {
 fn borders_list_pane_scrolls_with_the_mouse_wheel() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -17451,14 +17172,7 @@ fn borders_list_wheel_reaches_the_end() {
 fn borders_tune_renders_eight_slots() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -17611,14 +17325,7 @@ fn borders_preset_card_click_applies_the_file_not_the_title() {
     use std::rc::Rc;
 
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
 
     let win = crate::MainWindow::new().unwrap();
@@ -17703,14 +17410,7 @@ fn borders_preset_card_click_applies_the_file_not_the_title() {
 fn gallery_with_cards_and_panel(count: usize, focused: usize) -> crate::MainWindow {
     use slint::{ComponentHandle as _, ModelRc, VecModel};
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
     let win = crate::MainWindow::new().unwrap();
     win.window().set_size(slint::PhysicalSize::new(1920, 1080));
@@ -18542,14 +18242,7 @@ fn window_with_production_callbacks() -> (
     // Software renderer so `take_snapshot` works: the default testing backend
     // keeps a mock renderer with no `WindowAdapter::take_snapshot`.
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
     let _env = crate::test_utils::TempEnv::new();
     let win = crate::MainWindow::new().unwrap();
@@ -19160,14 +18853,7 @@ fn refresh_saved_theme_rebakes_its_card_by_construction() {
 fn custom_palette_apply_schedules_bounded_focus_restores() {
     use slint::ComponentHandle as _;
     let _ = i_slint_core::platform::set_platform(Box::new(
-        i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                mock_time: true,
-                threading: false,
-                renderer_name: Some(slint::SharedString::from("software")),
-                ..Default::default()
-            },
-        ),
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
     ));
     // Sandboxed HOME so no real user config is touched.
     let _env = crate::test_utils::TempEnv::new();
@@ -19793,9 +19479,8 @@ fn both_language_maps_carry_every_system_string() {
         .flat_map(|(_, key, en_want, es_want)| {
             [("en", en.tr(key), *en_want), ("es", es.tr(key), *es_want)]
         })
-        .filter_map(|(lang, got, want)| {
-            (got != Some(want)).then(|| format!("[{lang}] want {want:?}, map has {got:?}"))
-        })
+        .filter(|&(_lang, got, want)| got != Some(want))
+        .map(|(lang, got, want)| format!("[{lang}] want {want:?}, map has {got:?}"))
         .collect();
     assert!(
         wrong.is_empty(),
@@ -20011,9 +19696,8 @@ fn both_language_maps_carry_every_motion_chrome_string() {
         .flat_map(|(_, key, en_want, es_want)| {
             [("en", en.tr(key), *en_want), ("es", es.tr(key), *es_want)]
         })
-        .filter_map(|(lang, got, want)| {
-            (got != Some(want)).then(|| format!("[{lang}] want {want:?}, map has {got:?}"))
-        })
+        .filter(|&(_lang, got, want)| got != Some(want))
+        .map(|(lang, got, want)| format!("[{lang}] want {want:?}, map has {got:?}"))
         .collect();
     assert!(
         wrong.is_empty(),
@@ -20938,12 +20622,7 @@ fn theme_trust_warning_is_mounted_above_the_panel_and_escape_declines_it() {
 fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 
@@ -21210,12 +20889,7 @@ fn theme_trust_warning_scrolls_the_carrier_list_with_the_keyboard() {
     use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
 
     i_slint_core::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            mock_time: true,
-            threading: false,
-            renderer_name: Some(slint::SharedString::from("software")),
-            ..Default::default()
-        },
+        testing_backend_options(),
     )))
     .expect("platform already initialized");
 

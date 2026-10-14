@@ -378,7 +378,8 @@ mod tests {
         // owns a preview record: `noctalia-v5` (assignment manifest,
         // painter video, wallpaper text). The retired `noctalia` and
         // `wallpaper` ids ship no declarer any more.
-        for id in ["noctalia-v5"] {
+        {
+            let id = "noctalia-v5";
             assert!(
                 declaration_provider(id).is_some(),
                 "the shipped id '{id}' owns a preview record and must resolve a declarer"

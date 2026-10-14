@@ -550,7 +550,7 @@ impl PresetStore {
 
     /// Encode inactive border color → Slint string.
     pub fn encode_inactive(c: &crate::border_preset::BorderColor) -> String {
-        Self::encode_colors(&[c.clone()])
+        Self::encode_colors(&[*c])
     }
 
     /// Encode glow state → pipe-separated `key=value` pairs for Slint.
@@ -563,8 +563,8 @@ impl PresetStore {
             glow.enabled,
             glow.range,
             glow.render_power,
-            Self::encode_colors(&[glow.color.clone()]),
-            Self::encode_colors(&[glow.color_inactive.clone()]),
+            Self::encode_colors(&[glow.color]),
+            Self::encode_colors(&[glow.color_inactive]),
             glow.offset.0,
             glow.offset.1
         )
@@ -1221,7 +1221,7 @@ mod tests {
         assert!(encoded.contains("enabled:true"));
         assert!(encoded.contains("range:20"));
         let decoded = PresetStore::decode_glow(&encoded).unwrap();
-        assert_eq!(decoded.enabled, true);
+        assert!(decoded.enabled);
         assert_eq!(decoded.range, 20);
         assert_eq!(decoded.render_power, 4);
         assert_eq!(
@@ -1262,12 +1262,12 @@ mod tests {
         let decoded = PresetStore::decode_animations(&encoded);
         assert_eq!(decoded.len(), 2);
         assert_eq!(decoded[0].leaf, "borderangle");
-        assert_eq!(decoded[0].enabled, true);
+        assert!(decoded[0].enabled);
         assert_eq!(decoded[0].speed, Some(30));
         assert_eq!(decoded[0].bezier, Some("my_curve".into()));
         assert_eq!(decoded[0].style, Some("loop".into()));
         assert_eq!(decoded[1].leaf, "border");
-        assert_eq!(decoded[1].enabled, false);
+        assert!(!decoded[1].enabled);
         assert!(decoded[1].speed.is_none());
     }
 

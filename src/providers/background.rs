@@ -2252,7 +2252,7 @@ mod tests {
         std::fs::remove_file(&sandbox.config).unwrap();
         std::fs::create_dir(&sandbox.config).unwrap();
 
-        let (outcome, text) = capture_logs(|| step_aside_if_foreign());
+        let (outcome, text) = capture_logs(step_aside_if_foreign);
         let outcome = outcome.expect("the check is an honest Result");
 
         assert_eq!(outcome, StepAsideOutcome::SteppedAside);
@@ -2277,7 +2277,7 @@ mod tests {
         // Drop the pending marker: there is no mute of ours to release.
         std::fs::remove_file(crate::providers::skwd_policy::marker_path()).unwrap();
 
-        let (outcome, text) = capture_logs(|| step_aside_if_foreign());
+        let (outcome, text) = capture_logs(step_aside_if_foreign);
         let outcome = outcome.expect("the check is an honest Result");
 
         assert_eq!(outcome, StepAsideOutcome::SteppedAside);

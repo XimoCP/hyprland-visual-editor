@@ -294,6 +294,101 @@ fn tick(window_weak: &Weak<crate::MainWindow>, total_seconds: i32) {
     }
 }
 
+/// Wrapper to connect the Hyprland listener.
+/// Returns a `ListenerHandle` that keeps the focus listener thread alive.
+/// When the handle is dropped (app shutdown), the thread stops cleanly.
+pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) -> crate::hypr_ipc::ListenerHandle {
+    let weak_for_lost = window_weak.clone();
+    let weak_for_gained = window_weak.clone();
+
+    crate::hypr_ipc::spawn_focus_listener(
+        move || {
+            let w = weak_for_lost.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                // Keep theme-apply suppression as-is.
+                if is_suppressed() {
+                    tracing::debug!("[countdown] Suprimido (apply en curso), ignorando focus lost");
+                    return;
+                }
+                // Theme transition owns focus: the reload-induced focus flaps
+                // must NEVER trigger the gallery immediate-hide (that parked
+                // HVE in special:minimized mid-fade — blurred, bar-less special).
+                if crate::is_theme_transitioning_flag() {
+                    tracing::debug!("[countdown] Theme transitioning — ignoring focus lost");
+                    return;
+                }
+                let Some(win) = w.upgrade() else { return };
+                let machine_allows = crate::composer::try_global_controller()
+                    .map(|c| c.on_focus_lost_machine())
+                    .unwrap_or(false);
+                let (hidden, gallery_active) = crate::composer::try_global_controller()
+                    .map(|c| (c.window_hidden(), c.gallery_session_active()))
+                    .unwrap_or((false, false));
+                let auto_minimize = win.get_auto_minimize();
+                let minimize_seconds = win.get_minimize_seconds();
+                let decision = blur_decision(
+                    machine_allows,
+                    gallery_active,
+                    hidden,
+                    auto_minimize,
+                    minimize_seconds,
+                );
+                match decision {
+                    BlurDecision::ImmediateHide => {
+                        tracing::info!(
+                            "[countdown] Gallery focus lost → immediate hide (Esc path)"
+                        );
+                        minimize_now(w.clone());
+                    }
+                    BlurDecision::StartCountdown => {
+                        tracing::debug!(
+                            "[countdown] Foco perdido, posible countdown (machine allows)"
+                        );
+                        start_countdown(w.clone());
+                    }
+                    BlurDecision::Nothing => {
+                        tracing::debug!(
+                            "[countdown] Foco perdido ignorado (machine gate or hidden)"
+                        );
+                    }
+                }
+            });
+        },
+        move || {
+            let w = weak_for_gained.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                // Focus GAINED with HVE's title: confirm focus. If it
+                // transitioned Entering→Visible, run the SETTLE path
+                // exactly once (focus + WindowActiveChanged + fullscreen).
+                // If Hidden, ignore (no settle, prevents drift when parked
+                // window is somehow focused).
+                let prev_state = crate::composer::try_global_controller()
+                    .map(|c| c.show_state())
+                    .unwrap_or(crate::show_state::ShowState::Hidden);
+                let did_confirm = crate::composer::try_global_controller()
+                    .map(|mut c| c.confirm_focus_machine())
+                    .unwrap_or(false);
+                if prev_state == crate::show_state::ShowState::Entering && did_confirm {
+                    if let Some(win) = w.upgrade() {
+                        if let Some(mut ctrl) = crate::composer::try_global_controller() {
+                            ctrl.run_settle(&win);
+                        } else if let Some(mut ctrl) = crate::composer::global_controller() {
+                            ctrl.run_settle(&win);
+                        }
+                        tracing::info!(
+                            "[countdown] Focus gained confirmed Entering→Visible, settle ran"
+                        );
+                    }
+                } else if !did_confirm && prev_state == crate::show_state::ShowState::Hidden {
+                    tracing::debug!("[countdown] Focus gained ignored (Hidden)");
+                }
+                // Always cancel countdown on focus gained (existing behavior).
+                cancel_countdown(w.clone());
+            });
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,99 +645,4 @@ mod tests {
             BlurDecision::Nothing
         );
     }
-}
-
-/// Wrapper to connect the Hyprland listener.
-/// Returns a `ListenerHandle` that keeps the focus listener thread alive.
-/// When the handle is dropped (app shutdown), the thread stops cleanly.
-pub fn setup_countdown(window_weak: Weak<crate::MainWindow>) -> crate::hypr_ipc::ListenerHandle {
-    let weak_for_lost = window_weak.clone();
-    let weak_for_gained = window_weak.clone();
-
-    crate::hypr_ipc::spawn_focus_listener(
-        move || {
-            let w = weak_for_lost.clone();
-            let _ = slint::invoke_from_event_loop(move || {
-                // Keep theme-apply suppression as-is.
-                if is_suppressed() {
-                    tracing::debug!("[countdown] Suprimido (apply en curso), ignorando focus lost");
-                    return;
-                }
-                // Theme transition owns focus: the reload-induced focus flaps
-                // must NEVER trigger the gallery immediate-hide (that parked
-                // HVE in special:minimized mid-fade — blurred, bar-less special).
-                if crate::is_theme_transitioning_flag() {
-                    tracing::debug!("[countdown] Theme transitioning — ignoring focus lost");
-                    return;
-                }
-                let Some(win) = w.upgrade() else { return };
-                let machine_allows = crate::composer::try_global_controller()
-                    .map(|c| c.on_focus_lost_machine())
-                    .unwrap_or(false);
-                let (hidden, gallery_active) = crate::composer::try_global_controller()
-                    .map(|c| (c.window_hidden(), c.gallery_session_active()))
-                    .unwrap_or((false, false));
-                let auto_minimize = win.get_auto_minimize();
-                let minimize_seconds = win.get_minimize_seconds();
-                let decision = blur_decision(
-                    machine_allows,
-                    gallery_active,
-                    hidden,
-                    auto_minimize,
-                    minimize_seconds,
-                );
-                match decision {
-                    BlurDecision::ImmediateHide => {
-                        tracing::info!(
-                            "[countdown] Gallery focus lost → immediate hide (Esc path)"
-                        );
-                        minimize_now(w.clone());
-                    }
-                    BlurDecision::StartCountdown => {
-                        tracing::debug!(
-                            "[countdown] Foco perdido, posible countdown (machine allows)"
-                        );
-                        start_countdown(w.clone());
-                    }
-                    BlurDecision::Nothing => {
-                        tracing::debug!(
-                            "[countdown] Foco perdido ignorado (machine gate or hidden)"
-                        );
-                    }
-                }
-            });
-        },
-        move || {
-            let w = weak_for_gained.clone();
-            let _ = slint::invoke_from_event_loop(move || {
-                // Focus GAINED with HVE's title: confirm focus. If it
-                // transitioned Entering→Visible, run the SETTLE path
-                // exactly once (focus + WindowActiveChanged + fullscreen).
-                // If Hidden, ignore (no settle, prevents drift when parked
-                // window is somehow focused).
-                let prev_state = crate::composer::try_global_controller()
-                    .map(|c| c.show_state())
-                    .unwrap_or(crate::show_state::ShowState::Hidden);
-                let did_confirm = crate::composer::try_global_controller()
-                    .map(|mut c| c.confirm_focus_machine())
-                    .unwrap_or(false);
-                if prev_state == crate::show_state::ShowState::Entering && did_confirm {
-                    if let Some(win) = w.upgrade() {
-                        if let Some(mut ctrl) = crate::composer::try_global_controller() {
-                            ctrl.run_settle(&win);
-                        } else if let Some(mut ctrl) = crate::composer::global_controller() {
-                            ctrl.run_settle(&win);
-                        }
-                        tracing::info!(
-                            "[countdown] Focus gained confirmed Entering→Visible, settle ran"
-                        );
-                    }
-                } else if !did_confirm && prev_state == crate::show_state::ShowState::Hidden {
-                    tracing::debug!("[countdown] Focus gained ignored (Hidden)");
-                }
-                // Always cancel countdown on focus gained (existing behavior).
-                cancel_countdown(w.clone());
-            });
-        },
-    )
 }

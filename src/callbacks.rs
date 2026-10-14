@@ -1407,9 +1407,8 @@ mod backfill_tests {
             backfill_active_candidate(&themes, "/w/a.png").as_deref(),
             Some("Alpha")
         );
-        assert_eq!(
+        assert!(
             backfill_active_candidate(&themes, "").is_none(),
-            true,
             "empty live wallpaper never guesses"
         );
     }

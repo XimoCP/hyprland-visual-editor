@@ -120,7 +120,7 @@ pub fn populate_presets(window: &crate::MainWindow, engine: &Engine, cfg: &Confi
     let user_border_names: Vec<SharedString> = border_store
         .list()
         .into_iter()
-        .map(|n| SharedString::from(n))
+        .map(SharedString::from)
         .collect();
     let user_border_tags: Vec<SharedString> = user_border_names
         .iter()
@@ -133,7 +133,7 @@ pub fn populate_presets(window: &crate::MainWindow, engine: &Engine, cfg: &Confi
     let user_anim_names: Vec<SharedString> = anim_store
         .list()
         .into_iter()
-        .map(|n| SharedString::from(n))
+        .map(SharedString::from)
         .collect();
     let user_anim_tags: Vec<SharedString> = user_anim_names
         .iter()
