@@ -14,6 +14,11 @@
 // `i18n/{en,es}.json` — pinned there by test, in both languages, so a
 // translation cannot quietly drop one.
 //
+// Type (2026-10-15): the keeper read the notice as too small, so every face
+// here moved up two points — 12→14, 13→15 and 18→20. `size-15` and `size-20`
+// were added to the token ladder for exactly that, and
+// `the_trust_gate_paints_no_face_below_its_raised_floor` pins the 14px floor.
+//
 // Honest limit, stated IN the copy (and pinned by test): this is a
 // CONSENT GATE, not a sandbox. Confirming lets the package's code run
 // with the keeper's own permissions, and the copy must never be worded
@@ -176,7 +181,7 @@ export component TrustWarning inherits Rectangle {
             Text {
                 text: root.title-text;
                 font-family: SkwdTokens.font-heading;
-                font-size: SkwdTokens.size-18;
+                font-size: SkwdTokens.size-20;
                 font-weight: 700;
                 color: HveColors.accent-amber;
             }
@@ -184,7 +189,7 @@ export component TrustWarning inherits Rectangle {
             Text {
                 text: root.intro-text;
                 font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-13;
+                font-size: SkwdTokens.size-15;
                 color: HveColors.text;
                 wrap: word-wrap;
             }
@@ -216,21 +221,21 @@ export component TrustWarning inherits Rectangle {
                         Text {
                             text: root.hooks-heading;
                             font-family: SkwdTokens.font-heading;
-                            font-size: SkwdTokens.size-13;
+                            font-size: SkwdTokens.size-15;
                             font-weight: 700;
                             color: HveColors.accent-amber;
                         }
                         Text {
                             text: root.hooks-desc;
                             font-family: SkwdTokens.font-body;
-                            font-size: SkwdTokens.size-12;
+                            font-size: SkwdTokens.size-14;
                             color: HveColors.text-muted;
                             wrap: word-wrap;
                         }
                         for line in root.hook-lines : Text {
                             text: line;
                             font-family: SkwdTokens.font-mono;
-                            font-size: SkwdTokens.size-12;
+                            font-size: SkwdTokens.size-14;
                             color: HveColors.text;
                             wrap: word-wrap;
                         }
@@ -241,21 +246,21 @@ export component TrustWarning inherits Rectangle {
                         Text {
                             text: root.presets-heading;
                             font-family: SkwdTokens.font-heading;
-                            font-size: SkwdTokens.size-13;
+                            font-size: SkwdTokens.size-15;
                             font-weight: 700;
                             color: HveColors.accent-amber;
                         }
                         Text {
                             text: root.presets-desc;
                             font-family: SkwdTokens.font-body;
-                            font-size: SkwdTokens.size-12;
+                            font-size: SkwdTokens.size-14;
                             color: HveColors.text-muted;
                             wrap: word-wrap;
                         }
                         for line in root.preset-lines : Text {
                             text: line;
                             font-family: SkwdTokens.font-mono;
-                            font-size: SkwdTokens.size-12;
+                            font-size: SkwdTokens.size-14;
                             color: HveColors.text;
                             wrap: word-wrap;
                         }
@@ -268,7 +273,7 @@ export component TrustWarning inherits Rectangle {
                     ? root.memory-note-remembered
                     : root.memory-note-not-remembered;
                 font-family: SkwdTokens.font-body;
-                font-size: SkwdTokens.size-13;
+                font-size: SkwdTokens.size-15;
                 color: HveColors.text;
                 wrap: word-wrap;
             }
@@ -286,7 +291,7 @@ export component TrustWarning inherits Rectangle {
                     Text {
                         text: root.limit-text;
                         font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-12;
+                        font-size: SkwdTokens.size-14;
                         color: HveColors.accent-amber;
                         wrap: word-wrap;
                     }
@@ -302,7 +307,7 @@ export component TrustWarning inherits Rectangle {
                 Text {
                     text: root.kbd-hint;
                     font-family: SkwdTokens.font-body;
-                    font-size: SkwdTokens.size-12;
+                    font-size: SkwdTokens.size-14;
                     color: HveColors.text-muted;
                     vertical-alignment: center;
                     horizontal-stretch: 1;
@@ -322,7 +327,7 @@ export component TrustWarning inherits Rectangle {
                     Text {
                         text: root.cancel-text;
                         font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-12;
+                        font-size: SkwdTokens.size-14;
                         font-weight: 600;
                         color: HveColors.text;
                         horizontal-alignment: center;
@@ -351,7 +356,7 @@ export component TrustWarning inherits Rectangle {
                     Text {
                         text: root.continue-text;
                         font-family: SkwdTokens.font-body;
-                        font-size: SkwdTokens.size-12;
+                        font-size: SkwdTokens.size-14;
                         font-weight: 700;
                         color: HveColors.text;
                         horizontal-alignment: center;

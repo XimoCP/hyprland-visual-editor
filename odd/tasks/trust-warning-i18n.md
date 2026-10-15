@@ -58,6 +58,12 @@ Delivery: one work-unit commit (i18n + the detector's causes + the wiring + test
   (320px) — past the cap it scrolls as before. Checks: the card is under 600px for a short package, sits at its bound
   for a long one, and no state paints an ink-free run ≥ 40px inside the card — measured on the frames (`trust_card_span`,
   `longest_ink_free_run`), with the button row read off the card's bottom instead of assumed at a fixed y.
+- **S12 — the gate's type is two points bigger, with a pinned floor.** He liked the notice and asked for a couple of
+  points more ("se ve muy pequeña"), so every face inside it moved up exactly two points: 12→14 (descriptions, carrier
+  lines, the limit box, the keyboard hint, the button labels), 13→15 (intro, headings, the memory note) and 18→20 (the
+  title). `size-15` and `size-20` are new tokens — without them the next step up jumps +3 and +6, which would flatten
+  the title's hierarchy. A test pins the gate's own 14px floor, scoped to `ui/gallery/TrustWarning.slint` so it cannot
+  be satisfied by shrinking another surface, and the global ≤11px floor (S-floor of the earlier pass) still holds.
 
 ## Tasks
 
@@ -65,6 +71,7 @@ Delivery: one work-unit commit (i18n + the detector's causes + the wiring + test
 |----|-------|-------|--------|--------|
 | T1 | S1-S8 | inline (high risk: the consent gate's copy; independent verifier after) | DONE, all checks green; independent verification under way | `i18n(trust): the consent gate speaks the app's language` |
 | T2 | S9-S11 | inline (copy + one layout binding) | DONE, all checks green, frames read by eye | `fix(trust): neutral Spanish copy and a card that hugs its content` |
+| T3 | S12 | inline (type scale + a token step) | DONE, all checks green, frames read by eye | `feat(trust): raise the gate's type two points` |
 
 ### T1 evidence
 
@@ -224,3 +231,13 @@ file. Lesson: a render test that fabricates the very string it is supposed to ve
   over — NOT a regression from this change. Both test instances were stopped and no HVE is left running; every
   `init.sh` step logged `already applied — skip rewrite+reload` (keybinds, autostart, windowrules), so the
   compositor's own config was not rewritten by the tests.
+- **L8 (2026-10-15, the keeper, verbatim)**: `vale me gusta como ha quedado pero subele un par de puntos a fuente, se
+  ve muy pequeña.` Answered as S12/T3: every face in the gate +2 points (12→14, 13→15, 18→20), with `size-15` and
+  `size-20` added to the token ladder and a new gate-scoped 14px floor (`the_trust_gate_paints_no_face_below_its_raised_floor`,
+  RED first at `TrustWarning.slint:187 paints a face at 13px`). Suite **1792 passed / 0 failed**, fmt clean, clippy 67
+  (unchanged), frames of `/tmp/opencode/render-fonts-aviso` read by eye (short package: card still hugging, no band;
+  long list: card at its 640px bound with the scrollbar; not-remembered copy: nothing clipped). Release build installed
+  with `mv`: `~/.local/bin/hve` md5 **cf2ed7a361295b641f36fb8673725e42** (previous **f66f026f7df208ee4addaffbd3666ae4**
+  kept at `target/backup/hve-pre-trust-fonts-f66f026f7df208ee4addaffbd3666ae4`), and the running instance was closed
+  through its own IPC (`quit -> ok`) and relaunched as `hve --tray` (log
+  `/tmp/opencode/hve-launch-fonts-135353.log`, md5 of `/proc/<pid>/exe` = the new build).

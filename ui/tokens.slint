@@ -28,14 +28,20 @@ export global SkwdTokens {
     in-out property <string> font-heading: "Roboto";
     in-out property <string> font-mono: "Roboto Mono";
 
-    // ── Sizes (px): 9, 11, 12, 13, 14, 16, 18, 24, 32, 36 ──
+    // ── Sizes (px): 9, 11, 12, 13, 14, 15, 16, 18, 20, 24, 32, 36 ──
     in-out property <length> size-9: 9px;
     in-out property <length> size-11: 11px;
     in-out property <length> size-12: 12px;
     in-out property <length> size-13: 13px;
     in-out property <length> size-14: 14px;
+    // 15 and 20 exist for the trust gate's raised band (2026-10-15): the
+    // keeper read the notice as too small, and moving it up exactly two points
+    // is only possible with a step at 15 (13→15) and at 20 (18→20). Without
+    // them the next token up jumps +3 and +6 and the title loses the hierarchy.
+    in-out property <length> size-15: 15px;
     in-out property <length> size-16: 16px;
     in-out property <length> size-18: 18px;
+    in-out property <length> size-20: 20px;
     in-out property <length> size-24: 24px;
     in-out property <length> size-32: 32px;
     in-out property <length> size-36: 36px;

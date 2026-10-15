@@ -831,6 +831,78 @@ fn no_ui_font_size_sits_below_the_raised_floor() {
     );
 }
 
+/// The gate's own floor, raised on the keeper's word (2026-10-15): he liked
+/// the notice but read it as too small, so every face inside it moved up two
+/// points — 12→14 (descriptions, carrier lines, the limit box, the hint, the
+/// button labels), 13→15 (intro, headings, the memory note) and 18→20 (the
+/// title) — and this pins the new floor for the one surface he reads while
+/// making a decision. Scoped to `ui/gallery/TrustWarning.slint` on purpose:
+/// the rest of the UI keeps its own sizes, so this test cannot be satisfied by
+/// shrinking something else.
+#[test]
+fn the_trust_gate_paints_no_face_below_its_raised_floor() {
+    let tokens = std::fs::read_to_string("ui/tokens.slint").expect("ui/tokens.slint must exist");
+    // `size-15: 15px;` — the ladder lives in the token singleton, so a size
+    // this test cannot resolve is a hole in the guard, not a pass.
+    let declared = |size: &str| -> u32 {
+        let needle = format!("{size}: ");
+        let at = tokens.find(&needle).unwrap_or_else(|| {
+            panic!(
+                "ui/tokens.slint must declare {size}: the notice reads its faces from the ladder"
+            )
+        });
+        let rest = &tokens[at + needle.len()..];
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        digits.parse().unwrap_or_else(|_| {
+            panic!("ui/tokens.slint must declare {size} as `<n>px`, got {digits:?}")
+        })
+    };
+
+    let src = std::fs::read_to_string("ui/gallery/TrustWarning.slint")
+        .expect("ui/gallery/TrustWarning.slint must exist");
+    let mut checked = 0usize;
+    for (index, line) in src.lines().enumerate() {
+        // A commented line is not a face the UI paints.
+        if line.trim_start().starts_with("//") {
+            continue;
+        }
+        let Some(at) = line.find("font-size:") else {
+            continue;
+        };
+        let rest = line[at + "font-size:".len()..].trim_start();
+        let digits: String = rest
+            .strip_prefix("SkwdTokens.size-")
+            .unwrap_or(rest)
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        let size: u32 = digits.parse().unwrap_or_else(|_| {
+            panic!(
+                "ui/gallery/TrustWarning.slint:{} has a font-size this guard does not \
+                 recognise: `{rest}` — teach the scanner this form, or the floor is unchecked",
+                index + 1
+            )
+        });
+        let effective = if rest.starts_with("SkwdTokens.size-") {
+            declared(&format!("size-{size}"))
+        } else {
+            size
+        };
+        checked += 1;
+        assert!(
+            effective >= 14,
+            "ui/gallery/TrustWarning.slint:{} paints a face at {effective}px — the gate's \
+             floor is 14px since the keeper read it as too small",
+            index + 1
+        );
+    }
+    assert!(
+        checked >= 13,
+        "the scanner must have covered every face of the notice — it read {checked} \
+         `font-size:` statements, so a form it cannot see would go unpinned"
+    );
+}
+
 /// The window inherits the body family instead of the stale `Inter` fallback,
 /// so every `Text` that declares no family of its own renders as the design
 /// chose rather than in whatever the system calls sans-serif.
