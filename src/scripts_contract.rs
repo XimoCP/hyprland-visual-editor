@@ -896,17 +896,22 @@ fn init_enable_refuses_conf_only_system() {
     std::fs::write(hypr.join("hyprland.conf"), "general { gaps_in = 5 }\n").unwrap();
     let cache = home.path().join(".cache").join("hve");
 
-    let out = run_bash(
-        &format!("bash \"{}\" enable", init.display()),
-        &[],
-        &[
-            ("HOME", home.path().to_str().unwrap()),
-            ("HVE_CACHE_DIR", cache.to_str().unwrap()),
-        ],
-        home.path(),
-    );
+    let run_with_lang = |lang: &str| -> (std::process::Output, String) {
+        let out = run_bash(
+            &format!("bash \"{}\" enable", init.display()),
+            &[],
+            &[
+                ("HOME", home.path().to_str().unwrap()),
+                ("HVE_CACHE_DIR", cache.to_str().unwrap()),
+                ("LANG", lang),
+            ],
+            home.path(),
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        (out, stdout)
+    };
 
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    let (out, stdout) = run_with_lang("es_ES.UTF-8");
     assert!(
         !out.status.success(),
         "init enable must refuse a conf-only system; stdout={stdout}"
@@ -915,10 +920,27 @@ fn init_enable_refuses_conf_only_system() {
         stdout.contains("hyprland.lua"),
         "refusal must name hyprland.lua: {stdout}"
     );
+    // One language per run, the one LANG names — the refusal must not stack
+    // both languages on top of each other the way it used to.
     assert!(
-        stdout.contains("migrate") && stdout.contains("migre"),
-        "refusal must carry EN and ES text: {stdout}"
+        stdout.contains("migre"),
+        "a Spanish LANG must get the Spanish refusal: {stdout}"
     );
+    assert!(
+        !stdout.contains("migrate"),
+        "a Spanish LANG must not also print the English refusal: {stdout}"
+    );
+
+    let (_, stdout_en) = run_with_lang("en_US.UTF-8");
+    assert!(
+        stdout_en.contains("migrate"),
+        "an English LANG must get the English refusal: {stdout_en}"
+    );
+    assert!(
+        !stdout_en.contains("migre"),
+        "an English LANG must not also print the Spanish refusal: {stdout_en}"
+    );
+
     assert!(
         !hypr.join("hyprland.lua").exists(),
         "refusal must not inject a Lua block"

@@ -115,10 +115,18 @@ SETEOF
 
 if [ "$ACTION" == "enable" ]; then
     if ! hve_guard_allows_enable; then
-        echo "HVE only manages hyprland.lua — migrate from hyprland.conf."
-        echo "HVE solo gestiona hyprland.lua — migre desde hyprland.conf."
-        echo "Migrate your config, then run 'init.sh enable' again."
-        echo "Migre su configuración y ejecute 'init.sh enable' de nuevo."
+        # One language per run, picked from LANG the way install.sh and
+        # uninstall.sh already do — printing both stacked reads as noise.
+        case "${LANG:-en}" in
+            es*)
+                echo "HVE solo gestiona hyprland.lua — migre desde hyprland.conf."
+                echo "Migre su configuración y ejecute 'init.sh enable' de nuevo."
+                ;;
+            *)
+                echo "HVE only manages hyprland.lua — migrate from hyprland.conf."
+                echo "Migrate your config, then run 'init.sh enable' again."
+                ;;
+        esac
         exit 1
     fi
 
