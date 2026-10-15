@@ -427,25 +427,25 @@ mod tests {
         );
     }
 
-    // ── Casos normales ────────────────────────────────────────────────
+    // ── Normal cases ──────────────────────────────────────────────────
 
     #[test]
     fn test_process_tick_normal_decrement() {
         let result = process_tick(5, 10);
-        assert_eq!(result.next_seconds, 4, "debe decrementar en 1");
+        assert_eq!(result.next_seconds, 4, "decrements by 1");
         assert_eq!(result.progress, 0.4, "progress = 4/10");
         assert!(
             !result.should_minimize,
-            "no debe minimizar con segundos restantes"
+            "must not minimize while seconds remain"
         );
     }
 
     #[test]
     fn test_process_tick_one_second_remaining() {
         let result = process_tick(1, 10);
-        assert_eq!(result.next_seconds, 0, "decrementa a 0");
+        assert_eq!(result.next_seconds, 0, "decrements to 0");
         assert_eq!(result.progress, 0.0, "progress = 0/10");
-        assert!(result.should_minimize, "debe minimizar al llegar a 0");
+        assert!(result.should_minimize, "must minimize on reaching 0");
     }
 
     #[test]
@@ -453,7 +453,7 @@ mod tests {
         let result = process_tick(0, 10);
         assert_eq!(result.next_seconds, -1);
         assert_eq!(result.progress, -0.1);
-        assert!(result.should_minimize, "debe minimizar cuando ya está en 0");
+        assert!(result.should_minimize, "must minimize once already at 0");
     }
 
     // ── Edge cases ────────────────────────────────────────────────────
@@ -461,26 +461,26 @@ mod tests {
     #[test]
     fn test_process_tick_current_exceeds_total() {
         let result = process_tick(15, 10);
-        assert_eq!(result.next_seconds, 14, "decrementa igual");
+        assert_eq!(result.next_seconds, 14, "still decrements");
         assert!(
             result.progress > 1.0,
-            "progress > 1.0 cuando current > total"
+            "progress > 1.0 when current > total"
         );
         assert!(
             !result.should_minimize,
-            "no debe minimizar con current > total"
+            "must not minimize when current > total"
         );
     }
 
     #[test]
     fn test_process_tick_total_is_zero() {
         let result = process_tick(5, 0);
-        assert_eq!(result.next_seconds, 4, "decrementa igual");
+        assert_eq!(result.next_seconds, 4, "still decrements");
         assert_eq!(
             result.progress, 0.0,
-            "progress = 0.0 para evitar división por cero"
+            "progress = 0.0 to avoid division by zero"
         );
-        assert!(!result.should_minimize, "no minimiza aún: next > 0");
+        assert!(!result.should_minimize, "does not minimize yet: next > 0");
     }
 
     #[test]
@@ -489,22 +489,22 @@ mod tests {
         assert_eq!(result.next_seconds, -1);
         assert_eq!(
             result.progress, 0.0,
-            "progress = 0.0 para evitar división por cero"
+            "progress = 0.0 to avoid division by zero"
         );
-        assert!(result.should_minimize, "minimiza cuando next <= 0");
+        assert!(result.should_minimize, "minimizes when next <= 0");
     }
 
     #[test]
     fn test_process_tick_current_negative() {
         let result = process_tick(-3, 10);
-        assert_eq!(result.next_seconds, -4, "decrementa consistentemente");
+        assert_eq!(result.next_seconds, -4, "decrements consistently");
         assert!(
             result.progress < 0.0,
-            "progress negativo cuando current es negativo"
+            "progress is negative when current is negative"
         );
         assert!(
             result.should_minimize,
-            "debe minimizar con current negativo"
+            "must minimize with a negative current"
         );
     }
 
