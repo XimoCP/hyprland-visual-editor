@@ -39,11 +39,32 @@ Delivery: one work-unit commit (i18n + the detector's causes + the wiring + test
 - **S8 — the record.** The `.slint` header and this document state where the copy lives now and why the honesty
   claims are pinned in the i18n files.
 
+### Follow-up specs (2026-10-15, keeper report)
+
+- **S9 — the gate's Spanish is NEUTRAL Spanish.** The keeper read the shipped copy and rejected the Rioplatense
+  voseo it was written in ("he visto vos y acá que son argentinos... eso esta mal"). Every `trust.*` string is
+  rewritten in neutral Spanish, and a test pins it on whole WORDS ("vos" sits inside "nuevos", so a substring search
+  would fail innocent copy). This supersedes L3's register decision **for the gate only**: the rest of `i18n/es.json`
+  still carries the corpus it was written in, and the four voseo strings OUTSIDE the gate are listed in L5 as
+  pending, not silently rewritten.
+- **S10 — the intro says what actually happens.** `"…" trae el contenido de abajo. HVE lo instala tal cual cuando
+  aplicás el tema: no se quita ni se reescribe nada.` read as unclear to him. The new intro names the action and the
+  consequence in plain words ("incluye todo lo que aparece abajo… escribe ese contenido en tu configuración tal como
+  viene: no elimina nada ni lo cambia"); the English intro is unchanged.
+- **S11 — the card HUGS its content: no dead band.** With a package carrying one or two hooks the card kept its fixed
+  640px, the carrier list stretched over the leftover and the notice showed a dead black band between the last
+  carrier line and the note. The card's height is now its own layout's preferred height, capped at the same 640px (and
+  by the window), and the list asks for the height of the carriers it actually carries, capped at `carriers-max`
+  (320px) — past the cap it scrolls as before. Checks: the card is under 600px for a short package, sits at its bound
+  for a long one, and no state paints an ink-free run ≥ 40px inside the card — measured on the frames (`trust_card_span`,
+  `longest_ink_free_run`), with the button row read off the card's bottom instead of assumed at a fixed y.
+
 ## Tasks
 
 | ID | Specs | Route | Status | Commit |
 |----|-------|-------|--------|--------|
 | T1 | S1-S8 | inline (high risk: the consent gate's copy; independent verifier after) | DONE, all checks green; independent verification under way | `i18n(trust): the consent gate speaks the app's language` |
+| T2 | S9-S11 | inline (copy + one layout binding) | DONE, all checks green, frames read by eye | `fix(trust): neutral Spanish copy and a card that hugs its content` |
 
 ### T1 evidence
 
@@ -160,3 +181,33 @@ file. Lesson: a render test that fabricates the very string it is supposed to ve
   language source is the window's `language` property (the app's setting), NOT `detect_language()`, which would
   ignore his choice. Spanish register: the project's existing `i18n/es.json` uses Rioplatense voseo consistently, so
   the new keys follow that corpus instead of importing a neutral register into the same file.
+- **L4 (2026-10-15, the keeper, verbatim — the copy corrections he owed, plus one defect)**:
+  `Esta parte no se entiende muy bien: "{theme}" trae el contenido de abajo. HVE lo instala tal cual cuando aplicás el
+  tema: no se quita ni se reescribe nada. Luego tienes que cambiar a español neutro... he visto vos y acá que son
+  argentinos... eso esta mal. Luego hay un hueco negro en medio del mensaje que capturare para mostrarte que queda
+  mal... se vel el prinvipio y luego al final las letras y en el centro un espacio inservible feo.` He then sent the
+  capture: the REAL gate over his own themes (Cars, three hooks) with the same band.
+- **L5 (2026-10-15, the parent, what changed)**: S9 — the whole `trust.*` block rewritten in neutral Spanish
+  ("confiás"→"confías", "tenés"→"tienes", "aplicás"→"aplicas", "Continuá"→"Continúa", "elegí"→"elige",
+  "acá"→"aquí", "se ejecuta como vos"→"como si lo lanzaras tú", "cuando arma el overlay"→"cuando monta el overlay"),
+  pinned by a whole-word test. S10 — the intro rewritten (`incluye todo lo que aparece abajo` · `HVE escribe ese
+  contenido en tu configuración tal como viene: no elimina nada ni lo cambia`). S11 — `TrustWarning.slint`: the card's
+  `height` is `Math.min(parent.height - 32px, Math.min(640px, body.preferred-height))` and the carrier `ScrollView`
+  sets `preferred-height: Math.min(carriers-content.preferred-height, root.carriers-max)` (`carriers-max: 320px`),
+  because the std ScrollView's own preferred height is `100%` — "as much as I can get" — which is exactly what
+  painted the band. `vertical-stretch` stays, so a card squeezed by a small window still takes the shortage out of
+  the LIST and never out of the buttons. PENDING, not touched: four voseo strings outside the gate
+  (`shaders.desc` "Elegí un shader… Volvé a elegir", `animations.section_desc` "Ajustá la curva… elegí una",
+  `about_line_1` "ajustá y mirá", `confirm_delete_msg` "¿… querés eliminar") — they are pinned by their own tests and
+  he names his own wording, so they wait for his word.
+- **L6 (2026-10-15, the parent, evidence)**: RED first — the new assertions on the unchanged `.slint` failed with
+  `a short package must not paint a full-height card — got 636px` (`/tmp/opencode/render-red-aviso`), because the old
+  card was a fixed 640px; the frame at `/tmp/opencode/render-baseline-aviso/trust_warning_gallery_open.png` shows the
+  band. GREEN after the fix: the ten `theme_trust_warning_*` tests, the full suite **1791 passed / 0 failed**,
+  `cargo fmt --check` clean, clippy 67 (unchanged, all pre-existing), and the frames of
+  `/tmp/opencode/render-final-aviso` read by eye — short package (card 495px, no band), long carrier list (card at its
+  640px bound, list scrolled, scrollbar visible), not-remembered copy, and an unreadable preset whose long cause line
+  wraps inside the card. The three former fixed-coordinate button assertions became dynamic: the ring band is read
+  from the card's bottom (`trust_card_span`), and the two "the buttons must NOT move" assertions are replaced by what
+  the new design must actually satisfy (the notice stays inside the card, the card stays within its bound and
+  band-free).

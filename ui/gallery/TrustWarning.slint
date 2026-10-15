@@ -113,6 +113,11 @@ export component TrustWarning inherits Rectangle {
     // Both ends clamp, so a key at the top or the bottom paints the same
     // frame instead of drifting.
     private property <length> scroll-step: 40px;
+    // How much of the notice the carrier list may take before it starts
+    // scrolling. The card HUGS its content up to its 640px bound, so this cap
+    // is what keeps a package with dozens of hooks from pushing the note, the
+    // limit box and the buttons out of the card.
+    private property <length> carriers-max: 320px;
     private property <length> carriers-end: Math.min(0px, carriers.visible-height - carriers.viewport-height);
 
     // Scroll the carrier list DOWN by `by` (a negative `by` scrolls up).
@@ -138,7 +143,13 @@ export component TrustWarning inherits Rectangle {
 
     card := Rectangle {
         width: Math.min(parent.width - 48px, 620px);
-        height: Math.min(parent.height - 32px, 640px);
+        // The card HUGS its content, up to the same 640px bound. It used to be
+        // a fixed 640px tall: with a package carrying one or two hooks the
+        // carrier list stretched over the leftover and the middle of the notice
+        // read as a dead black band, two blocks of text with nothing between
+        // them (keeper report, 2026-10-15). The layout's own preferred height
+        // is what sizes it now, and the list below caps itself.
+        height: Math.min(parent.height - 32px, Math.min(640px, body.preferred-height));
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         border-radius: SkwdTokens.radius-12;
@@ -158,7 +169,7 @@ export component TrustWarning inherits Rectangle {
             mouse-cursor: default;
         }
 
-        VerticalLayout {
+        body := VerticalLayout {
             padding: 24px;
             spacing: 12px;
 
@@ -183,8 +194,17 @@ export component TrustWarning inherits Rectangle {
             // from the keyboard through `scroll-carriers` above; the buttons
             // below stay outside it and are always reachable.
             carriers := ScrollView {
+                // The std ScrollView's own preferred height is 100% — "as much
+                // as I can get" — which is exactly what painted the dead band.
+                // Here the list asks for the height of the carriers it actually
+                // carries, capped: past the cap it scrolls (wheel, or the
+                // keyboard handlers above) instead of growing the card.
+                // `vertical-stretch` stays on so that a card squeezed by a
+                // small window can still take the shortage out of the LIST
+                // rather than out of the buttons below it.
+                preferred-height: Math.min(carriers-content.preferred-height, root.carriers-max);
                 vertical-stretch: 1;
-                VerticalLayout {
+                carriers-content := VerticalLayout {
                     // Pack the carriers at the top (repo convention, see
                     // SaveSection): without it the slack is spread between
                     // the lines and the list reads as unrelated blocks.

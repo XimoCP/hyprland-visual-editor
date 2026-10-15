@@ -20588,7 +20588,7 @@ fn trust_gate_copy_lives_in_the_i18n_files_and_keeps_the_honest_limit() {
     assert!(
         es.tr_or("trust.remembered", "")
             .to_lowercase()
-            .contains("si confiás en de dónde salió"),
+            .contains("si confías en el origen de este tema"),
         "the ES copy must ask the keeper to judge where the theme came from"
     );
     assert!(
@@ -20660,6 +20660,45 @@ fn trust_gate_copy_lives_in_the_i18n_files_and_keeps_the_honest_limit() {
                 "the warning must not claim to prevent execution — found {claim:?} in the {lang} copy"
             );
         }
+    }
+
+    // ── 5. The ES copy is NEUTRAL Spanish (keeper, 2026-10-15) ──
+    // The gate's copy carried the Rioplatense voseo the file was written in
+    // ("confiás", "tenés", "aplicás", "elegí", "acá", "vos"), which the keeper
+    // read as wrong for this text. Pinned on whole WORDS, not substrings:
+    // "vos" sits inside "nuevos", so a substring search would fail innocent
+    // copy — and the next translation must not smuggle the voseo back.
+    let es_all: String = KEYS
+        .iter()
+        .map(|k| es.tr_or(k, "").to_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let words: Vec<&str> = es_all.split(|c: char| !c.is_alphabetic()).collect();
+    for voseo in [
+        "vos",
+        "acá",
+        "tenés",
+        "aplicás",
+        "confiás",
+        "continuás",
+        "elegí",
+        "querés",
+        "podés",
+        "mirá",
+        "andá",
+        "volvé",
+        "guardá",
+        "ajustá",
+        "hacés",
+        "dejá",
+        "tené",
+        "dale",
+        "usá",
+    ] {
+        assert!(
+            !words.contains(&voseo),
+            "the ES copy must be NEUTRAL Spanish: found the Rioplatense form {voseo:?}"
+        );
     }
 }
 
@@ -20878,6 +20917,108 @@ fn theme_trust_warning_is_mounted_above_the_panel_and_escape_declines_it() {
     );
 }
 
+/// The gate card's own vertical span, read off the frame instead of assumed:
+/// at `X` — ten pixels inside the card's left edge, in its 24px padding,
+/// where nothing else is painted — the card's opaque surface (`bg-surface`,
+/// #161b22) makes one long contiguous run of rows. The LONGEST run wins, so a
+/// dimmed background pixel that happens to match the surface colour cannot
+/// pass for a card.
+fn trust_card_span(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>) -> (usize, usize) {
+    // A 620px card centred in the 1920px window starts at x=650.
+    const X: usize = 660;
+    let w = buf.width() as usize;
+    let h = buf.height() as usize;
+    let bytes = buf.as_bytes();
+    let mut best = (0usize, 0usize);
+    let mut run_start: Option<usize> = None;
+    for y in 0..h {
+        let idx = (y * w + X) * 4;
+        let surface = bytes[idx + 3] > 200
+            && (bytes[idx] as i16 - 0x16).abs() <= 3
+            && (bytes[idx + 1] as i16 - 0x1b).abs() <= 3
+            && (bytes[idx + 2] as i16 - 0x22).abs() <= 3;
+        match (surface, run_start) {
+            (true, None) => run_start = Some(y),
+            (true, Some(_)) => {}
+            (false, Some(start)) => {
+                if y - start > best.1 - best.0 {
+                    best = (start, y);
+                }
+                run_start = None;
+            }
+            (false, None) => {}
+        }
+    }
+    if let Some(start) = run_start {
+        if h - start > best.1 - best.0 {
+            best = (start, h);
+        }
+    }
+    assert!(
+        best.1 > best.0,
+        "the gate card's surface must be painted at x={X}"
+    );
+    best
+}
+
+/// Longest run of rows inside the card carrying NO ink, over the inner band
+/// the copy is painted in. The keeper reported the gate's middle as a dead
+/// black band (2026-10-15): with the card at a fixed 640px and the carrier
+/// list stretching over the leftover, the notice showed its title and intro at
+/// the top, the note, the limit box and the buttons at the bottom, and nothing
+/// in between. `ink` is anything brighter than the card's own surfaces
+/// (bg-surface #161b22 / bg-card #1c2128), so text, headings, the limit box
+/// and its border all count.
+fn longest_ink_free_run(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    top: usize,
+    bottom: usize,
+) -> usize {
+    const X0: usize = 690;
+    const X1: usize = 1230;
+    let w = buf.width() as usize;
+    let bytes = buf.as_bytes();
+    let mut best = 0usize;
+    let mut run = 0usize;
+    for y in top..bottom.min(buf.height() as usize) {
+        let mut ink = false;
+        for x in X0..X1.min(w) {
+            let idx = (y * w + x) * 4;
+            if bytes[idx + 3] > 200
+                && (bytes[idx] > 90 || bytes[idx + 1] > 90 || bytes[idx + 2] > 90)
+            {
+                ink = true;
+                break;
+            }
+        }
+        if ink {
+            best = best.max(run);
+            run = 0;
+        } else {
+            run += 1;
+        }
+    }
+    best.max(run)
+}
+
+/// The gate paints no dead band: the longest ink-free run inside the card must
+/// be a layout SPACING or a padding, never a void. 40px is generous over the
+/// 12px spacings and the 24px paddings, and far below the ~250px band the
+/// keeper saw.
+fn assert_void_free(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    top: usize,
+    bottom: usize,
+    what: &str,
+) {
+    let void = longest_ink_free_run(buf, top, bottom);
+    assert!(
+        void < 40,
+        "{what}: the gate must paint no dead band inside its card — longest \
+         ink-free run {void}px (card rows {top}..{bottom})"
+    );
+}
+
 /// Headless render of the W2 state: the consent gate over the gallery and
 /// over the open panel. PNGs land in THIS run's artifact directory; the
 /// closed baselines prove the overlay is what changed the pixels.
@@ -20991,17 +21132,34 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
         "the warning must paint over the gallery — got {gallery_diff} changed pixels in the centre band"
     );
 
+    // ── The card HUGS its content (keeper report, 2026-10-15) ──
+    // A SHORT package must not paint a full-height card with a dead black band
+    // in the middle, and no state may paint one: the band was the carrier list
+    // stretching over the leftover of a fixed 640px card.
+    let (short_top, short_bottom) = trust_card_span(&gallery_open);
+    let short_card = short_bottom - short_top;
+    assert!(
+        short_card < 600,
+        "a short package must not paint a full-height card — got {short_card}px"
+    );
+    assert_void_free(&gallery_open, short_top, short_bottom, "a short package");
+
     // W2b: with the gate open the keyboard cursor sits on Cancel (the icy
     // ring every keyboard cursor in this app paints), and Right moves it
     // to Continue — the gate OWNS the keyboard (focus comes from its own
     // `open` observer, no click involved). Checked HERE, before anything
     // else runs: opening the panel below deliberately takes the keyboard
-    // from the gate (panel-kbd owns it while the panel is up). The two
-    // buttons sit at FIXED geometry (620px card centred in 1920x1080,
-    // 24px padding, 32px-tall buttons on the card's bottom row), so the
-    // ring can be read per button.
-    let gate_cancel_ring = count_icy_in_region(&gallery_open, 1024, 1130, 796, 844);
-    let gate_continue_ring = count_icy_in_region(&gallery_open, 1128, 1252, 796, 844);
+    // from the gate (panel-kbd owns it while the panel is up). The buttons
+    // sit on the card's bottom row (24px padding, 32px tall) — and since the
+    // card hugs its content, that row is READ from the frame (`trust_card_span`)
+    // instead of assumed at a fixed y.
+    let ring_band = |frame: &slint::SharedPixelBuffer<slint::Rgba8Pixel>| {
+        let (_, bottom) = trust_card_span(frame);
+        (bottom.saturating_sub(58), bottom.saturating_sub(20))
+    };
+    let (ring_y0, ring_y1) = ring_band(&gallery_open);
+    let gate_cancel_ring = count_icy_in_region(&gallery_open, 1028, 1128, ring_y0, ring_y1);
+    let gate_continue_ring = count_icy_in_region(&gallery_open, 1132, 1248, ring_y0, ring_y1);
     assert!(
         gate_cancel_ring > 40,
         "the keyboard cursor must start on Cancel — got {gate_cancel_ring} icy px in the Cancel button"
@@ -21020,8 +21178,9 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
         gate_continue.clone(),
         "trust_warning_gallery_continue_focused.png",
     );
-    let gate_cancel_ring_after = count_icy_in_region(&gate_continue, 1024, 1130, 796, 844);
-    let gate_continue_ring_after = count_icy_in_region(&gate_continue, 1128, 1252, 796, 844);
+    let gate_cancel_ring_after = count_icy_in_region(&gate_continue, 1028, 1128, ring_y0, ring_y1);
+    let gate_continue_ring_after =
+        count_icy_in_region(&gate_continue, 1132, 1248, ring_y0, ring_y1);
     assert!(
         gate_cancel_ring_after < 20,
         "the ring must leave Cancel when the cursor moves — got {gate_cancel_ring_after} icy px"
@@ -21069,12 +21228,27 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
         count_buffer_diff(&gallery_open, &long_list) > 1000,
         "a long carrier list must change what is painted"
     );
+    // ...and a package that carries more than the card can hold FILLS it: the
+    // list takes its own cap and scrolls inside it, so the card sits at its
+    // bound and still paints no band.
+    let (long_top, long_bottom) = trust_card_span(&long_list);
+    let long_card = long_bottom - long_top;
+    assert!(
+        long_card >= 600,
+        "a long carrier list must fill the card up to its bound — got {long_card}px"
+    );
+    assert!(
+        long_card <= 640,
+        "the card must never grow past its 640px bound — got {long_card}px"
+    );
+    assert_void_free(&long_list, long_top, long_bottom, "a long carrier list");
 
     // W2c: the OTHER branch of the copy — a package HVE could not inspect.
-    // It says the opposite thing about Continue. The card has a FIXED height
-    // and the carrier list is its only stretch item, so a longer paragraph
-    // can only eat into the list: the BUTTON row must stay exactly where it
-    // was, which is what the second assertion measures.
+    // It says the opposite thing about Continue. The card HUGS its content,
+    // so a longer paragraph GROWS it (that is the point of the fix): what
+    // must hold is that the whole notice stays inside the card — the button
+    // row is still painted on the card's bottom row, and the card is still
+    // band-free and within its bound.
     let one_hook = ModelRc::new(VecModel::from(vec![SharedString::from(
         "started — sddm-watch.sh",
     )]));
@@ -21106,11 +21280,24 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
         count_buffer_diff_region(&remembered_single, &not_remembered, 660, 280, 1260, 786) > 100,
         "the copy for an uninspected package must state the other outcome"
     );
-    assert_eq!(
-        count_buffer_diff_region(&remembered_single, &not_remembered, 1020, 790, 1260, 850),
-        0,
-        "the buttons must NOT move when the copy changes: the fixed card height \
-         and the stretch carrier list absorb it"
+    let (nr_top, nr_bottom) = trust_card_span(&not_remembered);
+    assert!(
+        nr_bottom - nr_top <= 640,
+        "the card must never grow past its 640px bound — got {}px",
+        nr_bottom - nr_top
+    );
+    assert_void_free(
+        &not_remembered,
+        nr_top,
+        nr_bottom,
+        "the not-remembered copy",
+    );
+    let (nr_y0, nr_y1) = ring_band(&not_remembered);
+    let nr_continue_ring = count_icy_in_region(&not_remembered, 1132, 1248, nr_y0, nr_y1);
+    assert!(
+        nr_continue_ring > 40,
+        "the button row (and the cursor's ring) must still be painted on the \
+         card's bottom row — got {nr_continue_ring} icy px"
     );
 
     // W2c-b: a preset the scan could NOT read in full prints its cause on its
@@ -21160,10 +21347,26 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
         count_buffer_diff_region(&not_remembered, &unreadable_preset, 660, 280, 1260, 786) > 50,
         "the cause of an unreadable preset must be PAINTED, not swallowed"
     );
-    assert_eq!(
-        count_buffer_diff_region(&not_remembered, &unreadable_preset, 1020, 790, 1260, 850),
-        0,
-        "a long preset cause line must wrap inside the card, never move the buttons"
+    // A long cause line wraps INSIDE the card: it grows the card by its own
+    // content (a preset block and the lines it wraps onto), never by a void —
+    // and nothing is pushed out of the card, which is still band-free.
+    let (un_top, un_bottom) = trust_card_span(&unreadable_preset);
+    let grew = (un_bottom - un_top) as i32 - (nr_bottom - nr_top) as i32;
+    assert!(
+        (0..=200).contains(&grew),
+        "a wrapped cause line must grow the card by its own content, never push \
+         anything out of it — grew {grew}px"
+    );
+    assert!(
+        un_bottom - un_top <= 640,
+        "the card must never grow past its 640px bound — got {}px",
+        un_bottom - un_top
+    );
+    assert_void_free(
+        &unreadable_preset,
+        un_top,
+        un_bottom,
+        "an unreadable preset",
     );
     win.set_trust_warning_remembered(true);
 

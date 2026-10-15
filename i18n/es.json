@@ -591,20 +591,20 @@
   },
   "trust": {
     "title": "Este tema trae código",
-    "intro": "\"{theme}\" trae el contenido de abajo. HVE lo instala tal cual cuando aplicás el tema: no se quita ni se reescribe nada.",
+    "intro": "\"{theme}\" incluye todo lo que aparece abajo. Cuando aplicas el tema, HVE escribe ese contenido en tu configuración tal como viene: no elimina nada ni lo cambia.",
     "hooks_heading": "Hooks de shell ({count})",
     "hooks_desc": "Comandos que el proveedor de este tema ejecuta en sus propios eventos (arranque, cambio de fondo, cambio de color, apagado).",
     "presets_heading": "Presets de Lua ({count})",
-    "presets_desc": "Archivos que se copian a tu almacén de presets y que Hyprland lee cuando arma el overlay.",
-    "remembered": "Continuá solo si confiás en de dónde salió este tema. Los comandos y scripts de arriba se ejecutan con tus propios permisos, los mismos que tenés en una terminal. Si continuás, HVE recuerda esta aceptación: con este nombre y este contenido no te lo vuelve a preguntar, y te lo vuelve a preguntar en cuanto cambie cualquiera de los dos.",
-    "not_remembered": "Continuá solo si confiás en de dónde salió este tema. Los comandos y scripts de arriba se ejecutan con tus propios permisos, los mismos que tenés en una terminal. HVE no puede recordar una decisión para este paquete — porque una parte no se pudo leer completa, o porque es demasiado grande para que HVE la registre — así que te lo vuelve a preguntar la próxima vez que apliques este tema.",
-    "not_a_sandbox": "Esto es una puerta de consentimiento, no un sandbox: HVE no filtra, no bloquea ni aísla nada de esto. Si continuás, el código de este tema se ejecuta como vos.",
-    "kbd_hint": "↑↓ desplaza la lista • ←→ elegí un botón • Enter/Espacio activa • Esc cancela",
+    "presets_desc": "Archivos que se copian a tu almacén de presets y que Hyprland lee cuando monta el overlay.",
+    "remembered": "Continúa solo si confías en el origen de este tema. Los comandos y scripts de arriba se ejecutan con tus propios permisos, los mismos que tienes en una terminal. Si continúas, HVE recuerda esta aceptación: con este nombre y este contenido no te lo vuelve a preguntar, y te lo vuelve a preguntar en cuanto cambie cualquiera de los dos.",
+    "not_remembered": "Continúa solo si confías en el origen de este tema. Los comandos y scripts de arriba se ejecutan con tus propios permisos, los mismos que tienes en una terminal. HVE no puede recordar una decisión para este paquete — porque una parte no se pudo leer completa, o porque es demasiado grande para que HVE la registre — así que te lo vuelve a preguntar la próxima vez que apliques este tema.",
+    "not_a_sandbox": "Esto es una puerta de consentimiento, no un sandbox: HVE no filtra, no bloquea ni aísla nada de esto. Si continúas, el código de este tema se ejecuta como si lo lanzaras tú.",
+    "kbd_hint": "↑↓ desplaza la lista • ←→ elige un botón • Enter/Espacio activa • Esc cancela",
     "cancel": "Cancelar",
     "continue": "Continuar",
-    "cause_budget_spent": "el preset {path} no se leyó en este escaneo: el código de este paquete ya llena el presupuesto de {limit} bytes de un tema que HVE puede recordar, así que el resto de sus presets no se listan acá",
-    "cause_too_large": "el preset {path} no se pudo RETENER en este escaneo: son {bytes} bytes, por encima del límite de {limit} bytes de un preset que HVE puede recordar, así que su contenido no se muestra acá",
-    "cause_over_budget": "el preset {path} no se pudo RETENER en este escaneo: llevaría el código de este paquete por encima del presupuesto de {limit} bytes de un tema que HVE puede recordar, así que su contenido no se muestra acá",
-    "cause_unreadable": "el preset {path} no se pudo leer en este escaneo: {error}; puede traer código que no se muestra acá"
+    "cause_budget_spent": "el preset {path} no se leyó en este escaneo: el código de este paquete ya llena el presupuesto de {limit} bytes de un tema que HVE puede recordar, así que el resto de sus presets no se listan aquí",
+    "cause_too_large": "el preset {path} no se pudo RETENER en este escaneo: son {bytes} bytes, por encima del límite de {limit} bytes de un preset que HVE puede recordar, así que su contenido no se muestra aquí",
+    "cause_over_budget": "el preset {path} no se pudo RETENER en este escaneo: llevaría el código de este paquete por encima del presupuesto de {limit} bytes de un tema que HVE puede recordar, así que su contenido no se muestra aquí",
+    "cause_unreadable": "el preset {path} no se pudo leer en este escaneo: {error}; puede traer código que no se muestra aquí"
   }
 }
