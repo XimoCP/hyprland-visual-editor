@@ -21074,8 +21074,8 @@ fn longest_ink_free_run(
 }
 
 /// The gate paints no dead band: the longest ink-free run inside the card must
-/// be a layout SPACING or a padding, never a void. 40px is generous over the
-/// 12px spacings and the 24px paddings, and far below the ~250px band the
+/// be a layout SPACING or a padding, never a void. 48px is generous over the
+/// 16px spacings and the 30px card padding, and far below the ~250px band the
 /// keeper saw.
 fn assert_void_free(
     buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
@@ -21085,10 +21085,44 @@ fn assert_void_free(
 ) {
     let void = longest_ink_free_run(buf, top, bottom);
     assert!(
-        void < 40,
+        void < 48,
         "{what}: the gate must paint no dead band inside its card — longest \
          ink-free run {void}px (card rows {top}..{bottom})"
     );
+}
+
+/// Longest run of rows, at any column in `x0..x1`, painted in `color` (within
+/// `tol` per channel). Used to prove a SECTION is framed: a frame's left and
+/// right edges are vertical runs of the border colour, and nothing else inside
+/// the card paints that colour down a column.
+fn longest_color_run_at_column(
+    buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    x0: usize,
+    x1: usize,
+    color: (u8, u8, u8),
+    tol: i16,
+) -> usize {
+    let w = buf.width() as usize;
+    let h = buf.height() as usize;
+    let bytes = buf.as_bytes();
+    let mut best = 0usize;
+    for x in x0..x1.min(w) {
+        let mut run = 0usize;
+        for y in 0..h {
+            let idx = (y * w + x) * 4;
+            let matches = bytes[idx + 3] > 200
+                && (bytes[idx] as i16 - color.0 as i16).abs() <= tol
+                && (bytes[idx + 1] as i16 - color.1 as i16).abs() <= tol
+                && (bytes[idx + 2] as i16 - color.2 as i16).abs() <= tol;
+            if matches {
+                run += 1;
+                best = best.max(run);
+            } else {
+                run = 0;
+            }
+        }
+    }
+    best
 }
 
 /// Headless render of the W2 state: the consent gate over the gallery and
@@ -21205,16 +21239,31 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
     );
 
     // ── The card HUGS its content (keeper report, 2026-10-15) ──
-    // A SHORT package must not paint a full-height card with a dead black band
+    // A SHORT package must not paint a card at its bound with a dead black band
     // in the middle, and no state may paint one: the band was the carrier list
     // stretching over the leftover of a fixed 640px card.
     let (short_top, short_bottom) = trust_card_span(&gallery_open);
     let short_card = short_bottom - short_top;
     assert!(
-        short_card < 600,
-        "a short package must not paint a full-height card — got {short_card}px"
+        short_card <= 660,
+        "a short package must not paint a card at its bound — got {short_card}px"
     );
     assert_void_free(&gallery_open, short_top, short_bottom, "a short package");
+
+    // ── The carriers are FRAMED (keeper, 2026-10-15) ──
+    // Each carrier section is a box of its own (bg-card under a 1px neutral
+    // border), so the hooks a package carries read as ONE block instead of a
+    // heading with loose lines under it. Proved on the frame, not on the source:
+    // the frame's left and right edges are vertical runs of `HveColors.border`
+    // (#30363d) inside the card — the only place that colour runs down a column
+    // there (the Cancel button's own border is 96px wide and sits 300px away).
+    const BORDER: (u8, u8, u8) = (0x30, 0x36, 0x3d);
+    let frame_left = longest_color_run_at_column(&gallery_open, 676, 686, BORDER, 8);
+    let frame_right = longest_color_run_at_column(&gallery_open, 1234, 1244, BORDER, 8);
+    assert!(
+        frame_left >= 60 && frame_right >= 60,
+        "the carrier sections must be framed: left edge {frame_left}px, right edge {frame_right}px"
+    );
 
     // W2b: with the gate open the keyboard cursor sits on Cancel (the icy
     // ring every keyboard cursor in this app paints), and Right moves it
@@ -21310,8 +21359,13 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
         "a long carrier list must fill the card up to its bound — got {long_card}px"
     );
     assert!(
-        long_card <= 640,
-        "the card must never grow past its 640px bound — got {long_card}px"
+        long_card <= 720,
+        "the card must never grow past its 720px bound — got {long_card}px"
+    );
+    assert!(
+        long_card - short_card >= 60,
+        "the card must grow with its content: {short_card}px for a short package vs \
+         {long_card}px for a long list"
     );
     assert_void_free(&long_list, long_top, long_bottom, "a long carrier list");
 
@@ -21354,8 +21408,8 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
     );
     let (nr_top, nr_bottom) = trust_card_span(&not_remembered);
     assert!(
-        nr_bottom - nr_top <= 640,
-        "the card must never grow past its 640px bound — got {}px",
+        nr_bottom - nr_top <= 720,
+        "the card must never grow past its 720px bound — got {}px",
         nr_bottom - nr_top
     );
     assert_void_free(
@@ -21430,8 +21484,8 @@ fn theme_trust_warning_renders_over_the_gallery_and_over_the_panel() {
          anything out of it — grew {grew}px"
     );
     assert!(
-        un_bottom - un_top <= 640,
-        "the card must never grow past its 640px bound — got {}px",
+        un_bottom - un_top <= 720,
+        "the card must never grow past its 720px bound — got {}px",
         un_bottom - un_top
     );
     assert_void_free(

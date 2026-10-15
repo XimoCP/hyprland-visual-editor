@@ -119,10 +119,10 @@ export component TrustWarning inherits Rectangle {
     // frame instead of drifting.
     private property <length> scroll-step: 40px;
     // How much of the notice the carrier list may take before it starts
-    // scrolling. The card HUGS its content up to its 640px bound, so this cap
+    // scrolling. The card HUGS its content up to its 720px bound, so this cap
     // is what keeps a package with dozens of hooks from pushing the note, the
     // limit box and the buttons out of the card.
-    private property <length> carriers-max: 320px;
+    private property <length> carriers-max: 360px;
     private property <length> carriers-end: Math.min(0px, carriers.visible-height - carriers.viewport-height);
 
     // Scroll the carrier list DOWN by `by` (a negative `by` scrolls up).
@@ -148,13 +148,14 @@ export component TrustWarning inherits Rectangle {
 
     card := Rectangle {
         width: Math.min(parent.width - 48px, 620px);
-        // The card HUGS its content, up to the same 640px bound. It used to be
+        // The card HUGS its content, up to the 720px bound (raised from 640 on
+        // the keeper's word, 2026-10-15: a bit taller, with air). It used to be
         // a fixed 640px tall: with a package carrying one or two hooks the
         // carrier list stretched over the leftover and the middle of the notice
         // read as a dead black band, two blocks of text with nothing between
-        // them (keeper report, 2026-10-15). The layout's own preferred height
-        // is what sizes it now, and the list below caps itself.
-        height: Math.min(parent.height - 32px, Math.min(640px, body.preferred-height));
+        // them. The layout's own preferred height is what sizes it now, and the
+        // list below caps itself.
+        height: Math.min(parent.height - 32px, Math.min(720px, body.preferred-height));
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         border-radius: SkwdTokens.radius-12;
@@ -175,8 +176,11 @@ export component TrustWarning inherits Rectangle {
         }
 
         body := VerticalLayout {
-            padding: 24px;
-            spacing: 12px;
+            // Air (2026-10-15): 24 → 30 of padding and 12 → 16 between the
+            // blocks. The notice is a decision, not a list: it reads better
+            // with room around each of its parts.
+            padding: 30px;
+            spacing: SkwdTokens.spacing-16;
 
             Text {
                 text: root.title-text;
@@ -214,55 +218,75 @@ export component TrustWarning inherits Rectangle {
                     // SaveSection): without it the slack is spread between
                     // the lines and the list reads as unrelated blocks.
                     alignment: start;
-                    spacing: 12px;
+                    spacing: SkwdTokens.spacing-16;
 
-                    if (root.hook-lines.length > 0) : VerticalLayout {
-                        spacing: 6px;
-                        Text {
-                            text: root.hooks-heading;
-                            font-family: SkwdTokens.font-heading;
-                            font-size: SkwdTokens.size-15;
-                            font-weight: 700;
-                            color: HveColors.accent-amber;
-                        }
-                        Text {
-                            text: root.hooks-desc;
-                            font-family: SkwdTokens.font-body;
-                            font-size: SkwdTokens.size-14;
-                            color: HveColors.text-muted;
-                            wrap: word-wrap;
-                        }
-                        for line in root.hook-lines : Text {
-                            text: line;
-                            font-family: SkwdTokens.font-mono;
-                            font-size: SkwdTokens.size-14;
-                            color: HveColors.text;
-                            wrap: word-wrap;
+                    if (root.hook-lines.length > 0) : Rectangle {
+                        // Framed (2026-10-15): the carriers are a section of
+                        // their own — a box on `bg-card` under a 1px neutral
+                        // border, so the code a package carries reads as one
+                        // block instead of a heading with loose lines under it.
+                        // Neutral, not amber: the amber frame below is the
+                        // warning, and two of them would compete.
+                        border-radius: SkwdTokens.radius-8;
+                        background: HveColors.bg-card;
+                        border-width: 1px;
+                        border-color: HveColors.border;
+                        VerticalLayout {
+                            padding: SkwdTokens.spacing-12;
+                            spacing: SkwdTokens.spacing-8;
+                            Text {
+                                text: root.hooks-heading;
+                                font-family: SkwdTokens.font-heading;
+                                font-size: SkwdTokens.size-15;
+                                font-weight: 700;
+                                color: HveColors.accent-amber;
+                            }
+                            Text {
+                                text: root.hooks-desc;
+                                font-family: SkwdTokens.font-body;
+                                font-size: SkwdTokens.size-14;
+                                color: HveColors.text-muted;
+                                wrap: word-wrap;
+                            }
+                            for line in root.hook-lines : Text {
+                                text: line;
+                                font-family: SkwdTokens.font-mono;
+                                font-size: SkwdTokens.size-14;
+                                color: HveColors.text;
+                                wrap: word-wrap;
+                            }
                         }
                     }
 
-                    if (root.preset-lines.length > 0) : VerticalLayout {
-                        spacing: 6px;
-                        Text {
-                            text: root.presets-heading;
-                            font-family: SkwdTokens.font-heading;
-                            font-size: SkwdTokens.size-15;
-                            font-weight: 700;
-                            color: HveColors.accent-amber;
-                        }
-                        Text {
-                            text: root.presets-desc;
-                            font-family: SkwdTokens.font-body;
-                            font-size: SkwdTokens.size-14;
-                            color: HveColors.text-muted;
-                            wrap: word-wrap;
-                        }
-                        for line in root.preset-lines : Text {
-                            text: line;
-                            font-family: SkwdTokens.font-mono;
-                            font-size: SkwdTokens.size-14;
-                            color: HveColors.text;
-                            wrap: word-wrap;
+                    if (root.preset-lines.length > 0) : Rectangle {
+                        border-radius: SkwdTokens.radius-8;
+                        background: HveColors.bg-card;
+                        border-width: 1px;
+                        border-color: HveColors.border;
+                        VerticalLayout {
+                            padding: SkwdTokens.spacing-12;
+                            spacing: SkwdTokens.spacing-8;
+                            Text {
+                                text: root.presets-heading;
+                                font-family: SkwdTokens.font-heading;
+                                font-size: SkwdTokens.size-15;
+                                font-weight: 700;
+                                color: HveColors.accent-amber;
+                            }
+                            Text {
+                                text: root.presets-desc;
+                                font-family: SkwdTokens.font-body;
+                                font-size: SkwdTokens.size-14;
+                                color: HveColors.text-muted;
+                                wrap: word-wrap;
+                            }
+                            for line in root.preset-lines : Text {
+                                text: line;
+                                font-family: SkwdTokens.font-mono;
+                                font-size: SkwdTokens.size-14;
+                                color: HveColors.text;
+                                wrap: word-wrap;
+                            }
                         }
                     }
                 }

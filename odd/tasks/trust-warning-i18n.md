@@ -64,6 +64,13 @@ Delivery: one work-unit commit (i18n + the detector's causes + the wiring + test
   title). `size-15` and `size-20` are new tokens — without them the next step up jumps +3 and +6, which would flatten
   the title's hierarchy. A test pins the gate's own 14px floor, scoped to `ui/gallery/TrustWarning.slint` so it cannot
   be satisfied by shrinking another surface, and the global ≤11px floor (S-floor of the earlier pass) still holds.
+- **S13 — a taller card, framed carrier sections, and air.** Each carrier section (hooks, presets) is a box of its own
+  — `bg-card` under a 1px `HveColors.border` — so the code a package carries reads as one block instead of a heading
+  with loose lines under it; the neutral frame keeps the amber limit box as the only warning. The card gained air
+  (padding 24→30, block spacing 12→16) and its bound moved 640→720px with the list's own cap 320→360px, so it is
+  visibly taller in every state. Measured on the frames (`longest_color_run_at_column` proves the section edges are
+  painted, `trust_card_span` the heights): a short package 506→600px, a long list 636→713px, the not-remembered copy
+  420→480px, an unreadable preset 553→664px.
 
 ## Tasks
 
@@ -72,6 +79,7 @@ Delivery: one work-unit commit (i18n + the detector's causes + the wiring + test
 | T1 | S1-S8 | inline (high risk: the consent gate's copy; independent verifier after) | DONE, all checks green; independent verification under way | `i18n(trust): the consent gate speaks the app's language` |
 | T2 | S9-S11 | inline (copy + one layout binding) | DONE, all checks green, frames read by eye | `fix(trust): neutral Spanish copy and a card that hugs its content` |
 | T3 | S12 | inline (type scale + a token step) | DONE, all checks green, frames read by eye | `feat(trust): raise the gate's type two points` |
+| T4 | S13 | inline (layout + frames) | DONE, all checks green, frames read by eye | `feat(trust): frame the carrier sections and give the card air` |
 
 ### T1 evidence
 
@@ -241,3 +249,15 @@ file. Lesson: a render test that fabricates the very string it is supposed to ve
   kept at `target/backup/hve-pre-trust-fonts-f66f026f7df208ee4addaffbd3666ae4`), and the running instance was closed
   through its own IPC (`quit -> ok`) and relaunched as `hve --tray` (log
   `/tmp/opencode/hve-launch-fonts-135353.log`, md5 of `/proc/<pid>/exe` = the new build).
+- **L9 (2026-10-15, the keeper, verbatim)**: `haría algún cambio como hacer el cuadro un poco mas grande verticalmente
+  y enmarcar el apartado donde se muestran los hooks que lleva el tema. Y darle un poco  de margen verticalmente, pero
+  un poco de aire. No se si me entiendes.` Answered as S13/T4: each carrier section is framed (`bg-card` + 1px
+  `HveColors.border`, radius-8, inner padding 12 and spacing 8), the card's own padding went 24→30 with block spacing
+  12→16 (`SkwdTokens.spacing-16`), its bound 640→720px and the list cap 320→360px. RED first — `the carrier sections
+  must be framed: left edge 10px, right edge 4px` — then GREEN with the frames measured on the frame
+  (`longest_color_run_at_column` on the left and right edges). Suite **1792 passed / 0 failed**, fmt clean, clippy 67
+  (unchanged). Frames read by eye in `/tmp/opencode/render-frames-green`: the sections read as blocks, nothing is
+  clipped, and the list still scrolls inside its own frame. Release build installed with `mv`: `~/.local/bin/hve` md5
+  **9a6d190a38d07c7f337b1f8191e824d0** (previous **cf2ed7a361295b641f36fb8673725e42** kept at
+  `target/backup/hve-pre-trust-frames-cf2ed7a361295b641f36fb8673725e42`); the running instance was closed through its
+  own IPC (`quit -> ok`) and relaunched as `hve --tray`.
