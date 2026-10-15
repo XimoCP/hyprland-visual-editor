@@ -5920,7 +5920,11 @@ fn main() -> Result<(), slint::PlatformError> {
         window.set_panel_save_search_placeholder(
             tr.tr_shared("themes.search_placeholder", "Search themes..."),
         );
-        window.set_panel_save_empty_text(tr.tr_shared("themes.empty", "No themes yet."));
+        // The Save panel's own short empty state. It used to read
+        // `themes.empty`, which resolves to the GALLERY's long sentence, so
+        // this list painted that sentence in both languages while its default
+        // and its fallback both said "No themes yet.".
+        window.set_panel_save_empty_text(tr.tr_shared("panel.save.empty", "No themes yet."));
         window.set_panel_save_apply_text(tr.tr_shared("themes.apply", "Apply"));
         window.set_panel_save_refresh_text(tr.tr_shared("themes.refresh", "Refresh"));
         window.set_panel_save_rename_text(tr.tr_shared("themes.rename", "Rename"));

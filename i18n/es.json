@@ -32,7 +32,8 @@
       "title": "Guardá tu configuración actual",
       "desc": "Guardá tu configuración actual como un tema. Aparece al instante en la Galería — sin reiniciar.",
       "kbd_hint": "Consejo: ↑↓ elegir tema • Enter aplicar • Esc cerrar • Tab ir a la siguiente sección",
-      "placeholder": "Nombre del tema…"
+      "placeholder": "Nombre del tema…",
+      "empty": "Todavía no hay temas."
     },
     "filters": {
       "desc": "Elegí un shader — se aplica al instante. Volvé a elegir el activo para apagarlo.",

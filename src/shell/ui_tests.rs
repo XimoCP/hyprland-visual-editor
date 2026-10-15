@@ -20114,6 +20114,82 @@ fn the_gallery_root_forwards_the_empty_banner_to_the_chrome() {
     );
 }
 
+// ── Save panel empty state: its OWN key, not the gallery's sentence ──────
+// `set_panel_save_empty_text` read `themes.empty`, which resolves to the LONG
+// gallery sentence, so the Save panel's short empty state painted that
+// sentence in BOTH languages while its `.slint` default and its Rust fallback
+// both said `No themes yet.`. The two messages want different copy and now
+// have different keys.
+
+/// The key must carry the SHORT copy in English and something else in
+/// Spanish. An English column equal to the fallback is what a missing key
+/// looks like after `tr_shared` falls back, which is the defect itself.
+#[test]
+fn the_save_panel_empty_state_resolves_its_own_key() {
+    let en = crate::tr::Tr::with_lang("en");
+    let es = crate::tr::Tr::with_lang("es");
+
+    assert_eq!(
+        en.tr("panel.save.empty"),
+        Some("No themes yet."),
+        "the English map must carry the Save panel's OWN short empty state"
+    );
+    assert_ne!(
+        es.tr("panel.save.empty"),
+        Some("No themes yet."),
+        "[es] the Save panel's empty state would read English"
+    );
+}
+
+/// The English defaults the setter falls back on must still be today's copy:
+/// the map can be right while a `.slint` default silently grows into the
+/// gallery's sentence.
+#[test]
+fn the_save_panel_empty_default_is_todays_short_english() {
+    const MAIN_SLINT: &str = include_str!("../../ui/main.slint");
+    const SHELL: &str = include_str!("../../ui/shell.slint");
+
+    let want = r#"panel-save-empty-text: "No themes yet.";"#;
+    for (name, src) in [("ui/main.slint", MAIN_SLINT), ("ui/shell.slint", SHELL)] {
+        assert!(
+            src.contains(want),
+            "{name} must keep today's English panel-save-empty-text default byte for byte"
+        );
+    }
+}
+
+/// The setter must read its OWN key. Reading `themes.empty` there is the whole
+/// defect: that key exists, so `tr_shared`'s English fallback is never used and
+/// the gallery's long sentence wins in both languages.
+#[test]
+fn the_save_panel_empty_message_goes_through_its_own_key() {
+    const MAIN: &str = include_str!("../main.rs");
+
+    let hits: Vec<&str> = MAIN
+        .lines()
+        .filter(|l| l.contains("set_panel_save_empty_text"))
+        .collect();
+    assert_eq!(
+        hits.len(),
+        1,
+        "set_panel_save_empty_text must appear exactly once in src/main.rs, got {hits:?}"
+    );
+    let line = hits[0];
+    assert!(
+        line.contains(r#""panel.save.empty""#),
+        "the Save panel's empty state must read its own key: {line:?}"
+    );
+    assert!(
+        !line.contains(r#""themes.empty""#),
+        "the Save panel must not borrow the gallery's `themes.empty` (the long \
+         sentence) any more: {line:?}"
+    );
+    assert!(
+        line.contains(r#""No themes yet.""#),
+        "it must keep \"No themes yet.\" as its English fallback: {line:?}"
+    );
+}
+
 // ── S4: the empty-state banner must exist AND speak the language ─────────
 // It was unreachable, not merely untranslated: `GalleryRoot` declared `empty`
 // and `empty-text` (shell.slint feeds both from the window) and never

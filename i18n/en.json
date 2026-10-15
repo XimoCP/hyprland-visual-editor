@@ -32,7 +32,8 @@
       "title": "Save Current Look",
       "desc": "Save your current setup as a theme. It appears instantly in the Gallery — no restart.",
       "kbd_hint": "Tip: ↑↓ pick theme • Enter applies • Esc closes • Tab next section",
-      "placeholder": "Theme name…"
+      "placeholder": "Theme name…",
+      "empty": "No themes yet."
     },
     "filters": {
       "desc": "Pick a shader — instantly applied. Repick active to turn off.",
