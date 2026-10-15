@@ -3,7 +3,7 @@
 **Opened**: 2026-10-04 (keeper's call: "he visto partes que están en inglés y deberían traducirse")
 **Branch**: hve2-visual-rewrite
 **Route**: delegated writer per slice — MiMo (agent `general-free`); review by `jd-judge-a` (glm-5.3-flash)
-**Status**: in progress — S1 (`d487dc3`), S2 (`b8113df`), S3, S4 (`824503e`), S5/S6 done
+**Status**: in progress — S1 (`d487dc3`), S2 (`b8113df`), S3, S4 (`824503e`), S4b (`b6968f0`), S5/S6 done
 
 ## Objective
 
@@ -143,6 +143,7 @@ Both must go through `tr.tr_shared(...)` like the block right below them.
 - [x] **S2** — System / About (commit `b8113df`).
 - [x] **S3** — Motion chrome (evidence below; checkbox caught up 2026-10-15).
 - [x] **S4** — Gallery leftovers (commit `824503e`).
+- [x] **S4b** — Save panel empty state gets its own key (commit `b6968f0`).
 
 ## Evidence log
 
@@ -476,16 +477,52 @@ Review tier: **Tier 2** (text and property wiring; no path, permission, thread
 or state-machine change), so the parent's review plus the render pass is the
 proportional check.
 
+### S4b — Save panel empty state (done)
+
+Writer: INLINE (parent). Commit `b6968f0`
+(`fix(i18n): the Save panel gets its own empty-state copy`).
+
+Follow-up 9, raised by S4 and authorised by the keeper ("si arreglalo").
+`set_panel_save_empty_text` read `themes.empty`, a key that EXISTS and
+resolves to the gallery's LONG sentence — so `tr_shared`'s English fallback
+was never used and the Save panel's short empty list painted that sentence in
+**both** languages, while its `.slint` default and its Rust fallback both said
+`No themes yet.`. The two messages want different copy and now have different
+keys: `panel.save.empty` (EN `"No themes yet."`, ES `"Todavía no hay temas."`).
+
+No `.slint` change: the chain from `panel-save-empty-text` to
+`SaveSection` (`shell.slint:718` → `PanelRoot.slint:779` →
+`SaveSection.slint:393/447`) is alive, unlike the gallery's was, and renders
+already paint that property (`sibling_save_card_centring.png` sets a Spanish
+value by hand). Text and key only, so no render was owed.
+
+RED before GREEN, observed by the PARENT:
+
+```
+assertion `left == right` failed: the English map must carry the Save panel's
+  OWN short empty state
+the Save panel's empty state must read its own key
+```
+
+(the third test of the block, `the_save_panel_empty_default_is_todays_short_english`,
+was already green: it pins the English default, which this slice does not
+change.)
+
+GREEN: `cargo test` — **1804 passed, 0 failed** (165.81s), run by the PARENT.
+Baseline before this slice: 1801. `cargo check` — 0 warnings.
+
+Review tier: **Tier 2** (one key and one copy, no path, permission, thread or
+state-machine change), so the parent's review plus the existing renders are the
+proportional check.
+
 ## Follow-up added by S4
 
-9. `themes.empty` is ALSO read at `src/main.rs` for
+9. ~~`themes.empty` is ALSO read at `src/main.rs` for
    `set_panel_save_empty_text` with `"No themes yet."` as its English
-   fallback. The map resolves that key to the LONG gallery sentence, so the
-   Save panel's short empty state has been showing the gallery's copy in both
-   languages ever since that setter was written — its `.slint` default and its
-   Rust fallback both say `No themes yet.`, which is the copy the line asks
-   for. Fixing it needs a `panel.save.empty` key, and settling that copy is a
-   product call, not a mechanical one.
+   fallback.~~ CLOSED by `b6968f0`: the Save panel's short empty state now
+   reads its OWN key, `panel.save.empty` (EN `"No themes yet."`, ES
+   `"Todavía no hay temas."`), so it no longer paints the gallery's long
+   sentence in either language. See `### S4b` below.
 10. `ui/gallery/ThemeInfoPanel.slint:154` still declares `"Theme information"`
     as the fallback shown when `info.name == ""`. Every caller passes a
     non-empty name (`open_gallery_info` uses the card name in both of its
