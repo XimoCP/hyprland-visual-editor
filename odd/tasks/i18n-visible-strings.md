@@ -3,7 +3,7 @@
 **Opened**: 2026-10-04 (keeper's call: "he visto partes que están en inglés y deberían traducirse")
 **Branch**: hve2-visual-rewrite
 **Route**: delegated writer per slice — MiMo (agent `general-free`); review by `jd-judge-a` (glm-5.3-flash)
-**Status**: in progress — S1 done (`d487dc3`), S2/S3/S4 pending
+**Status**: in progress — S1 (`d487dc3`), S2 (`b8113df`), S3, S4 (`824503e`), S5/S6 done
 
 ## Objective
 
@@ -141,8 +141,8 @@ Both must go through `tr.tr_shared(...)` like the block right below them.
 - [x] **S1 (VISUAL)** — Render Save and Filters in Spanish, PNG read.
 - [x] **S1 (COMMIT)** — one work-unit commit.
 - [x] **S2** — System / About (commit `b8113df`).
-- [ ] **S3** — Motion chrome.
-- [ ] **S4** — Gallery leftovers.
+- [x] **S3** — Motion chrome (evidence below; checkbox caught up 2026-10-15).
+- [x] **S4** — Gallery leftovers (commit `824503e`).
 
 ## Evidence log
 
@@ -403,3 +403,91 @@ pass is the proportional check.
    hardcoded English and have no i18n keys. They name presentation styles rather
    than panel sections, so deciding their Spanish wording is a product call, not
    a mechanical one.
+
+### S4 — Gallery leftovers (done)
+
+Writer: INLINE (parent) — small task, one understood change, no delegation
+trigger fired. Commit `824503e`
+(`fix(i18n): the gallery speaks Spanish (Saved prefix + empty banner)`).
+
+The 2026-10-04 inventory held up on two of its three rows and was wrong about
+the third in an instructive way:
+
+1. `Saved ` prefix (`ui/gallery/ThemeInfoPanel.slint:163`) — live and
+   untranslated. Now travels a `GalleryText` global
+   (`ui/gallery/gallery_text.slint`), imported AND re-exported by
+   `ui/main.slint` like every other text global, filled by the new
+   `panel_i18n::apply_gallery`. Key `themes.saved_prefix` — NEW: EN
+   `"Saved "`, ES `"Guardado "`.
+2. `No themes yet. Save your current setup as a theme.` — the key already
+   existed (`themes.empty`) with the right copy in BOTH languages, so this
+   slice was wiring only: `main()` feeds it through `tr_shared` with
+   `GallerySlot::empty_message()` as the fallback, keeping ONE source for the
+   English so the map and the slot cannot drift apart.
+3. `VIEW  RETAG  DELETE  STEAM` (`ui/gallery/SliceDelegate.slint:453`) —
+   **NOT user-visible; left as-is**, exactly as the inventory instructed. It
+   sits on the card's back face, gated on `is-flipped`, which no `.slint`
+   parent sets and no Rust call pushes (`slice.rs::toggle_flip` / `set_flipped`
+   are reached from tests only). The `— details` label on the same dead face
+   (line 447) is in the same boat.
+
+**The empty banner was DEAD, not merely English.** `shell.slint:614-615` feeds
+`gallery-empty` / `gallery-empty-text` into `GalleryRoot`, which declared both
+properties (lines 97-98) and NEVER forwarded them to the `GalleryChrome` that
+paints the banner. `if root.empty` was therefore always false and the S18
+empty-state banner had never rendered in ANY language. One forwarding line
+fixes it. This is the inventory-miss pattern again — an eighth — and this time
+the missing link is invisible to a source-text check: the property existed, the
+setter existed, the translator existed, and only the chain between them was
+short. `the_gallery_root_forwards_the_empty_banner_to_the_chrome` pins it.
+
+RED before GREEN, observed by the PARENT (two waves):
+
+```
+error[E0433]: failed to resolve: could not find `GalleryText` in the crate root
+error[E0425]: cannot find function `apply_gallery` in module `crate::panel_i18n`
+GalleryRoot must forward `empty: root.empty;` to its GalleryChrome
+  instantiation, or the empty-state banner paints the component's own default
+  in every language
+```
+
+(The first two are one RED wave: a text global only reaches Rust when the entry
+file imports AND re-exports it, which `ui/main.slint` does for every other text
+global and now does for `GalleryText` too.)
+
+GREEN: `cargo test` — **1801 passed, 0 failed** (165.98s), run by the PARENT.
+Baseline before this slice: 1793. `cargo check` — 0 warnings. Eight tests added:
+the six of the i18n block, the forwarding pin, and the banner render.
+
+Keys: `themes.saved_prefix` ADDED to `i18n/en.json` + `i18n/es.json`.
+`themes.empty` REUSED — its English is byte-identical to
+`GallerySlot::empty_message()` and its Spanish was already translated.
+
+VISUAL: `/tmp/opencode/render-i18n-s4/`, read by the parent with vision.
+`gallery_empty_en.png` shows the banner reading "No themes yet. Save your
+current setup as a theme."; `gallery_empty_es.png` shows the same frame
+reading "Todavía no hay temas. Guardá tu configuración actual como un tema.";
+`theme_info_open.png` vs `theme_info_open_es.png` show the same info panel
+reading "Saved 2026-10-03T10:00:00Z" and "Guardado 2026-10-03T10:00:00Z".
+Both render tests also pin the EN → ES → EN round trip byte for byte, so the
+pass leaves no residue.
+
+Review tier: **Tier 2** (text and property wiring; no path, permission, thread
+or state-machine change), so the parent's review plus the render pass is the
+proportional check.
+
+## Follow-up added by S4
+
+9. `themes.empty` is ALSO read at `src/main.rs` for
+   `set_panel_save_empty_text` with `"No themes yet."` as its English
+   fallback. The map resolves that key to the LONG gallery sentence, so the
+   Save panel's short empty state has been showing the gallery's copy in both
+   languages ever since that setter was written — its `.slint` default and its
+   Rust fallback both say `No themes yet.`, which is the copy the line asks
+   for. Fixing it needs a `panel.save.empty` key, and settling that copy is a
+   product call, not a mechanical one.
+10. `ui/gallery/ThemeInfoPanel.slint:154` still declares `"Theme information"`
+    as the fallback shown when `info.name == ""`. Every caller passes a
+    non-empty name (`open_gallery_info` uses the card name in both of its
+    branches), so it is unreachable today — it becomes English-on-screen the
+    moment anyone opens the panel with an empty theme name.
