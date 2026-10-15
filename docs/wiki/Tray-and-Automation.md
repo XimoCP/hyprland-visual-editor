@@ -23,11 +23,8 @@ HVE publishes a tray icon through the **KDE Status Notifier Item** protocol usin
 |-------|--------|
 | *Hyprland Visual Editor* | Read-only title. |
 | — separator — | |
-| **Next Animation** | Cycle to the next animation preset. |
-| **Next Border** | Cycle to the next border preset. |
-| **Next Shader** | Cycle to the next shader. |
-| — separator — | |
 | **Show Window** / **Hide Window** | Shows or hides the window; the label follows the current visibility. |
+| **Settings** | Opens the panel on its *System* section, and raises the window first if it was hidden. Every other section is one click away from there. |
 | — separator — | |
 | **Quit** | Close HVE. |
 

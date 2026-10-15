@@ -27,10 +27,11 @@ Deferred from Lane C (S5 / T5, `odd/tasks/lane-c-health.md`), which holds the re
   running, which HVE does not override) and the service re-registers when the watcher appears. This is required to
   match 0.2: `ksni 0.2.2` subscribes to `NameOwnerChanged` and calls `register_status_notifier_item` when the watcher
   appears (`service.rs:180-217`), while 0.3 WITHOUT the flag returns `Err` immediately and never retries.
-- **S4 — the tray the user sees does not change.** Same 48×48 BGRA icon from the theme, same menu (title,
-  Next Animation/Border/Shader, Hide/Show Window, Quit), same labels from `Tr`, the Hide/Show label still
-  refreshes, and the IPC paths (`update_global_icon`, `refresh_global_menu`) still reach a live tray. No icon that
-  appears today may stop appearing. Amended on 2026-10-15 (L8): the menu NO LONGER carries a system switch — see S10.
+- **S4 — the tray the user sees does not change.** Same 48×48 BGRA icon from the theme, same labels from `Tr`, the
+  Hide/Show label still refreshes, and the IPC paths (`update_global_icon`, `refresh_global_menu`) still reach a live
+  tray. No icon that appears today may stop appearing. Amended twice on 2026-10-15: the menu NO LONGER carries a
+  system switch (L8, see S10) and no longer carries the three preset cyclers — the menu is now the three entries of
+  S11.
 - **S5 — one owner for `system_active`.** `main.rs` creates the `Arc<AtomicBool>`, passes it into `start_tray`, and
   passes the SAME Arc to `setup_callbacks` no matter what the tray did. The tray no longer hands one back.
 - **S6 — checks.** A permanent deterministic test proves the no-tray path returns `None` and does not panic without a
@@ -62,6 +63,15 @@ Deferred from Lane C (S5 / T5, `odd/tasks/lane-c-health.md`), which holds the re
   `invoke_toggle_system` item, and the `tray.toggle_system` label is gone from BOTH `i18n/en.json` and
   `i18n/es.json`; `start_tray` no longer takes the `system_active` Arc, which stays a caller-side flag feeding
   `setup_callbacks` only. Pinned by `tray::tests::the_tray_offers_no_system_switch`.
+- **S11 — the tray menu is exactly `Mostrar/Ocultar - Ajustes - Cerrar`.** One item whose label follows the window's
+  visibility (`tray.show_window` / `tray.hide_window`), one `Ajustes` entries, and `Quit`; the read-only title stays
+  as the first line. `Ajustes` raises the window first when it is hidden (`Controller::show_window`, the idempotent
+  raise) and then fires the SAME callback the panel's own nav tab fires,
+  `win.invoke_panel_section_selected(PanelSection::System.index())`, so every other section (Save, Borders, Motion,
+  Filters) stays one click away instead of being decided for the user in the tray. The three cyclers are gone from
+  the menu AND from the i18n files; their IPC equivalents (`hve-ipc next-anim|next-border|next-shader`) stay, because
+  they are not a menu a stray click can reach. Pinned by
+  `tray::tests::the_tray_menu_is_only_show_hide_settings_and_quit`.
 
 ## Tasks
 
@@ -71,6 +81,7 @@ Deferred from Lane C (S5 / T5, `odd/tasks/lane-c-health.md`), which holds the re
 | T2 | S8-S9 | inline (fix written 2026-10-14; checks, install and record completed 2026-10-15) | DONE, verified by `opencode/mimo-v2.6-flash-free` (no blockers; 4 advisories) | `fix(tray): stop the ksni 0.3 update from deadlocking the hide path` |
 | T3 | S9 | inline, Tier 1 (test-only; no production behaviour changes) | DONE, self-checked (RED proved against `e9396df`, suite green) | `test(tray): pin where the blocking update is called, not how often` |
 | T4 | S4 (amended), S10 | inline (one understood change: menu + i18n + callers + docs) | DONE, self-checked (RED observed, suite green) | `fix(tray): drop the system switch from the tray menu` |
+| T5 | S4 (amended), S11 | inline (one understood change: menu + i18n + docs) | DONE, self-checked (RED observed, suite green) | `feat(tray): leave only Show/Hide, Settings and Quit in the menu` |
 
 ### T1 evidence
 
@@ -220,6 +231,27 @@ keeper's report that the tray had no menu.
   `cargo clippy --all-targets` still **67 warnings** (the dead field and the unused imports were removed with the
   item, so the count does not grow).
 
+### T5 — the menu the keeper asked for (2026-10-15)
+
+- **RED**: `tray::tests::the_tray_menu_is_only_show_hide_settings_and_quit` failed first, verbatim:
+  `` `Ajustes` must open the panel (the same callback the panel's nav tab fires) ``.
+- **GREEN**: after the rewrite → `test tray::tests::the_tray_menu_is_only_show_hide_settings_and_quit ... ok`
+  (6 tray tests pass).
+- **Shape of the change**: `src/tray.rs` loses the three `StandardItem`s that called
+  `invoke_panel_apply_animation|border|shader` and gains one that fires `invoke_panel_section_selected(4)`
+  (`PanelSection::System.index()`) after raising a hidden window; the Show/Hide item moves up to sit right under the
+  title. `i18n/{en,es}.json` lose `tray.next_animation|next_border|next_shader` and gain `tray.settings`
+  (`Settings` / `Ajustes`). Docs updated in the same commit: `WIKI.md`, `docs/wiki/Tray-and-Automation.md` (and the
+  gitignored `docs/wiki-es/` twin on disk).
+- **Why the callback and not a bespoke open**: `on_panel_section_selected` already owns every rule of opening the
+  panel — enter when closed, switch section when open, tear the Borders draft down when leaving it — so reusing it
+  means the tray cannot drift from the UI. Its own guard also means a second `Ajustes` click is a section switch,
+  not a second entry.
+- **Checks**: `cargo fmt --check` clean; full suite **1791 passed / 0 failed** (1790 + this unit's own pin);
+  `cargo clippy --all-targets` still **67 warnings**.
+- **Live check after install**: the tray menu read over D-Bus lists `Hyprland Visual Editor | Ocultar Ventana |
+  Ajustes | Salir` (see the memory record for the exact command).
+
 ## Log
 
 - **L1 (2026-10-14, the keeper, verbatim)**: `arranca con ksni 2.2`
@@ -263,3 +295,6 @@ keeper's report that the tray had no menu.
   Cerrar` — i.e. the accident that started this: he pressed the tray's system switch while reaching for Hide/Show,
   and that single click rewrote his Hyprland config and took the SUPER+H keybind with it. T4 removes the switch; the
   three-entry menu he asks for afterwards is NOT in this unit (it needs him to say what *Ajustes* opens).
+- **L9 (2026-10-15, the keeper, verbatim)**: `vale si pulsa ajustes que se abra el panel en settings y si quieren
+  otra cosa que naveguen desde ahí` — the answer to what *Ajustes* opens: the panel on its System (settings)
+  section, with every other section reachable by navigating from there. Implemented as T5.

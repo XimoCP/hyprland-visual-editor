@@ -337,13 +337,10 @@ Usando el protocolo **KDE Status Notifier Item** (ksni), HVE muestra un icono pr
 
 1. Título: "Hyprland Visual Editor"
 2. *Separador*
-3. **Next Animation** — cicla animaciones
-4. **Next Border** — cicla bordes
-5. **Next Shader** — cicla shaders
-6. *Separador*
-7. **Show/Hide Window** — muestra/oculta la ventana
-8. *Separador*
-9. **Quit** — cierra HVE
+3. **Show/Hide Window** — muestra/oculta la ventana
+4. **Ajustes** — abre el panel en su sección Sistema (y muestra la ventana si estaba oculta)
+5. *Separador*
+6. **Quit** — cierra HVE
 
 El icono cambia de color: **verde** cuando el sistema está activo, **gris** cuando está inactivo.
 

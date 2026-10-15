@@ -221,83 +221,6 @@ impl ksni::Tray for HveTray {
             .into(),
             // ── Separator ──
             ksni::MenuItem::Separator,
-            // ── Next Animation ──
-            StandardItem {
-                label: self
-                    .tr
-                    .tr_or("tray.next_animation", "Next Animation")
-                    .to_string(),
-                activate: Box::new(|tray: &mut Self| {
-                    let w = tray.window.clone();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(win) = w.upgrade() {
-                            use slint::Model;
-                            let files = win.get_anim_files();
-                            let count = files.row_count();
-                            if count == 0 {
-                                return;
-                            }
-                            let current = win.get_active_anim_index();
-                            let next = crate::ipc::get_next_index(current, count);
-                            if let Some(file) = files.row_data(next as usize) {
-                                win.invoke_panel_apply_animation(next, file);
-                            }
-                        }
-                    });
-                }),
-                ..Default::default()
-            }
-            .into(),
-            // ── Next Border ──
-            StandardItem {
-                label: self.tr.tr_or("tray.next_border", "Next Border").to_string(),
-                activate: Box::new(|tray: &mut Self| {
-                    let w = tray.window.clone();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(win) = w.upgrade() {
-                            use slint::Model;
-                            let files = win.get_border_files();
-                            let count = files.row_count();
-                            if count == 0 {
-                                return;
-                            }
-                            let current = win.get_active_border_index();
-                            let next = crate::ipc::get_next_index(current, count);
-                            if let Some(file) = files.row_data(next as usize) {
-                                win.invoke_panel_apply_border(next, file);
-                            }
-                        }
-                    });
-                }),
-                ..Default::default()
-            }
-            .into(),
-            // ── Next Shader ──
-            StandardItem {
-                label: self.tr.tr_or("tray.next_shader", "Next Shader").to_string(),
-                activate: Box::new(|tray: &mut Self| {
-                    let w = tray.window.clone();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(win) = w.upgrade() {
-                            use slint::Model;
-                            let files = win.get_shader_files();
-                            let count = files.row_count();
-                            if count == 0 {
-                                return;
-                            }
-                            let current = win.get_active_shader_index();
-                            let next = crate::ipc::get_next_index(current, count);
-                            if let Some(file) = files.row_data(next as usize) {
-                                win.invoke_panel_apply_shader(next, file);
-                            }
-                        }
-                    });
-                }),
-                ..Default::default()
-            }
-            .into(),
-            // ── Separator ──
-            ksni::MenuItem::Separator,
             // ── Toggle Window (hide/show) — keeps the window mapped on the special workspace ──
             StandardItem {
                 label: if is_hidden {
@@ -319,6 +242,31 @@ impl ksni::Tray for HveTray {
                         }
                         // Force tray menu refresh so label reflects new visibility
                         crate::tray::refresh_global_menu();
+                    });
+                }),
+                ..Default::default()
+            }
+            .into(),
+            // ── Settings — the panel, on its Settings (System) section ──
+            StandardItem {
+                label: self.tr.tr_or("tray.settings", "Settings").to_string(),
+                activate: Box::new(|tray: &mut Self| {
+                    let w = tray.window.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        let Some(win) = w.upgrade() else { return };
+                        // Raise the window first when it is hidden: the panel
+                        // must not open onto a hidden window. `show_window` is
+                        // the idempotent raise (it never hides a visible one).
+                        if let Some(mut ctrl) = crate::composer::try_global_controller() {
+                            if ctrl.window_hidden() {
+                                ctrl.show_window(&win);
+                            }
+                        }
+                        // The SAME callback the panel's own nav tab fires, so
+                        // every other section stays one click away from here.
+                        win.invoke_panel_section_selected(
+                            crate::shell::nav::PanelSection::System.index() as i32,
+                        );
                     });
                 }),
                 ..Default::default()
@@ -451,6 +399,69 @@ mod tests {
             assert!(
                 !json.contains("\"toggle_system\""),
                 "the {lang} labels must not keep a tray system switch any more"
+            );
+        }
+    }
+
+    /// The tray is `Mostrar/Ocultar - Ajustes - Cerrar` and nothing else
+    /// (2026-10-15, the keeper's `Luego vamos ha hacer un ajuste y que el try
+    /// solo tenga Mostrar/Ocultar - Ajustes - Cerrar`).
+    ///
+    /// The three entries the keeper dropped (`Toggle System`, and the three
+    /// "next preset" cyclers) were all one-way doors from a menu he opens to
+    /// hide the window: the system switch rewrites his Hyprland config and the
+    /// cyclers change what his desktop renders, both with no view of what they
+    /// did. `Ajustes` opens the panel on the System section instead — the same
+    /// callback the panel's own nav tab fires — so every other section stays
+    /// one keystroke away, visible and reversible.
+    #[test]
+    fn the_tray_menu_is_only_show_hide_settings_and_quit() {
+        let src = std::fs::read_to_string("src/tray.rs").expect("src/tray.rs must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let code = code.split("#[cfg(test)]").next().unwrap_or(&code);
+        assert!(
+            code.contains("invoke_panel_section_selected("),
+            "`Ajustes` must open the panel (the same callback the panel's nav tab fires)"
+        );
+        for gone in [
+            "invoke_toggle_system",
+            "invoke_panel_apply_animation",
+            "invoke_panel_apply_border",
+            "invoke_panel_apply_shader",
+        ] {
+            assert!(
+                !code.contains(gone),
+                "the tray must not carry `{gone}` any more: it is not one of \
+                 Mostrar/Ocultar - Ajustes - Cerrar"
+            );
+        }
+        for (lang, json) in [
+            ("en", include_str!("../i18n/en.json")),
+            ("es", include_str!("../i18n/es.json")),
+        ] {
+            let tray = json
+                .split("\"tray\"")
+                .nth(1)
+                .expect("both i18n files must keep a `tray` block");
+            let tray = tray.split('}').next().unwrap_or(tray);
+            for gone in [
+                "toggle_system",
+                "next_animation",
+                "next_border",
+                "next_shader",
+            ] {
+                assert!(
+                    !tray.contains(gone),
+                    "the {lang} tray block must not keep `{gone}`: the entry it labelled is gone"
+                );
+            }
+            assert!(
+                tray.contains("\"settings\""),
+                "the {lang} tray block must label the new `Ajustes` entry"
             );
         }
     }

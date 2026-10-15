@@ -400,11 +400,9 @@
     }
   },
   "tray": {
-    "next_animation": "Siguiente Animación",
-    "next_border": "Siguiente Borde",
-    "next_shader": "Siguiente Shader",
     "show_window": "Mostrar Ventana",
     "hide_window": "Ocultar Ventana",
+    "settings": "Ajustes",
     "quit": "Salir"
   },
   "settings": {
