@@ -211,3 +211,16 @@ file. Lesson: a render test that fabricates the very string it is supposed to ve
   from the card's bottom (`trust_card_span`), and the two "the buttons must NOT move" assertions are replaced by what
   the new design must actually satisfy (the notice stays inside the card, the card stays within its bound and
   band-free).
+- **L7 (2026-10-15, the parent, install record — autonomous session, keeper away)**: release build installed with
+  `mv` (rename, never `cp`, so a running HVE cannot hold `ETXTBSY`): `~/.local/bin/hve` md5
+  **f66f026f7df208ee4addaffbd3666ae4**, replacing **9d1df9faa0f8342fdc61055e523e4dc3**, kept as the return point at
+  `target/backup/hve-pre-trust-neutral-9d1df9faa0f8342fdc61055e523e4dc3`. Startup proved live, not assumed: the new
+  binary launched detached and its log reached `[HVE IPC] Listening`, `[startup] mapped once`, `fullscreen ok=true`,
+  `[countdown] Focus gained confirmed Entering->Visible` and `[HVE] Config reloaded` — the same sequence as the old
+  one, and `/tmp/opencode/hve-launch-neutral-20261015-060556.log` holds no warning, error or panic. Both launches'
+  `status` over `/run/user/1000/hve.sock` answered `error: timeout waiting for event loop`, and the A/B against the
+  PREVIOUS binary (`/tmp/opencode/hve-old-ab-061053.log`) reproduced it identically, so it is an artifact of launching
+  HVE detached from the terminal — where its window never keeps focus and the startup chain never hands the event loop
+  over — NOT a regression from this change. Both test instances were stopped and no HVE is left running; every
+  `init.sh` step logged `already applied — skip rewrite+reload` (keybinds, autostart, windowrules), so the
+  compositor's own config was not rewritten by the tests.
