@@ -11,6 +11,7 @@ import { GalleryCardData } from "gallery/ThemeCardDelegate.slint";
 import { ThemeInfoData } from "gallery/ThemeInfoPanel.slint";
 import { SliceTileData } from "gallery/SliceCarousel.slint";
 import { MosaicTileData } from "gallery/MosaicView.slint";
+import { GalleryText } from "gallery/gallery_text.slint";
 
 // Re-export SkwdTokens so Rust can access it via crate::SkwdTokens.
 export { SkwdTokens }
@@ -33,6 +34,9 @@ export { FiltersText }
 // activation card, row labels and About defaults): same channel, filled by
 // `panel_i18n::apply_system`.
 export { SystemText }
+// Gallery leftovers (theme info panel's `Saved ` prefix): same channel, filled
+// by `panel_i18n::apply_gallery`.
+export { GalleryText }
 
 
 // ─── MAIN WINDOW ────────────────────────────────────────────────────

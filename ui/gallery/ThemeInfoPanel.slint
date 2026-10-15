@@ -18,6 +18,7 @@
 
 import { SkwdTokens } from "../tokens.slint";
 import { HveColors } from "../theme.slint";
+import { GalleryText } from "gallery_text.slint";
 
 export struct ThemeInfoRow {
     label: string,
@@ -160,7 +161,7 @@ export component ThemeInfoPanel inherits Rectangle {
                 }
 
                 if root.info.saved-at != "" : Text {
-                    text: "Saved " + root.info.saved-at;
+                    text: GalleryText.saved-prefix + root.info.saved-at;
                     color: HveColors.text-muted;
                     font-family: SkwdTokens.font-body;
                     font-size: SkwdTokens.size-13;

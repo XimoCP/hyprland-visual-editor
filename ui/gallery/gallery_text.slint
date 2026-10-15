@@ -1,0 +1,20 @@
+// HVE — Gallery text.
+//
+// Declared in its own file (no components) so the compiler exposes it to Rust
+// as `crate::GalleryText`, the way `SaveText` (save_text.slint), `BordersText`
+// (borders_text.slint), `MotionText` (motion_text.slint) and `PanelText`
+// (panel_text.slint) are exposed.
+//
+// The theme info panel's `Saved ` prefix was hardcoded English in
+// `ThemeInfoPanel.slint`, so it never reached the translation table and a
+// Spanish gallery painted "Saved <date>" over the theme's own face. Rust fills
+// it from the embedded i18n map through `panel_i18n::apply_gallery`; the
+// default below is today's English copy byte for byte, so a run that never
+// calls the i18n pass reads exactly as it always did.
+//
+// The empty-gallery sentence is NOT here: it rides a window property
+// (`gallery-empty-text`), which `main()` fills from `tr` directly, keeping the
+// slot's own `empty_message()` as the single source of the English copy.
+export global GalleryText {
+    in-out property <string> saved-prefix: "Saved ";
+}

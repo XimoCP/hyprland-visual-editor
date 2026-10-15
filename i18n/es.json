@@ -568,6 +568,7 @@
     "save_button": "Guardar",
     "search_placeholder": "Buscar temas...",
     "empty": "Todavía no hay temas. Guardá tu configuración actual como un tema.",
+    "saved_prefix": "Guardado ",
     "apply": "Aplicar",
     "refresh": "Recargar",
     "rename": "Renombrar",

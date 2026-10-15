@@ -1997,6 +1997,32 @@ fn theme_info_panel_renders_closed_and_open() {
         "the info face must stay inside the theme: {big_outside} of {sampled_outside} \
          outside samples changed"
     );
+
+    // ── S4: the `Saved ` prefix must follow the language ─────────────────
+    // Same window, same data, only the language changes. English paints
+    // today's copy; Spanish must paint DIFFERENT pixels (a key missing from
+    // es.json falls back to English through `tr_shared` and would leave this
+    // byte-identical, which is exactly the defect this slice fixes); and
+    // restoring English must come back to the frame above byte for byte, so
+    // the pass leaves no residue behind.
+    crate::panel_i18n::apply_gallery(&win, &crate::tr::Tr::with_lang("es"));
+    let es = win.window().take_snapshot().expect("spanish snapshot");
+    save_slice_png(es.clone(), "theme_info_open_es.png");
+    assert!(
+        es.as_bytes() != open.as_bytes(),
+        "[es] the info panel painted the same pixels as English: the `Saved ` \
+         prefix never reached the GalleryText global, so a Spanish gallery still \
+         reads \"Saved <date>\""
+    );
+
+    crate::panel_i18n::apply_gallery(&win, &crate::tr::Tr::with_lang("en"));
+    let back = win.window().take_snapshot().expect("english restore snapshot");
+    save_slice_png(back.clone(), "theme_info_open_en_restored.png");
+    assert_eq!(
+        back.as_bytes(),
+        open.as_bytes(),
+        "restoring English must reproduce the earlier frame byte for byte"
+    );
 }
 
 // ── Theme info face: identity (it belongs to ONE card) ─────────────────
@@ -19930,6 +19956,268 @@ fn motion_chrome_labels_follow_the_language() {
 
     crate::panel_i18n::apply_motion(&win, &crate::tr::Tr::with_lang("en"));
     assert_lang("en");
+}
+
+// ── Gallery leftovers (S4) through the translation table ────────────────
+// Two literals the theme screen still paints in English: the `Saved ` prefix
+// of the theme info panel and the empty-gallery sentence. Both travel the
+// channel the panel copy already uses: i18n map → pass → text global / window
+// property. The back-face `VIEW  RETAG  DELETE  STEAM` row is deliberately NOT
+// in these tables: it sits behind `is-flipped`, which no Slint parent and no
+// Rust call ever sets, so no user reaches it.
+
+/// (i18n key, English) for every string this slice wires. The English column
+/// is today's copy — the same string the `.slint` global (or the setter it
+/// replaced) shows right now.
+#[rustfmt::skip]
+fn gallery_i18n_rows() -> [(&'static str, &'static str); 2] {
+    [
+        ("themes.saved_prefix", "Saved "),
+        ("themes.empty", "No themes yet. Save your current setup as a theme."),
+    ]
+}
+
+/// The i18n map itself: every key resolves to EXACTLY today's English, and no
+/// Spanish row is missing or a copy of its English one (an equal Spanish
+/// column is what a missing key looks like after `tr_shared` falls back).
+#[test]
+fn every_gallery_string_resolves_in_english_and_translates_to_spanish() {
+    let en = crate::tr::Tr::with_lang("en");
+    let es = crate::tr::Tr::with_lang("es");
+
+    let wrong_en: Vec<String> = gallery_i18n_rows()
+        .iter()
+        .filter_map(|(key, want)| {
+            let got = en.tr(key);
+            (got != Some(*want)).then(|| format!("{key}: want {want:?}, got {got:?}"))
+        })
+        .collect();
+    assert!(
+        wrong_en.is_empty(),
+        "the English i18n map does not carry today's copy: {wrong_en:#?}"
+    );
+
+    let not_spanish: Vec<String> = gallery_i18n_rows()
+        .iter()
+        .filter_map(|(key, want)| match es.tr(key) {
+            None => Some(format!("{key}: missing from es.json")),
+            Some(got) if got == *want => Some(format!("{key}: still English {got:?}")),
+            Some(_) => None,
+        })
+        .collect();
+    assert!(
+        not_spanish.is_empty(),
+        "[es] these strings would read English on a Spanish gallery: {not_spanish:#?}"
+    );
+}
+
+/// The English defaults declared INSIDE the new `.slint` global, and the two
+/// window properties the empty sentence rides on, must be byte-identical to
+/// the copy they replaced: the map can be perfectly right while a `.slint`
+/// fallback silently drifts, and a startup that skips the i18n pass paints the
+/// `.slint` copy.
+#[test]
+fn the_gallery_text_defaults_are_todays_english() {
+    const MAIN_SLINT: &str = include_str!("../../ui/main.slint");
+    const SHELL: &str = include_str!("../../ui/shell.slint");
+
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/ui/gallery");
+    let global = std::fs::read_to_string(format!("{dir}/gallery_text.slint"))
+        .unwrap_or_else(|e| panic!("gallery_text.slint must exist for the gallery i18n slice: {e}"));
+    assert!(
+        global.contains(r#"saved-prefix: "Saved ";"#),
+        "gallery_text.slint must declare saved-prefix: \"Saved \"; byte for byte (today's copy)"
+    );
+
+    let empty = r#"gallery-empty-text: "No themes yet. Save your current setup as a theme.";"#;
+    for (name, src) in [("ui/main.slint", MAIN_SLINT), ("ui/shell.slint", SHELL)] {
+        assert!(
+            src.contains(empty),
+            "{name} must keep today's English gallery-empty-text default byte for byte"
+        );
+    }
+}
+
+/// The info panel must READ the global. Hardcoding the prefix back
+/// (`text: "Saved " + …`) leaves every assertion above green and the panel
+/// goes on painting English on a Spanish gallery.
+#[test]
+fn the_theme_info_panel_reads_the_saved_prefix_from_its_text_global() {
+    const INFO: &str = include_str!("../../ui/gallery/ThemeInfoPanel.slint");
+
+    assert!(
+        INFO.contains("GalleryText.saved-prefix"),
+        "ThemeInfoPanel must read GalleryText.saved-prefix instead of a literal"
+    );
+
+    // Comments may quote today's copy, so only real code lines count.
+    let hardcoded = INFO
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .any(|l| l.contains("\"Saved \""));
+    assert!(
+        !hardcoded,
+        "ThemeInfoPanel still hardcodes \"Saved \" in a code line"
+    );
+}
+
+/// The empty-gallery sentence must reach the window through the translation
+/// table, keeping the slot's own English as the fallback — never a bare
+/// literal, and never a second copy of that English, which could drift away
+/// from `GallerySlot::empty_message()`.
+#[test]
+fn the_gallery_empty_message_goes_through_the_translation_table() {
+    const MAIN: &str = include_str!("../main.rs");
+
+    let hits: Vec<&str> = MAIN
+        .lines()
+        .filter(|l| l.contains("set_gallery_empty_text"))
+        .collect();
+    assert_eq!(
+        hits.len(),
+        1,
+        "set_gallery_empty_text must appear exactly once in src/main.rs, got {hits:?}"
+    );
+    let line = hits[0];
+    assert!(
+        line.contains("tr.tr_shared("),
+        "set_gallery_empty_text must go through tr.tr_shared instead of a bare literal: {line:?}"
+    );
+    assert!(
+        line.contains("gallery_slot.empty_message()"),
+        "the English fallback must stay the slot's own copy: {line:?}"
+    );
+}
+
+/// The window property must reach the element that PAINTS it. `GalleryRoot`
+/// declares `empty-text` (shell.slint feeds it from the window) but it is its
+/// `GalleryChrome` instantiation that decides what the banner says: an
+/// unforwarded `in` property silently keeps the component's own default, so
+/// both the setter above and the i18n map become no-ops while every assertion
+/// about them stays green — and the banner never appears at all, because
+/// `empty` is forwarded through the very same missing line.
+#[test]
+fn the_gallery_root_forwards_the_empty_banner_to_the_chrome() {
+    const ROOT: &str = include_str!("../../ui/gallery/GalleryRoot.slint");
+    const CHROME: &str = include_str!("../../ui/gallery/GalleryChrome.slint");
+
+    for forward in ["empty: root.empty;", "empty-text: root.empty-text;"] {
+        assert!(
+            ROOT.contains(forward),
+            "GalleryRoot must forward `{forward}` to its GalleryChrome instantiation, \
+             or the empty-state banner paints the component's own default in every language"
+        );
+    }
+    assert!(
+        CHROME.contains("text: root.empty-text;"),
+        "GalleryChrome must paint root.empty-text, not a literal"
+    );
+}
+
+// ── S4: the empty-state banner must exist AND speak the language ─────────
+// It was unreachable, not merely untranslated: `GalleryRoot` declared `empty`
+// and `empty-text` (shell.slint feeds both from the window) and never
+// forwarded them to the `GalleryChrome` that paints the banner, so
+// `if root.empty` was always false and no user ever saw the sentence in ANY
+// language. These two frames prove the element now paints, that the English
+// copy is unchanged, and that Spanish changes the pixels — the frames are read
+// with vision, because "different pixels" is not the same as "right words".
+#[test]
+fn gallery_empty_banner_renders_in_english_and_spanish() {
+    use slint::{ComponentHandle as _, ModelRc, VecModel};
+    let _ = i_slint_core::platform::set_platform(Box::new(
+        i_slint_backend_testing::TestingBackend::new(testing_backend_options()),
+    ));
+
+    let win = crate::MainWindow::new().unwrap();
+    win.window().set_size(slint::PhysicalSize::new(1920, 1080));
+    win.set_mounted_screen(1); // 1 = Gallery screen
+    win.set_expanded(true);
+    win.set_gallery_style(0);
+    win.set_gallery_reduced_motion(true);
+    win.set_gallery_empty(true);
+    win.set_gallery_focused(0);
+    win.set_gallery_cards(ModelRc::new(VecModel::from(Vec::<crate::GalleryCardData>::new())));
+    win.set_gallery_slice_tiles(ModelRc::new(VecModel::from(Vec::<crate::SliceTileData>::new())));
+
+    // English first: the property must still hold today's copy before any
+    // translation reaches it, so the default is painted, not the map.
+    win.set_gallery_empty_text(slint::SharedString::from(
+        "No themes yet. Save your current setup as a theme.",
+    ));
+    let en = win.window().take_snapshot().expect("english snapshot");
+    save_slice_png(en.clone(), "gallery_empty_en.png");
+
+    // Spanish through the SAME entry point `main()` uses (`tr_shared` with the
+    // slot's English as the fallback), so this renders the production path.
+    win.set_gallery_empty_text(
+        crate::tr::Tr::with_lang("es").tr_shared(
+            "themes.empty",
+            "No themes yet. Save your current setup as a theme.",
+        ),
+    );
+    let es = win.window().take_snapshot().expect("spanish snapshot");
+    save_slice_png(es.clone(), "gallery_empty_es.png");
+
+    assert!(
+        es.as_bytes() != en.as_bytes(),
+        "[es] the empty banner painted the same pixels as English: the translated \
+         sentence never reached the chrome"
+    );
+
+    win.set_gallery_empty_text(slint::SharedString::from(
+        "No themes yet. Save your current setup as a theme.",
+    ));
+    let back = win.window().take_snapshot().expect("english restore snapshot");
+    save_slice_png(back.clone(), "gallery_empty_en_restored.png");
+    assert_eq!(
+        back.as_bytes(),
+        en.as_bytes(),
+        "restoring English must reproduce the earlier frame byte for byte"
+    );
+}
+
+/// The pass must be WIRED, not merely available: `main()` has to call it, or
+/// the global keeps its Slint default on every language (the B7 lesson).
+#[test]
+fn main_applies_the_gallery_i18n() {
+    const MAIN: &str = include_str!("../main.rs");
+
+    let call = "panel_i18n::apply_gallery(&window, &tr);";
+    let hits = MAIN.matches(call).count();
+    assert_eq!(hits, 1, "main must call {call} exactly once, got {hits}");
+}
+
+/// English reads the Slint default (today's copy, no pass needed), Spanish
+/// reads the translation through the REAL production function, and the round
+/// trip back to English restores the string byte for byte.
+#[test]
+fn gallery_saved_prefix_follows_the_language() {
+    use slint::Global as _;
+    init_test_platform();
+    let win = crate::MainWindow::new().unwrap();
+
+    let read = || crate::GalleryText::get(&win).get_saved_prefix().to_string();
+
+    assert_eq!(
+        read(),
+        "Saved ",
+        "the English default must be today's copy before any pass runs"
+    );
+
+    crate::panel_i18n::apply_gallery(&win, &crate::tr::Tr::with_lang("es"));
+    let es = read();
+    assert_ne!(
+        es, "Saved ",
+        "[es] the theme info panel would still read English: {es:?}"
+    );
+
+    crate::panel_i18n::apply_gallery(&win, &crate::tr::Tr::with_lang("en"));
+    assert_eq!(
+        read(),
+        "Saved ",
+        "the round trip back to English must restore the copy byte for byte"
+    );
 }
 
 // ── Theme apply must sync BOTH surfaces (divergence defect) ──────────

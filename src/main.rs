@@ -3652,6 +3652,9 @@ fn main() -> Result<(), slint::PlatformError> {
     // System / About section copy (header, restart row, activation card,
     // row-label and About defaults): same channel, same map.
     panel_i18n::apply_system(&window, &tr);
+    // Gallery leftovers: the theme info panel's `Saved ` prefix, which no
+    // panel pass ever reached because the gallery is not a section.
+    panel_i18n::apply_gallery(&window, &tr);
 
     // ── Load initial state ──
     window.set_system_active(cfg.is_system_active);
@@ -4619,7 +4622,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             });
         }
-        window.set_gallery_empty_text(SharedString::from(gallery_slot.empty_message()));
+        // The English of this sentence has exactly one source — the slot's
+        // own copy — so the map and it cannot drift; `tr` only decides which
+        // language the gallery paints it in.
+        window.set_gallery_empty_text(tr.tr_shared("themes.empty", gallery_slot.empty_message()));
         window.set_gallery_mit_footer(SharedString::from(gallery_slot.mit_footer()));
         window.set_gallery_mit_link(SharedString::from(
             crate::shell::gallery::model::MIT_FOOTER_LINK,

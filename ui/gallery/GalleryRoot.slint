@@ -570,6 +570,12 @@ export component GalleryRoot inherits Rectangle {
         width: 100%;
         height: 100%;
         reduced-motion: root.reduced-motion;
+        // S18 empty state: both travel from the window through THIS component
+        // (shell.slint feeds `gallery-empty` / `gallery-empty-text`), so the
+        // chrome has to receive them — an unforwarded `in` property keeps its
+        // own default and the banner never paints the translated copy.
+        empty: root.empty;
+        empty-text: root.empty-text;
         mit-link: root.mit-link;
         mit-opened => { root.mit-opened(); }
     }

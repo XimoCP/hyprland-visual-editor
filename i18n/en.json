@@ -568,6 +568,7 @@
     "save_button": "Save",
     "search_placeholder": "Search themes...",
     "empty": "No themes yet. Save your current setup as a theme.",
+    "saved_prefix": "Saved ",
     "apply": "Apply",
     "refresh": "Refresh",
     "rename": "Rename",

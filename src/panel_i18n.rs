@@ -354,3 +354,23 @@ pub fn apply_panel_chrome(window: &MainWindow, tr: &Tr) {
     ));
     t.set_back_to_gallery(tr.tr_shared("panel.back_to_gallery", "Back to Gallery"));
 }
+
+/// Fill every `GalleryText` string from `tr` for the selected language.
+///
+/// The gallery is not a panel section, but it needs exactly the same channel
+/// for exactly the same reason: the theme info panel's `Saved ` prefix was
+/// hardcoded English in `ThemeInfoPanel.slint`, so a Spanish gallery painted
+/// "Saved <date>" over the theme's own face. One string does not justify
+/// threading a window property through MainWindow → ShellRoot → GalleryRoot →
+/// SliceDelegate → ThemeInfoPanel, so it lives in the exported `GalleryText`
+/// global and this pass fills it. English is the fallback, exactly as
+/// `apply_borders` does.
+///
+/// The empty-gallery sentence is NOT here: `main()` feeds it to the
+/// `gallery-empty-text` window property from `tr` directly, keeping
+/// `GallerySlot::empty_message()` as the single source of the English copy.
+pub fn apply_gallery(window: &MainWindow, tr: &Tr) {
+    let t = crate::GalleryText::get(window);
+
+    t.set_saved_prefix(tr.tr_shared("themes.saved_prefix", "Saved "));
+}
