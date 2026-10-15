@@ -39,7 +39,7 @@ That block is what a **fresh** file looks like — the defaults from `Config::de
 | Field | Type | Default | What it does |
 |-------|------|---------|--------------|
 | `config_version` | number | `8` | Schema version. Migrated forward on load (see below). |
-| `is_system_active` | bool | `false` | Whether HVE's management is on. Toggled by the tray's *Toggle System* and by `hve-ipc pause-restart`. |
+| `is_system_active` | bool | `false` | Whether HVE's management is on. Toggled from the window and by `hve-ipc pause-restart`; deliberately NOT offered in the tray menu, where a stray click could turn HVE off. |
 | `border_size` | number | `2` | Window border width, applied through the geometry fragment. |
 | `border_radius` | number | `32` | Corner radius in pixels (`decoration.rounding`). Always written, including `0` (square corners); omitting it at 0 would let the next reload fall back to the base config's rounding. |
 | `gaps_in` | number | `5` | Inner gaps, written as `general.gaps_in`. |

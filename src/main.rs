@@ -5079,30 +5079,16 @@ fn main() -> Result<(), slint::PlatformError> {
     )));
 
     // ── Dynamic theme + logo + tray icon ──
-    // The "Toggle System" flag is shared with the tray's own menu item, so the
-    // caller owns it: it is passed to `setup_callbacks` below whether or not a
-    // tray could be created.
+    // The "Toggle System" flag is owned by the caller and lives only in the
+    // window: the tray deliberately has no switch for it (one accidental click
+    // there turns HVE off and rewrites the keeper's Hyprland config).
     let tray_system_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let tray_handle = match refresh_visual_state(&window, &engine, &cfg.theme) {
         Some((icon, primary)) => {
             tracing::info!("Theme loaded: {} (pref={})", primary, cfg.theme);
-            tray::start_tray(
-                window.as_weak(),
-                tr.clone(),
-                icon,
-                48,
-                48,
-                tray_system_active.clone(),
-            )
+            tray::start_tray(window.as_weak(), tr.clone(), icon, 48, 48)
         }
-        None => tray::start_tray(
-            window.as_weak(),
-            tr.clone(),
-            Vec::new(),
-            48,
-            48,
-            tray_system_active.clone(),
-        ),
+        None => tray::start_tray(window.as_weak(), tr.clone(), Vec::new(), 48, 48),
     };
     // `None` = the notification area is unreachable; `start_tray` already
     // warned, and every `tray::*` call below is a no-op while nothing is

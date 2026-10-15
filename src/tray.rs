@@ -1,6 +1,5 @@
 use ksni::blocking::TrayMethods;
 use slint::ComponentHandle;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::tr::Tr;
@@ -94,9 +93,12 @@ pub fn refresh_global_menu() {
 /// Start the system tray icon in a background thread.
 ///
 /// `icon_rgba` is the raw RGBA pixel data rendered from the SVG template,
-/// at the given `icon_w × icon_h` resolution. `system_active` is the shared
-/// "Toggle System" state, owned by the caller because the callers need it
-/// whether or not a tray exists.
+/// at the given `icon_w × icon_h` resolution.
+///
+/// The tray deliberately does NOT carry the system switch: one accidental
+/// click on it turns HVE off, and switching off rewrites
+/// `~/.config/hypr/hyprland.lua` (taking the SUPER+H keybind with it). That
+/// switch lives in the window, where its consequences are visible.
 ///
 /// Returns `None` when the tray cannot be created (no D-Bus session bus, no
 /// usable connection). The caller keeps running WITHOUT a tray and only gets a
@@ -110,14 +112,12 @@ pub fn start_tray(
     icon_rgba: Vec<u8>,
     icon_w: u32,
     icon_h: u32,
-    system_active: Arc<AtomicBool>,
 ) -> Option<TrayHandle> {
     // Convert RGBA → BGRA (ksni expects Cairo ARGB32 = BGRA in LE)
     let icon_bgra = rgba_to_bgra(&icon_rgba);
 
     let tray = HveTray {
         window,
-        system_active,
         tr,
         icon_bgra,
         icon_w,
@@ -171,7 +171,6 @@ pub fn start_tray(
 
 struct HveTray {
     window: slint::Weak<crate::MainWindow>,
-    system_active: Arc<AtomicBool>,
     tr: Arc<Tr>,
     icon_bgra: Vec<u8>,
     icon_w: u32,
@@ -222,24 +221,6 @@ impl ksni::Tray for HveTray {
             .into(),
             // ── Separator ──
             ksni::MenuItem::Separator,
-            // ── Toggle System ──
-            StandardItem {
-                label: self
-                    .tr
-                    .tr_or("tray.toggle_system", "Toggle System")
-                    .to_string(),
-                activate: Box::new(|tray: &mut Self| {
-                    let w = tray.window.clone();
-                    let next_active = !tray.system_active.load(Ordering::Relaxed);
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(win) = w.upgrade() {
-                            win.invoke_toggle_system(next_active);
-                        }
-                    });
-                }),
-                ..Default::default()
-            }
-            .into(),
             // ── Next Animation ──
             StandardItem {
                 label: self
@@ -440,6 +421,40 @@ mod tests {
         );
     }
 
+    /// The tray must not carry the system switch (2026-10-15).
+    ///
+    /// The keeper hit it by accident while reaching for Hide/Show, and ONE
+    /// click turned HVE's whole management off: that path
+    /// (`AppState::toggle_system(false)`) deletes HVE's block from
+    /// `~/.config/hypr/hyprland.lua` and reloads Hyprland, which takes the
+    /// SUPER+H keybind with it — no confirmation, and nothing in the tray can
+    /// undo it. The switch stays in the window, where it is visible and its
+    /// consequences are on screen; the tray keeps only its immediate actions.
+    #[test]
+    fn the_tray_offers_no_system_switch() {
+        let src = std::fs::read_to_string("src/tray.rs").expect("src/tray.rs must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let code = code.split("#[cfg(test)]").next().unwrap_or(&code);
+        assert!(
+            !code.contains("invoke_toggle_system"),
+            "the tray menu must not offer the system switch: one accidental click on it turns \
+             HVE off, rewrites ~/.config/hypr/hyprland.lua and kills the SUPER+H keybind"
+        );
+        for (lang, json) in [
+            ("en", include_str!("../i18n/en.json")),
+            ("es", include_str!("../i18n/es.json")),
+        ] {
+            assert!(
+                !json.contains("\"toggle_system\""),
+                "the {lang} labels must not keep a tray system switch any more"
+            );
+        }
+    }
+
     use super::{rgba_to_bgra, start_tray};
     use slint::ComponentHandle;
     use std::sync::Arc;
@@ -480,14 +495,13 @@ mod tests {
         i_slint_backend_testing::init_no_event_loop();
         let win = crate::MainWindow::new().expect("test window");
         let tr = Arc::new(crate::tr::Tr::with_lang("en"));
-        let system_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         // Nothing to connect to: the address points at a socket that does not
         // exist, and the fallback (the runtime dir) is pointed at an empty one.
         let _bus = EnvVarGuard::set("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent-hve-bus");
         let _runtime = EnvVarGuard::set("XDG_RUNTIME_DIR", "/nonexistent-hve-runtime");
 
-        let tray = start_tray(win.as_weak(), tr, Vec::new(), 48, 48, system_active.clone());
+        let tray = start_tray(win.as_weak(), tr, Vec::new(), 48, 48);
 
         assert!(
             tray.is_none(),

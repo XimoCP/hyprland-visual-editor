@@ -27,10 +27,10 @@ Deferred from Lane C (S5 / T5, `odd/tasks/lane-c-health.md`), which holds the re
   running, which HVE does not override) and the service re-registers when the watcher appears. This is required to
   match 0.2: `ksni 0.2.2` subscribes to `NameOwnerChanged` and calls `register_status_notifier_item` when the watcher
   appears (`service.rs:180-217`), while 0.3 WITHOUT the flag returns `Err` immediately and never retries.
-- **S4 — the tray the user sees does not change.** Same 48×48 BGRA icon from the theme, same menu (title, Toggle
-  System, Next Animation/Border/Shader, Hide/Show Window, Quit), same labels from `Tr`, the Hide/Show label still
+- **S4 — the tray the user sees does not change.** Same 48×48 BGRA icon from the theme, same menu (title,
+  Next Animation/Border/Shader, Hide/Show Window, Quit), same labels from `Tr`, the Hide/Show label still
   refreshes, and the IPC paths (`update_global_icon`, `refresh_global_menu`) still reach a live tray. No icon that
-  appears today may stop appearing.
+  appears today may stop appearing. Amended on 2026-10-15 (L8): the menu NO LONGER carries a system switch — see S10.
 - **S5 — one owner for `system_active`.** `main.rs` creates the `Arc<AtomicBool>`, passes it into `start_tray`, and
   passes the SAME Arc to `setup_callbacks` no matter what the tray did. The tray no longer hands one back.
 - **S6 — checks.** A permanent deterministic test proves the no-tray path returns `None` and does not panic without a
@@ -55,6 +55,13 @@ Deferred from Lane C (S5 / T5, `odd/tasks/lane-c-health.md`), which holds the re
   tray thread runs — everything before its `vec!`, since the item closures are deferred to the UI thread through
   `slint::invoke_from_event_loop` — waits for the controller lock. The test scans the PRODUCTION body only (it names
   the forbidden thing itself, exactly like `architecture_contract` and `checks_build` do).
+- **S10 — the tray offers no switch that turns HVE off.** The keeper kept the system toggle in the window and
+  removed it from the tray: pressing it by accident while reaching for Hide/Show ran
+  `AppState::toggle_system(false)`, which rewrites `~/.config/hypr/hyprland.lua` (deleting HVE's block, and with it
+  the SUPER+H keybind) with no confirmation and no way back from the tray. The menu therefore has no
+  `invoke_toggle_system` item, and the `tray.toggle_system` label is gone from BOTH `i18n/en.json` and
+  `i18n/es.json`; `start_tray` no longer takes the `system_active` Arc, which stays a caller-side flag feeding
+  `setup_callbacks` only. Pinned by `tray::tests::the_tray_offers_no_system_switch`.
 
 ## Tasks
 
@@ -63,6 +70,7 @@ Deferred from Lane C (S5 / T5, `odd/tasks/lane-c-health.md`), which holds the re
 | T1 | S1-S7 | inline (parent writes; high risk → independent verifier after) | DONE, verified by `opencode-go/mimo-v2.6-flash` (no blockers) | `deps(tray): bump ksni 0.2 -> 0.3 and survive a missing tray` |
 | T2 | S8-S9 | inline (fix written 2026-10-14; checks, install and record completed 2026-10-15) | DONE, verified by `opencode/mimo-v2.6-flash-free` (no blockers; 4 advisories) | `fix(tray): stop the ksni 0.3 update from deadlocking the hide path` |
 | T3 | S9 | inline, Tier 1 (test-only; no production behaviour changes) | DONE, self-checked (RED proved against `e9396df`, suite green) | `test(tray): pin where the blocking update is called, not how often` |
+| T4 | S4 (amended), S10 | inline (one understood change: menu + i18n + callers + docs) | DONE, self-checked (RED observed, suite green) | `fix(tray): drop the system switch from the tray menu` |
 
 ### T1 evidence
 
@@ -193,6 +201,25 @@ keeper's report that the tray had no menu.
   body the old file already had exactly two `.update(` sites, so the count assertion passed while the shape was
   wrong. T3 is the direct answer to that.
 
+### T4 — the tray loses the system switch (2026-10-15)
+
+- **RED**: `tray::tests::the_tray_offers_no_system_switch` failed first, verbatim:
+  `the tray menu must not offer the system switch: one accidental click on it turns HVE off, rewrites
+  ~/.config/hypr/hyprland.lua and kills the SUPER+H keybind`.
+- **GREEN**: after removing the item and the i18n key → `test tray::tests::the_tray_offers_no_system_switch ... ok`
+  (5 tray tests pass).
+- **Shape of the change**: `src/tray.rs` loses the `StandardItem` whose `activate` called `invoke_toggle_system`,
+  the `system_active` field of `HveTray`, the `system_active` parameter of `start_tray` and the now-dead
+  `AtomicBool`/`Ordering` imports; `i18n/{en,es}.json` lose `tray.toggle_system`; `src/main.rs` passes the smaller
+  `start_tray(...)` and keeps the Arc for `setup_callbacks` only. Docs updated in the same commit: `WIKI.md`,
+  `docs/wiki/Tray-and-Automation.md`, `docs/wiki-es/Tray-and-Automation.md`, and the `is_system_active` rows of
+  `docs/wiki/Configuration.md` / `docs/wiki-es/Configuration.md` (which named the tray as the way to toggle it).
+- **Why not just hide the key**: the label is looked up by key with an English fallback, so leaving
+  `tray.toggle_system` in the JSON would keep a translatable string for an action the tray no longer offers.
+- **Checks**: `cargo fmt` clean; full suite **1790 passed / 0 failed** (1789 + this unit's own pin);
+  `cargo clippy --all-targets` still **67 warnings** (the dead field and the unused imports were removed with the
+  item, so the count does not grow).
+
 ## Log
 
 - **L1 (2026-10-14, the keeper, verbatim)**: `arranca con ksni 2.2`
@@ -231,3 +258,8 @@ keeper's report that the tray had no menu.
   the three shape assertions failed, which is exactly the hole the count left. GREEN after: full suite
   **1789 passed / 0 failed**, `cargo fmt --check` clean. The rest of the advisories were accepted with a reason, not
   silently dropped.
+- **L8 (2026-10-15, the keeper, verbatim)**: `eso me paso por que aprete el boton de menu de try... ese boton no debé
+  de estar ahí lo vamos a quitar. Luego vamos ha hacer un ajuste y que el try solo tenga Mostrar/Ocultar - Ajustes -
+  Cerrar` — i.e. the accident that started this: he pressed the tray's system switch while reaching for Hide/Show,
+  and that single click rewrote his Hyprland config and took the SUPER+H keybind with it. T4 removes the switch; the
+  three-entry menu he asks for afterwards is NOT in this unit (it needs him to say what *Ajustes* opens).

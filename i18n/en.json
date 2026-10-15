@@ -400,7 +400,6 @@
     }
   },
   "tray": {
-    "toggle_system": "Toggle System",
     "next_animation": "Next Animation",
     "next_border": "Next Border",
     "next_shader": "Next Shader",

@@ -400,7 +400,6 @@
     }
   },
   "tray": {
-    "toggle_system": "Alternar Sistema",
     "next_animation": "Siguiente Animación",
     "next_border": "Siguiente Borde",
     "next_shader": "Siguiente Shader",
