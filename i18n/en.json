@@ -589,6 +589,14 @@
     "save_section": "Save Current State",
     "list_section": "My Themes"
   },
+  "bg": {
+    "video_notice": {
+      "title": "⚠️ Animated background not applied",
+      "body": "This theme includes an animated background, but there is no video player available to show it. The theme's poster is shown instead, if the theme includes one. To enable animated backgrounds, {remedy}; how to set it up: {wiki}",
+      "remedy_engine": "install or enable an animated-background engine",
+      "remedy_plugin": "install the noctalia/mpvpaper plugin"
+    }
+  },
   "trust": {
     "title": "This theme carries code",
     "intro": "\"{theme}\" carries the content below. HVE installs it unchanged when the theme is applied — nothing is removed or rewritten.",

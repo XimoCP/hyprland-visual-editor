@@ -5789,9 +5789,15 @@ exit 0
         );
 
         let notified = stub.notified();
+        // The copy is i18n: the toast must carry the ACTIVE language's title,
+        // never a hardcoded one. The per-language strings themselves are pinned
+        // by `bg_info::tests::video_notice_copy_lives_in_i18n_for_both_languages`.
+        let expected_title = crate::tr::Tr::with_lang(&crate::config::Config::active_language())
+            .tr_or_en("bg.video_notice.title");
         assert!(
-            notified.contains("Fondo animado no aplicado"),
-            "the video-backend notice must fire, notify log was:\n{notified}"
+            notified.contains(&expected_title),
+            "the video-backend notice must fire in the active language ({expected_title}), \
+             notify log was:\n{notified}"
         );
         assert!(
             notified.contains(crate::providers::bg_info::VIDEO_BACKEND_WIKI_URL),

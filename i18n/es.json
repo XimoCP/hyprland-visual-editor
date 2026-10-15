@@ -589,6 +589,14 @@
     "save_section": "Guardar Estado Actual",
     "list_section": "Mis Temas"
   },
+  "bg": {
+    "video_notice": {
+      "title": "⚠️ Fondo animado no aplicado",
+      "body": "Este tema incluye un fondo animado, pero no hay un reproductor de vídeo disponible para mostrarlo. Se muestra el póster del tema en su lugar si el tema lo incluye. Para activar los fondos animados, {remedy}; cómo hacerlo: {wiki}",
+      "remedy_engine": "instala o activa un motor de fondos animados",
+      "remedy_plugin": "instala el plugin noctalia/mpvpaper"
+    }
+  },
   "trust": {
     "title": "Este tema trae código",
     "intro": "\"{theme}\" incluye todo lo que aparece abajo. Cuando aplicas el tema, HVE escribe ese contenido en tu configuración tal como viene: no elimina nada ni lo cambia.",

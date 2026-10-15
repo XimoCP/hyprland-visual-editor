@@ -362,19 +362,26 @@ impl VideoBackendNotice {
     /// this file names no engine), while a url or a saved manifest needs the
     /// mpvpaper plugin. Offering the plugin for a bare path would name a
     /// backend that cannot paint it, and is often already enabled.
-    pub fn for_missing_backend(want: VideoWant) -> Self {
+    ///
+    /// The copy is NOT a Rust literal: title, body and both remedies live in
+    /// `i18n/{en,es}.json` under `bg.video_notice`, and `lang` picks which map
+    /// renders it — an English desktop gets English instead of the Spanish this
+    /// function used to hardcode. The body carries two slots, `{remedy}` (the
+    /// kind's own remedy) and `{wiki}` (the constant below, so the notice and
+    /// its tests keep one source for the link).
+    pub fn for_missing_backend(want: VideoWant, lang: &str) -> Self {
+        let tr = crate::tr::Tr::with_lang(lang);
         let remedy = match want {
-            VideoWant::ExactPath => "instala o activa un motor de fondos animados",
-            VideoWant::None | VideoWant::Url => "instala el plugin noctalia/mpvpaper",
+            VideoWant::ExactPath => tr.tr_or_en("bg.video_notice.remedy_engine"),
+            VideoWant::None | VideoWant::Url => tr.tr_or_en("bg.video_notice.remedy_plugin"),
         };
+        let body = tr
+            .tr_or_en("bg.video_notice.body")
+            .replace("{remedy}", &remedy)
+            .replace("{wiki}", VIDEO_BACKEND_WIKI_URL);
         Self {
-            title: "⚠️ Fondo animado no aplicado".to_string(),
-            body: format!(
-                "Este tema incluye un fondo animado, pero no hay un reproductor de vídeo \
-                 disponible para mostrarlo. Se muestra el póster del tema en su lugar si el \
-                 tema lo incluye. Para activar los fondos animados, {}; cómo hacerlo: {}",
-                remedy, VIDEO_BACKEND_WIKI_URL
-            ),
+            title: tr.tr_or_en("bg.video_notice.title"),
+            body,
         }
     }
 }
@@ -394,7 +401,7 @@ impl VideoBackendNotice {
 /// - a SAVED MANIFEST (the old leg) keeps its rule: blocked iff the plugin is
 ///   not enabled;
 /// - a static theme never notifies.
-pub fn video_backend_notice(facts: VideoBackendFacts) -> Option<VideoBackendNotice> {
+pub fn video_backend_notice(facts: VideoBackendFacts, lang: &str) -> Option<VideoBackendNotice> {
     let manifest_blocked = facts.has_manifest && !facts.mpvpaper_enabled;
     let want_blocked = match facts.video_want {
         VideoWant::None => false,
@@ -408,7 +415,10 @@ pub fn video_backend_notice(facts: VideoBackendFacts) -> Option<VideoBackendNoti
         VideoWant::Url => !facts.mpvpaper_enabled || !facts.has_manifest,
     };
     if manifest_blocked || want_blocked {
-        Some(VideoBackendNotice::for_missing_backend(facts.video_want))
+        Some(VideoBackendNotice::for_missing_backend(
+            facts.video_want,
+            lang,
+        ))
     } else {
         None
     }
@@ -699,6 +709,7 @@ mod tests {
                 engine_socket: false,
                 mpvpaper_enabled: false,
             },
+            "es",
         )
         .expect("a packaged video with no backend must raise the notice");
 
@@ -735,6 +746,7 @@ mod tests {
                     engine_socket: true,
                     mpvpaper_enabled: false,
                 },
+                "es",
             ),
             None,
             "an available engine socket must silence an exact-path video"
@@ -747,6 +759,7 @@ mod tests {
                     engine_socket: false,
                     mpvpaper_enabled: true,
                 },
+                "es",
             ),
             None,
             "an enabled plugin with its written url manifest must silence a url video"
@@ -768,6 +781,7 @@ mod tests {
                 engine_socket: false,
                 mpvpaper_enabled: true,
             },
+            "es",
         )
         .expect("the plugin plays no bare path: a packaged video with no socket must notify");
         assert!(
@@ -792,6 +806,7 @@ mod tests {
                     engine_socket: false,
                     mpvpaper_enabled: true,
                 },
+                "es",
             ),
             None,
             "an enabled plugin with a written manifest paints this theme's video: \
@@ -812,6 +827,7 @@ mod tests {
                     engine_socket: false,
                     mpvpaper_enabled: false,
                 },
+                "es",
             )
             .is_some(),
             "a url with the plugin disabled must notify"
@@ -824,6 +840,7 @@ mod tests {
                     engine_socket: true,
                     mpvpaper_enabled: true,
                 },
+                "es",
             )
             .is_some(),
             "the engine cannot paint a url: an enabled plugin with no written manifest must notify"
@@ -837,11 +854,70 @@ mod tests {
     fn video_backend_notice_copy_conditions_the_poster_fallback() {
         let notice = crate::providers::bg_info::VideoBackendNotice::for_missing_backend(
             crate::providers::bg_info::VideoWant::None,
+            "es",
         );
         assert!(
             notice.body.contains("si el tema lo incluye"),
             "the notice must state the poster fallback is conditional, got: {}",
             notice.body
+        );
+    }
+
+    /// The notice copy lives in `i18n/{en,es}.json`, not in Rust: an English
+    /// desktop must get English instead of the Spanish this file used to
+    /// hardcode, and the Spanish column must keep the shipped wording byte
+    /// for byte.
+    #[test]
+    fn video_notice_copy_lives_in_i18n_for_both_languages() {
+        let en = crate::tr::Tr::with_lang("en");
+        let es = crate::tr::Tr::with_lang("es");
+
+        assert_eq!(
+            en.tr_or_en("bg.video_notice.title"),
+            "⚠️ Animated background not applied",
+            "the English title must come from i18n"
+        );
+        assert_eq!(
+            es.tr_or_en("bg.video_notice.title"),
+            "⚠️ Fondo animado no aplicado",
+            "the Spanish title must keep the shipped wording"
+        );
+
+        let en_body = en.tr_or_en("bg.video_notice.body");
+        assert!(
+            en_body.contains("animated background") && en_body.contains("poster"),
+            "the English body must explain the poster fallback, got: {en_body}"
+        );
+        assert!(
+            en_body.contains("{remedy}") && en_body.contains("{wiki}"),
+            "the English body must keep both interpolation slots, got: {en_body}"
+        );
+
+        let es_body = es.tr_or_en("bg.video_notice.body");
+        assert!(
+            es_body.contains("póster") && es_body.contains("{remedy}"),
+            "the Spanish body must keep the shipped poster sentence and its slots, got: {es_body}"
+        );
+
+        assert_eq!(
+            en.tr_or_en("bg.video_notice.remedy_engine"),
+            "install or enable an animated-background engine",
+            "the English engine remedy must come from i18n"
+        );
+        assert_eq!(
+            en.tr_or_en("bg.video_notice.remedy_plugin"),
+            "install the noctalia/mpvpaper plugin",
+            "the English plugin remedy must come from i18n"
+        );
+        assert_eq!(
+            es.tr_or_en("bg.video_notice.remedy_engine"),
+            "instala o activa un motor de fondos animados",
+            "the Spanish engine remedy must keep the shipped wording"
+        );
+        assert_eq!(
+            es.tr_or_en("bg.video_notice.remedy_plugin"),
+            "instala el plugin noctalia/mpvpaper",
+            "the Spanish plugin remedy must keep the shipped wording"
         );
     }
 
@@ -859,6 +935,7 @@ mod tests {
                 engine_socket: false,
                 mpvpaper_enabled: true,
             },
+            "es",
         )
         .expect("an exact path with no engine must notify");
         assert!(
@@ -888,6 +965,7 @@ mod tests {
                 engine_socket: false,
                 mpvpaper_enabled: false,
             },
+            "es",
         )
         .expect("a url with no plugin must notify");
         assert!(
@@ -918,6 +996,7 @@ mod tests {
                     engine_socket: false,
                     mpvpaper_enabled: false,
                 },
+                "es",
             )
             .is_some(),
             "the plugin-disabled manifest leg must keep notifying"
@@ -930,6 +1009,7 @@ mod tests {
                     engine_socket: true,
                     mpvpaper_enabled: false,
                 },
+                "es",
             )
             .is_some(),
             "the engine socket must not silence the manifest leg"
@@ -943,6 +1023,7 @@ mod tests {
                     engine_socket: false,
                     mpvpaper_enabled: true,
                 },
+                "es",
             ),
             None,
             "an enabled plugin needs no notice"
@@ -960,6 +1041,7 @@ mod tests {
                     engine_socket: false,
                     mpvpaper_enabled: false,
                 },
+                "es",
             ),
             None,
             "a static theme must never notify"

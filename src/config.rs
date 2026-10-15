@@ -153,6 +153,20 @@ impl Config {
         config_dir.join("hve").join("config.json")
     }
 
+    /// The language user-facing copy renders in: the saved setting when it
+    /// names one, otherwise the system locale. Mirrors how `main` picks the
+    /// translation at startup, so copy raised outside the window (a desktop
+    /// notification) follows the language the keeper actually chose instead of
+    /// a hardcoded one.
+    pub fn active_language() -> String {
+        let cfg = Self::load();
+        if cfg.language.is_empty() {
+            crate::tr::detect_language()
+        } else {
+            cfg.language
+        }
+    }
+
     /// Load config from disk, falling back to defaults if anything goes wrong.
     ///
     /// Warnings are printed to stderr so the user knows their config was ignored

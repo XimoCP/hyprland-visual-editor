@@ -270,7 +270,8 @@ fn notify_missing_video_backend(
         engine_socket: engine_socket_available(),
         mpvpaper_enabled: crate::providers::mpvpaper::mpvpaper_enabled(),
     };
-    if let Some(notice) = bg_info::video_backend_notice(facts) {
+    let lang = crate::config::Config::active_language();
+    if let Some(notice) = bg_info::video_backend_notice(facts, &lang) {
         bg_info::notify_video_backend(&notice);
         BackgroundNotification::PluginUnavailable
     } else {
