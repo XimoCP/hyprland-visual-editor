@@ -2572,4 +2572,85 @@ mod tests {
         );
         assert!(!outcome.animated_applied);
     }
+
+    /// W6 probe committed from cross-model verification (glm-5.3-flash,
+    /// obs #1575): the Speak HOOK itself (clause 9) — the writer tests call
+    /// the policy functions directly, never `picker_voice_tick`. The poison:
+    /// mute held (policy off) with NO marker. The open must heal it AND
+    /// release the mute; the close must restore the exact original bytes.
+    #[test]
+    #[serial]
+    fn probe_picker_open_reconstructs_the_lost_marker_and_releases_the_mute() {
+        let _env = crate::test_utils::TempEnv::new();
+        let saved: Vec<(&'static str, Option<String>)> = [
+            (
+                "SKWD_WALL_V2_CONFIG",
+                std::env::var("SKWD_WALL_V2_CONFIG").ok(),
+            ),
+            ("PATH", std::env::var("PATH").ok()),
+        ]
+        .into_iter()
+        .collect();
+        let tmp = tempfile::tempdir().expect("probe sandbox");
+        let config = tmp.path().join("engine-config.json");
+        let original = r#"{"theme":{"policy":"off"}}"#;
+        std::fs::write(&config, original).unwrap();
+        std::env::set_var("SKWD_WALL_V2_CONFIG", &config);
+        // The declared set resolves from the descriptor's palette_file path
+        // ON DISK (wallpaper.txt lives beside it). Keep everything inside
+        // the tempfile root so it is hermetic: the stub serves the SAME
+        // path as the live background, so the Quiet branch reholds.
+        let provider_dir = tmp.path().join("theme/providers/noctalia-v5");
+        std::fs::create_dir_all(&provider_dir).unwrap();
+        let declared = provider_dir.join("palette.json").display().to_string();
+        std::fs::write(provider_dir.join("wallpaper.txt"), &declared).unwrap();
+        install_current_stub(&tmp.path().join("bin"), Some(&[declared.as_str()]));
+        let old_path = saved[1].1.clone().unwrap_or_default();
+        std::env::set_var(
+            "PATH",
+            format!("{}:{}", tmp.path().join("bin").display(), old_path),
+        );
+        crate::color_authority::write_descriptor(&crate::color_authority::ColorAuthority {
+            backend: "noctalia-v5".to_string(),
+            theme: "JoKer".to_string(),
+            palette_file: declared.clone(),
+            palette_name: "JokerTheme".to_string(),
+        })
+        .unwrap();
+        // The poison: mute held (policy off) with NO marker of ours.
+        assert!(!crate::providers::skwd_policy::marker_path().exists());
+
+        picker_voice_tick(Some(true)).expect("the picker-open tick must succeed");
+
+        let spoken = std::fs::read_to_string(&config).unwrap();
+        assert!(
+            spoken.contains("\"policy\":\"wallpaper\""),
+            "the open must release the mute after reconstructing, got: {spoken}"
+        );
+        let marker: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(crate::providers::skwd_policy::marker_path()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(marker["previous_value"], "wallpaper");
+        let log = std::fs::read_to_string(crate::decision_log::log_path()).unwrap_or_default();
+        assert!(
+            log.contains("MUTE RECONSTRUCTED"),
+            "the heal must be visible in the decision log, got: {log}"
+        );
+
+        // And the close takes the silence back: the cycle is whole again.
+        picker_voice_tick(Some(false)).expect("the picker-close tick must succeed");
+        let quiet = std::fs::read_to_string(&config).unwrap();
+        assert_eq!(
+            quiet, original,
+            "the close must restore the exact original bytes"
+        );
+
+        for (k, v) in &saved {
+            match v {
+                Some(val) => std::env::set_var(k, val),
+                None => std::env::remove_var(k),
+            }
+        }
+    }
 }

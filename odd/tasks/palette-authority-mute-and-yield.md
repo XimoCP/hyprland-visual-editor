@@ -692,3 +692,14 @@ Evidence collected while planning (07-08-oct-2026, this machine):
   `futex_wait` forever (disguised as a slow link until `wchan` named the futex). Rule recorded: ONE
   sandbox per test. Verified in parallel (6/6, 0.00s); full suite **1813 passed / 0 failed** (165.14s);
   rustfmt clean.
+- **L5 (16-oct, cross-model verification + committed probes):** independent verifier
+  (`opencode-go/glm-5.3-flash`, obs #1575) verdict on `3ca20c4`: **PASS, no blockers, no advisories** —
+  11/11 spec clauses MET with its own scratch-copy probes (byte-identity on every refusal, the
+  decision-log line read verbatim, the reconstruct→suspend→rehold cycle restoring exact bytes, baseline
+  arithmetic 47 = 40 + 7). Its 13 durable probes are committed as regression pins (`probe_*`: 12 in
+  `skwd_policy.rs` + the clause-9 Speak-HOOK tick probe in `background.rs`, the previously untested
+  hook), suite now **1826 passed / 0 failed**. Verifier gotchas recorded: probes reaching
+  `query_live_backgrounds` must stub `skwd-helm` on PATH (`install_current_stub`) — the real binary's
+  read-only `current --json` flips the close tick into the W2 step-aside branch; probes needing
+  cargo under a redirected HOME must pin `RUSTUP_HOME`/`CARGO_HOME`; and JSON's unicode-escape form
+  of `off` (`\u006ff\u0066`) parses to `"off"` but is correctly refused by the raw-token guard.

@@ -2418,4 +2418,181 @@ mod tests {
             "a foreign value is not our suspension"
         );
     }
+
+    // ── W6 probes committed from cross-model verification (glm-5.3-flash,
+    //    obs #1575): byte-identity on every refusal, the decision-log line,
+    //    and the step-aside release fed by a reconstructed marker. ──────
+
+    fn log_contains(needle: &str) -> bool {
+        crate::decision_log::log_path()
+            .exists()
+            .then(|| {
+                std::fs::read_to_string(crate::decision_log::log_path())
+                    .unwrap_or_default()
+                    .contains(needle)
+            })
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn probe_refusal_existing_marker_leaves_config_byte_identical() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        yield_color_authority().unwrap();
+        env.write_authority();
+        let before = env.read();
+        let marker_before = fs::read_to_string(env.marker()).unwrap();
+        assert!(!reconstruct_missing_yield_marker().unwrap());
+        assert_eq!(env.read(), before, "config bytes must be identical");
+        assert_eq!(
+            fs::read_to_string(env.marker()).unwrap(),
+            marker_before,
+            "the real marker must stay untouched"
+        );
+    }
+
+    #[test]
+    fn probe_refusal_no_descriptor_leaves_config_byte_identical() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        yield_color_authority().unwrap(); // flips to off, no descriptor
+        fs::remove_file(env.marker()).unwrap();
+        let before = env.read();
+        assert!(!reconstruct_missing_yield_marker().unwrap());
+        assert_eq!(env.read(), before, "config bytes must be identical");
+        assert!(!env.marker().exists(), "no marker may be invented");
+    }
+
+    #[test]
+    fn probe_refusal_policy_not_off_leaves_config_byte_identical() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        env.write_authority();
+        let before = env.read();
+        assert!(!reconstruct_missing_yield_marker().unwrap());
+        assert_eq!(env.read(), before, "config bytes must be identical");
+        assert!(!env.marker().exists(), "no marker may be invented");
+    }
+
+    #[test]
+    fn probe_refusal_ambiguous_anchor_leaves_config_byte_identical() {
+        let env = PolicyEnv::new(Some(AMBIGUOUS), None);
+        env.write_authority();
+        let before = env.read();
+        assert!(!reconstruct_missing_yield_marker().unwrap());
+        assert_eq!(env.read(), before, "config bytes must be identical");
+        assert!(!env.marker().exists(), "no marker may be invented");
+    }
+
+    #[test]
+    fn probe_refusal_missing_config_invents_nothing() {
+        let env = PolicyEnv::new(None, None);
+        env.write_authority();
+        assert!(!reconstruct_missing_yield_marker().unwrap());
+        assert!(!env.marker().exists(), "no marker may be invented");
+    }
+
+    #[test]
+    fn probe_refusal_unparsable_config_leaves_config_byte_identical() {
+        let env = PolicyEnv::new(Some("this is { not json"), None);
+        env.write_authority();
+        let before = env.read();
+        assert!(!reconstruct_missing_yield_marker().unwrap());
+        assert_eq!(env.read(), before, "config bytes must be identical");
+        assert!(!env.marker().exists(), "no marker may be invented");
+    }
+
+    #[test]
+    fn probe_refusal_policy_key_absent_leaves_config_byte_identical() {
+        let env = PolicyEnv::new(
+            Some(r#"{"theme":{"other":"x"},"noctalia":{"themeMode":"follow"}}"#),
+            None,
+        );
+        env.write_authority();
+        let before = env.read();
+        assert!(!reconstruct_missing_yield_marker().unwrap());
+        assert_eq!(env.read(), before, "config bytes must be identical");
+        assert!(!env.marker().exists(), "no marker may be invented");
+    }
+
+    #[test]
+    fn probe_refusal_exotic_escaped_off_token_leaves_config_byte_identical() {
+        let env = PolicyEnv::new(Some(r#"{"theme":{"policy":"\u006ff\u0066"}}"#), None);
+        env.write_authority();
+        let before = env.read();
+        assert!(!reconstruct_missing_yield_marker().unwrap());
+        assert_eq!(env.read(), before, "config bytes must be identical");
+        assert!(!env.marker().exists(), "no marker may be invented");
+    }
+
+    #[test]
+    fn probe_corrupt_marker_is_an_honest_failure_not_an_overwrite() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        yield_color_authority().unwrap();
+        env.write_authority();
+        fs::write(env.marker(), "not json at all").unwrap();
+        let before = env.read();
+        let marker_before = fs::read_to_string(env.marker()).unwrap();
+        assert!(reconstruct_missing_yield_marker().is_err());
+        assert_eq!(env.read(), before, "config bytes must be identical");
+        assert_eq!(
+            fs::read_to_string(env.marker()).unwrap(),
+            marker_before,
+            "the corrupt marker must stay untouched"
+        );
+    }
+
+    #[test]
+    fn probe_success_writes_only_the_marker_and_records_the_decision() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        yield_color_authority().unwrap();
+        env.write_authority();
+        fs::remove_file(env.marker()).unwrap();
+        let before = env.read();
+        assert!(reconstruct_missing_yield_marker().unwrap());
+        assert_eq!(env.read(), before, "config bytes must be identical");
+        let marker: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(env.marker()).unwrap()).unwrap();
+        assert_eq!(marker["previous_value"], "wallpaper");
+        assert_eq!(marker["config_path"], env.config.display().to_string());
+        assert!(
+            log_contains("MUTE RECONSTRUCTED"),
+            "the decision log must record MUTE RECONSTRUCTED"
+        );
+    }
+
+    #[test]
+    fn probe_startup_reconstruction_records_the_decision_and_spares_the_config() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        yield_color_authority().unwrap();
+        env.write_authority();
+        fs::remove_file(env.marker()).unwrap();
+        let before = env.read();
+        startup_recover_crashed_yield();
+        assert!(env.marker().exists(), "startup must rebuild the marker");
+        assert_eq!(env.read(), before, "config bytes must be identical");
+        let marker: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(env.marker()).unwrap()).unwrap();
+        assert_eq!(marker["previous_value"], "wallpaper");
+        assert!(
+            log_contains("MUTE RECONSTRUCTED"),
+            "the startup heal must be recorded"
+        );
+    }
+
+    #[test]
+    fn probe_reconstructed_marker_feeds_the_step_aside_release() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        yield_color_authority().unwrap();
+        env.write_authority();
+        fs::remove_file(env.marker()).unwrap();
+        assert!(reconstruct_missing_yield_marker().unwrap());
+        crate::color_authority::clear_descriptor().unwrap();
+        let previous = held_previous_value().expect("the reconstructed marker must hold the value");
+        assert_eq!(previous, "wallpaper");
+        assert!(restore_color_authority(&previous).unwrap());
+        assert_eq!(
+            env.read(),
+            FIXTURE,
+            "the release must restore the original bytes exactly"
+        );
+        assert!(!env.marker().exists(), "the release clears the memory");
+    }
 }
