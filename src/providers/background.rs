@@ -784,8 +784,10 @@ pub(crate) enum PickerVoiceAction {
 ///
 /// - `claims`: a theme currently owns the palette (descriptor present). With
 ///   no owner there is no silence to suspend or take back.
-/// - `picker`: the engine's own program presence (`None` = could not tell —
-///   hold, never guess, exactly like the step-aside).
+/// - `picker`: the engine's picker presence as the EVENT route delivered it —
+///   Hyprland `openlayer`/`closelayer` for its layer surface, or the
+///   listener's one-shot reconcile at (re)connect (`None` = unknown — hold,
+///   never guess, exactly like the step-aside).
 /// - `suspended`: HVE already released the mute for a previous open.
 ///
 /// The keeper's rule (09-oct-2026): opening the picker must let the engine
@@ -806,40 +808,109 @@ pub(crate) fn picker_voice_action(
     }
 }
 
-/// How often the picker watch samples the engine's own program presence. Cheap
-/// (a procfs scan) so it can be short: the keeper wants the picker's UI to
-/// paint itself the moment it opens.
-const PICKER_VOICE_POLL_INTERVAL: Duration = Duration::from_millis(600);
+/// The W6 worker's inbox. A BLOCKING `recv`, never a timer: idle costs zero
+/// CPU — Hyprland's `openlayer`/`closelayer` route (and the listener's
+/// one-shot reconcile per (re)connect) pushes presence in, the worker
+/// consumes it in order (keeper's directive, 16-oct-2026: events instead of
+/// timers, less consumption).
+static PICKER_VOICE_TX: std::sync::OnceLock<std::sync::mpsc::SyncSender<Option<bool>>> =
+    std::sync::OnceLock::new();
 
-/// Start the process-lifetime watch that lets the engine's own picker SPEAK
-/// while it is open and takes the silence back when it closes. Idempotent; a
-/// failed spawn is logged and never aborts startup.
-pub fn start_picker_voice_watch() {
+/// Start the W6 worker that lets the engine's own picker SPEAK while it is
+/// open and takes the silence back when it closes. Idempotent; a failed
+/// spawn is logged and never aborts startup. Replaces the old 600 ms
+/// `/proc` poll: the worker sleeps on a channel and only runs when an event
+/// actually arrives.
+pub fn start_picker_voice_worker() {
     static STARTED: AtomicBool = AtomicBool::new(false);
     if STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Option<bool>>(8);
     let spawned = std::thread::Builder::new()
-        .name("hve-picker-voice-watch".into())
-        .spawn(|| loop {
-            std::thread::sleep(PICKER_VOICE_POLL_INTERVAL);
-            if let Err(e) = picker_voice_tick() {
-                tracing::warn!("[background] picker-voice check failed: {e}");
+        .name("hve-picker-voice-worker".into())
+        .spawn(move || {
+            while let Ok(picker) = rx.recv() {
+                if let Err(e) = picker_voice_tick(picker) {
+                    tracing::warn!("[background] picker-voice event failed: {e}");
+                }
             }
         });
-    if let Err(e) = spawned {
-        STARTED.store(false, Ordering::SeqCst);
-        tracing::warn!("[background] cannot start the picker-voice watch: {e}");
+    match spawned {
+        Ok(_) => {
+            let _ = PICKER_VOICE_TX.set(tx);
+        }
+        Err(e) => {
+            STARTED.store(false, Ordering::SeqCst);
+            tracing::warn!("[background] cannot start the picker-voice worker: {e}");
+        }
     }
 }
 
-/// One picker-voice tick: decide with [`picker_voice_action`] and apply it.
+/// W6: hand one picker-presence signal to the worker. `picker` is the event's
+/// truth (`Some(true)` open / `Some(false)` closed) or the listener's
+/// one-shot reconcile (`picker_presence()`). Never blocks the caller — the
+/// IPC listener must keep consuming Hyprland — and a full inbox or a missing
+/// worker is logged and dropped: the decision is state-driven, so the next
+/// event or reconcile self-corrects.
+pub fn picker_voice_event(picker: Option<bool>) {
+    match PICKER_VOICE_TX.get() {
+        Some(tx) => {
+            if let Err(e) = tx.try_send(picker) {
+                tracing::warn!("[background] picker-voice inbox unusable ({e}); presence dropped");
+            }
+        }
+        None => tracing::warn!(
+            "[background] picker presence before the W6 worker started; dropped ({picker:?})"
+        ),
+    }
+}
+
+/// W6 route (16-oct-2026): `Some(true)` = the engine's own picker layer
+/// appeared, `Some(false)` = it went, `None` = this line is not its route.
+/// The picker is a layer-shell surface, so Hyprland's
+/// `openlayer`/`closelayer` events — namespace after `>>` — are its
+/// open/close signal (captured live 16-oct: `openlayer>>skwd-wall`).
+///
+/// It lives HERE, not in the IPC listener: recognizing the engine's own
+/// namespace is ENGINE knowledge, and the capability-routing contract keeps
+/// it in the backend — the listener only asks this capability and never
+/// names the engine (`odd/tasks/hve-capability-routing.md`).
+pub fn picker_layer_signal(line: &str) -> Option<bool> {
+    let (event, payload) = line.split_once(">>")?;
+    let namespace = payload.split(',').next()?.trim();
+    if !crate::providers::skwd_engine::is_picker_layer(namespace) {
+        return None;
+    }
+    match event {
+        "openlayer" => Some(true),
+        "closelayer" => Some(false),
+        _ => None,
+    }
+}
+
+/// The one-shot W6 presence read for the IPC listener's reconcile at every
+/// (re)connect — the engine-adapter probe re-exported through this router so
+/// the listener stays engine-blind.
+pub fn picker_presence() -> Option<bool> {
+    crate::providers::skwd_engine::picker_is_running()
+}
+
+/// One picker-voice event: decide with [`picker_voice_action`] over the
+/// presence the EVENT route delivered (or the listener's one-shot reconcile)
+/// and apply it.
 ///
 /// `Quiet` distinguishes the two closes: a foreign background (the keeper
 /// used the picker to change it) releases the claim through the step-aside
 /// path; anything else re-holds the mute and gives the theme its colours back
 /// (a no-op when the engine painted nothing).
-fn picker_voice_tick() -> Result<(), String> {
+///
+/// Every no-op is RECORDED (16-oct-2026): `suspend`/`rehold` answer
+/// `Ok(false)` silently when HVE holds no pending mute of its own (the marker
+/// missing — the poisoned state measured on 16-oct), and an invisible no-op
+/// cost hours of diagnosis. With the marker present these SKIPPED lines never
+/// appear.
+fn picker_voice_tick(picker: Option<bool>) -> Result<(), String> {
     // HVE's own apply owns the state between the mute flip and the descriptor
     // write; never fight it.
     if hve_is_acting() {
@@ -847,14 +918,21 @@ fn picker_voice_tick() -> Result<(), String> {
     }
     let descriptor = crate::color_authority::read_descriptor();
     let suspended = crate::providers::skwd_policy::color_authority_suspended();
-    match picker_voice_action(
-        descriptor.is_some(),
-        crate::providers::skwd_engine::picker_is_running(),
-        suspended,
-    ) {
+    let claims = descriptor.is_some();
+    tracing::info!(
+        "[background] picker voice: presence={picker:?} claims={claims} suspended={suspended}"
+    );
+    match picker_voice_action(claims, picker, suspended) {
         PickerVoiceAction::Nothing => Ok(()),
         PickerVoiceAction::Speak => {
-            crate::providers::skwd_policy::suspend_color_authority()?;
+            let released = crate::providers::skwd_policy::suspend_color_authority()?;
+            if !released {
+                crate::decision_log::record(
+                    "PICKER VOICE SKIPPED",
+                    "engine picker open, but HVE holds no pending mute of its own \
+                     (marker missing or the policy is not ours); the engine stays as-is",
+                );
+            }
             Ok(())
         }
         PickerVoiceAction::Quiet => {
@@ -882,7 +960,14 @@ fn picker_voice_tick() -> Result<(), String> {
                     "the keeper changed the background from the engine's own picker; descriptor cleared",
                 )
             } else {
-                crate::providers::skwd_policy::rehold_color_authority()?;
+                let reheld = crate::providers::skwd_policy::rehold_color_authority()?;
+                if !reheld {
+                    crate::decision_log::record(
+                        "PICKER QUIET SKIPPED",
+                        "engine picker closed, but HVE holds no pending mute of its own \
+                         (marker missing or the policy is not ours); nothing taken back",
+                    );
+                }
                 // Give the theme its colours back; a no-op when nothing drifted.
                 let _ = crate::ipc::resolve_applied_authority(&crate::project_dir());
                 Ok(())
@@ -897,6 +982,35 @@ fn picker_voice_tick() -> Result<(), String> {
 mod tests {
     use super::*;
     use serial_test::serial;
+
+    /// W6 event route (keeper's directive, 16-oct-2026): the line classifier.
+    /// The picker is a layer-shell surface, so Hyprland's
+    /// `openlayer`/`closelayer` carrying its namespace ARE the open/close
+    /// signal; every other layer (HVE's own `skwd-paper` poster, always
+    /// present), window event and malformed line stays out of the route.
+    #[test]
+    fn only_the_engines_picker_layer_lines_become_a_presence_signal() {
+        assert_eq!(picker_layer_signal("openlayer>>skwd-wall"), Some(true));
+        assert_eq!(picker_layer_signal("closelayer>>skwd-wall"), Some(false));
+        // A payload carrying coordinates must still be recognised.
+        assert_eq!(
+            picker_layer_signal("openlayer>>skwd-wall,600,1350"),
+            Some(true)
+        );
+        for line in [
+            "openlayer>>skwd-paper", // HVE's own poster layer, always present
+            "openlayer>>dev.noctalia.Noctalia",
+            "closelayer>>skwd-paper",
+            "activewindow>>skwd-wall", // a window event, not a layer event
+            "openwindow>>1,2,skwd-wall,title",
+            "openlayer>>",
+            "openlayer",
+            "configreloaded>>",
+            "",
+        ] {
+            assert_eq!(picker_layer_signal(line), None, "{line:?} must not route");
+        }
+    }
     use tempfile::TempDir;
 
     /// The routing rule itself, pure: a declared exact path goes to the

@@ -250,6 +250,22 @@ pub(crate) fn picker_is_running() -> Option<bool> {
     picker_running_in(Path::new("/proc"))
 }
 
+/// The Wayland layer namespace of the engine's own picker surface, as
+/// Hyprland reports it in `openlayer>>` / `closelayer>>` (captured live
+/// 16-oct-2026 with the picker opened and closed by hand). Engine knowledge,
+/// so it lives here next to the comm name: the picker is a layer-shell
+/// surface — no window event exists for it — and these two events are its
+/// open/close signal (keeper's directive: events instead of timers).
+pub(crate) const ENGINE_PICKER_LAYER: &str = "skwd-wall";
+
+/// Whether a Hyprland layer namespace is the engine's own picker surface.
+/// `skwd-paper` — the still renderer HVE itself launches — is a DIFFERENT
+/// namespace, present all the time; it must never read as "the keeper opened
+/// the picker".
+pub(crate) fn is_picker_layer(namespace: &str) -> bool {
+    namespace == ENGINE_PICKER_LAYER
+}
+
 /// Test-only override of [`picker_is_running`]: `Some(v)` forces the answer so
 /// a hermetic test never depends on what runs on the box; `None` uses the real
 /// scan. Compiled only under `cfg(test)`, so production always reads `/proc`.
@@ -581,6 +597,30 @@ mod tests {
             None,
             "an unreadable table degrades to unknown, never a guess"
         );
+    }
+
+    /// W6 (16-oct-2026, keeper's directive): detection is EVENT-DRIVEN — the
+    /// picker is a layer-shell surface and its Hyprland namespace is ENGINE
+    /// knowledge, pinned here like the comm name. The still renderer HVE
+    /// itself launches reports `skwd-paper`; it is always present and must
+    /// never read as "the keeper opened the picker".
+    #[test]
+    fn the_picker_layer_namespace_is_pinned_and_nothing_else_matches() {
+        assert!(
+            is_picker_layer("skwd-wall"),
+            "the engine's own picker surface namespace must match"
+        );
+        for namespace in [
+            "skwd-paper", // HVE's own poster renderer (always present)
+            "dev.noctalia.Noctalia",
+            "kitty",
+            "",
+        ] {
+            assert!(
+                !is_picker_layer(namespace),
+                "{namespace:?} must never read as the picker"
+            );
+        }
     }
 
     // ── W6 (`odd/tasks/theme-package-trust.md`): a theme value that could

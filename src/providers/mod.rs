@@ -18,7 +18,9 @@ pub mod wallpaper_authority;
 pub use background::start_foreign_change_watch;
 
 /// W6 re-export: `main` starts the picker-voice watch through the same router.
-pub use background::start_picker_voice_watch;
+pub use background::{
+    picker_layer_signal, picker_presence, picker_voice_event, start_picker_voice_worker,
+};
 
 /// W6 re-export: a backend-neutral capability for the CORE. `ipc.rs` must not
 /// name the engine module whose policy this reads, so it asks a capability

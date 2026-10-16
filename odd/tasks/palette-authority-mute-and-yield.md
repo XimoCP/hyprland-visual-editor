@@ -161,6 +161,21 @@ HVE already writes; monitors/HDR (hyprmod); any `.slint` change unless W2's pane
       `release_claim` extracted from the step-aside), `src/ipc.rs` (guard), `src/main.rs` + `mod.rs` (wiring).
       Wires `project_dir`/`resolve_applied_authority` to `pub(crate)`. RED proven: disabling the ipc guard
       fails its test.
+      **Update (16-oct-2026, keeper's directive): event-driven detection replaces the 600 ms poll.**
+      Verbatim: "lo primero es cambiar a eventos en vez de por tiempos menos consumo y luego mirar como
+      hacer lo del papelito.... tu no puedes hacer las pruebas abrir cambiar, mover y ver que es lo que
+      esta pasando en cada momento???". Measured 16-oct: the picker is a LAYER-shell surface, so Hyprland
+      emits no window event but does emit `openlayer>>skwd-wall` / `closelayer>>skwd-wall` (captured
+      live); HVE's own poster is the distinct `skwd-paper` namespace and must never match. The route:
+      `connect_and_listen` routes those two lines into a channel-fed worker (blocking recv — idle costs
+      zero CPU, no timer) running the same pure `(claims, picker, suspended)` decision, plus ONE presence
+      reconcile on every listener (re)connect (picker already open at startup / missed-event gap).
+      Also measured 16-oct: `suspend_color_authority`/`rehold_color_authority` return `Ok(false)` SILENTLY
+      when the yield marker is absent — with `theme.policy=off` and no marker every open/close no-ops
+      with no decision-log line, which is why W6 never appeared in production. The marker reconstruction
+      (restore the engine's own `wallpaper` default only when descriptor present + policy `off` + no
+      marker) is the NEXT unit after the event change, per the keeper's "luego mirar como hacer lo del
+      papelito".
 - [x] **W6 verification — cross-model (GLM 5.3-flash). PASS, twice.** First pass: 5/5 claims CONFIRMED,
       discriminating proofs observed, adversarial state analysis. It found one real WARNING: a palette
       publish landing just after the picker closed (including HVE's own re-assert of the theme's palette,
@@ -628,3 +643,20 @@ Evidence collected while planning (07-08-oct-2026, this machine):
   17:05:26Z, 17:05:28Z, each followed by a publish.
 - The 07-oct miss on HVE's side: the watcher asked at 19:05:04 and 19:05:26 only; the engine's second and
   third publishes fell inside the silent 5 s cooldown (`color_watcher.sh:151-157`).
+
+## Log
+
+- **L1 (16-oct-2026, keeper, verbatim):** "pues lo primero es cambiar a eventos en vez de por tiempos
+  menos consumo y luego mirar como hacer lo del papelito.... tu no puedes hacer las pruebas abrir cambiar,
+  mover y ver que es lo que esta pasando en cada momento???" (Antecedente, verbatim: "debería ser por
+  evento.... cuando se abre skwd-wall tiene que saltar un evento... pues ahí le quitamos el silencio.
+  Tan dificil es???")
+- **L2 (16-oct, diagnosis evidence):** live capture with the picker opened and closed by the orchestrator:
+  Hyprland emits `openlayer>>skwd-wall` / `closelayer>>skwd-wall`; the picker's process comm is
+  `skwd-wall-v2`; `~/.config/skwd-wall-v2/config.json` is byte-identical across open/close cycles (md5
+  `0305ddc71722f7e8`, policy `off` unchanged — open/close does NOT rewrite it); the picker creates and
+  removes `~/.cache/skwd-wall-v2/noctalia-preview-orig.json` on open/close; zero decision-log entries on
+  two open/close cycles because `suspend_color_authority`/`rehold_color_authority` short-circuit on the
+  absent marker WITHOUT recording (silent `Ok(false)`).
+- **L3 (16-oct, incident):** `~/.cache/hve/color_watcher.log` spams ~23k "watched file no longer exists:
+  .../palettes/skwd-hover.json" warnings — separate noise bug, not in this scope.

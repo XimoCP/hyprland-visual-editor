@@ -110,6 +110,13 @@ impl HyprIpc {
         // on-demand decision in `consume_reassert_permit` does.
         note_clock_sample();
 
+        // W6 reconcile (16-oct-2026): events before this connection are gone —
+        // HVE started with the picker already open, or a reconnect gap swallowed
+        // an open/close pair. ONE state read closes that hole; from here on the
+        // openlayer/closelayer route owns presence. The decision is
+        // state-driven and idempotent, so an aligned state costs a no-op.
+        crate::providers::picker_voice_event(crate::providers::picker_presence());
+
         // Throttle config reload — assemble.sh triggers another reload event
         let last_reload: Mutex<Option<Instant>> = Mutex::new(None);
 
@@ -154,6 +161,12 @@ impl HyprIpc {
                         if payload.trim_start_matches('>').starts_with('1') {
                             crate::theme_fullscreen_signal();
                         }
+                    } else if let Some(picker) = crate::providers::picker_layer_signal(&line) {
+                        // W6, event-driven (16-oct): the engine's picker layer
+                        // appeared or went. Hand the presence to the W6 worker —
+                        // try_send never blocks this listener, and the decision
+                        // is state-driven, so a coalesced event costs a no-op.
+                        crate::providers::picker_voice_event(Some(picker));
                     } else if monitor_event_arms(&line) {
                         // A monitor coming or going makes the wallpaper engine
                         // re-apply the same wallpaper and recompute the theme a
@@ -799,6 +812,10 @@ mod tests {
             );
         }
     }
+
+    // ── W6 event route lives in `providers::background` (capability-routing:
+    // the engine's own namespace is backend knowledge, the listener only asks)
+    // — `only_the_engines_picker_layer_lines_become_a_presence_signal` there.
 
     #[test]
     fn a_palette_change_with_no_armed_window_does_not_reassert() {

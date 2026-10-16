@@ -3533,8 +3533,11 @@ fn main() -> Result<(), slint::PlatformError> {
     // The keeper's rule (09-oct): the picker paints its UI from the
     // background, so opening it must release the silence temporarily; closing
     // it without a background change must give the theme its colours back,
-    // with no HVE re-entry. A separate, cheap watch: presence only.
-    crate::providers::start_picker_voice_watch();
+    // with no HVE re-entry. Event-driven (16-oct, keeper's directive):
+    // Hyprland's openlayer/closelayer events for the engine's picker surface
+    // feed this worker through a channel — blocking recv, zero CPU in idle,
+    // no timer. The listener also reconciles presence once per (re)connect.
+    crate::providers::start_picker_voice_worker();
     // A crash between masking and restoring would leave the desktop without
     // blur, border and shadow (and the next apply would make it permanent).
     // Replay it before anything else touches the compositor.
