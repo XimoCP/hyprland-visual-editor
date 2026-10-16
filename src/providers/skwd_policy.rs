@@ -325,9 +325,25 @@ pub(crate) fn startup_recover_crashed_yield() {
             "[skwd-policy] startup repair: found a crashed yield; engine colour authority \
              restored (theme.policy put back)"
         ),
-        Ok(false) => {
-            tracing::info!("[skwd-policy] startup repair: nothing to repair");
-        }
+        // No crash marker: check the OTHER way the memory goes away — the
+        // marker lost while the mute still holds (the 16-oct poison, obs
+        // #1568). Rebuilds it; every refusal is the normal clean state.
+        Ok(false) => match reconstruct_missing_yield_marker() {
+            Ok(true) => tracing::warn!(
+                "[skwd-policy] startup repair: lost yield marker rebuilt (theme.policy \
+                 stays \"off\"; remembers \"wallpaper\")"
+            ),
+            Ok(false) => {
+                tracing::info!("[skwd-policy] startup repair: nothing to repair");
+            }
+            Err(e) => {
+                crate::decision_log::record(
+                    "MUTE RELEASE FAILED",
+                    &format!("startup marker reconstruction failed: {e}"),
+                );
+                tracing::warn!("[skwd-policy] startup marker reconstruction FAILED: {}", e);
+            }
+        },
         Err(e) => {
             crate::decision_log::record(
                 "MUTE RELEASE FAILED",
@@ -1093,6 +1109,74 @@ pub(crate) fn recover_crashed_yield() -> Result<bool, String> {
     Ok(true)
 }
 
+/// The engine's own default for `theme.policy` — the value its shipped
+/// profiles document and the keeper confirmed verbatim on 16-oct-2026 as
+/// the value a rebuilt marker must remember ("el valor por defecto del
+/// motor (wallpaper, el que tus propios perfiles documentan)").
+const ENGINE_DEFAULT_POLICY_VALUE: &str = "wallpaper";
+
+/// W6 marker reconstruction (keeper's directive, 16-oct-2026): rebuild the
+/// yield marker HVE lost, so the mute/unmute cycle works again.
+///
+/// The measured poison (16-oct, obs #1568): a theme owns the palette, the
+/// engine is held `off`, and the marker file is gone — every release path
+/// then no-ops SILENTLY and the engine stays muted forever. The cause of
+/// the loss is unproven, so this never guesses:
+///
+/// - a valid colour-authority descriptor must exist (a theme IS ruling —
+///   otherwise `off` is the keeper's own state, not our mute);
+/// - the bare `policy` token must be exactly ONE occurrence whose value is
+///   `"off"` — the exact token HVE itself writes (an ambiguous anchor
+///   cannot be confirmed, so it is refused like the yield itself);
+/// - no marker of ours may exist (a real memory is never overwritten).
+///
+/// Reconstruction writes ONLY HVE's own marker, remembering
+/// [`ENGINE_DEFAULT_POLICY_VALUE`]. The engine config itself is NOT
+/// touched: the mute stays in force, only the memory of what to put back is
+/// restored, and the existing byte-preserving edits apply it later through
+/// the normal yield/restore/suspend/rehold paths.
+///
+/// `Ok(true)` when the marker was rebuilt. `Ok(false)` for every refusal —
+/// normal, not an error.
+pub(crate) fn reconstruct_missing_yield_marker() -> Result<bool, String> {
+    if read_marker()?.is_some() {
+        return Ok(false); // a real memory exists: never overwrite it
+    }
+    if crate::color_authority::read_descriptor().is_none() {
+        return Ok(false); // no theme rules: `off` is not our mute
+    }
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(_) => return Ok(false), // no config, nothing to remember
+    };
+    if serde_json::from_str::<serde_json::Value>(&text).is_err() {
+        return Ok(false); // not a document we understand
+    }
+    let Some((_, token)) = locate_policy_value_token(&text) else {
+        return Ok(false); // absent or ambiguous: never guess the switch
+    };
+    if token != "\"off\"" {
+        return Ok(false); // only HVE's own held-off token is ours to rebuild
+    }
+    write_marker(&path, ENGINE_DEFAULT_POLICY_VALUE)?;
+    tracing::warn!(
+        "[skwd-policy] yield marker was missing while the mute held; rebuilt remembering \
+         \"{}\" (engine config untouched)",
+        ENGINE_DEFAULT_POLICY_VALUE
+    );
+    crate::decision_log::record(
+        "MUTE RECONSTRUCTED",
+        &format!(
+            "engine theme.policy is \"off\" with a theme owning the palette and no yield \
+             marker of ours; the marker was rebuilt remembering the engine's default \
+             \"{}\" (config untouched)",
+            ENGINE_DEFAULT_POLICY_VALUE
+        ),
+    );
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1478,6 +1562,147 @@ mod tests {
             !env.marker().exists(),
             "marker cleared: we are no longer yielding"
         );
+    }
+
+    // ── W6: marker reconstruction (keeper's directive, 16-oct-2026) ───
+
+    /// The measured poison (16-oct, obs #1568): a theme owns the palette,
+    /// the engine is held `off`, and HVE's yield marker is gone. Every mute
+    /// /unmute path then no-ops SILENTLY — the engine stays muted forever.
+    /// Reconstructing the memory must heal it WITHOUT touching the config,
+    /// and the full picker cycle must work again.
+    #[test]
+    fn marker_reconstruction_heals_the_poisoned_state_and_the_cycle_works_again() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        // The apply's real order: the hold flips the policy (and clears any
+        // stale descriptor), THEN the apply writes its own descriptor.
+        assert_eq!(
+            yield_color_authority().unwrap().as_deref(),
+            Some("wallpaper")
+        );
+        env.write_authority();
+        // The mute is live (flip + marker + descriptor), then the marker is LOST.
+        fs::remove_file(env.marker()).expect("the marker must exist to be lost");
+        let held_off = env.read();
+        assert!(
+            held_off.contains("\"policy\": \"off\""),
+            "precondition: the engine is held off"
+        );
+
+        let rebuilt = reconstruct_missing_yield_marker().expect("reconstruction returns a result");
+        assert!(rebuilt, "the poisoned state must be recognised");
+
+        // The marker is back, remembering the engine's own default.
+        let marker: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(env.marker()).unwrap()).unwrap();
+        assert_eq!(marker["previous_value"], "wallpaper");
+        assert_eq!(marker["config_path"], env.config.display().to_string());
+        // THE CONFIG IS NOT TOUCHED: the mute stays in force.
+        assert_eq!(
+            env.read(),
+            held_off,
+            "reconstruction must never edit the engine config"
+        );
+
+        // And the whole W6 cycle works again: open speaks, close silences.
+        assert!(
+            suspend_color_authority().unwrap(),
+            "picker open must release the mute now"
+        );
+        assert_eq!(
+            env.read(),
+            FIXTURE,
+            "the engine's own value is back while the picker is open"
+        );
+        assert!(color_authority_suspended(), "the suspension is now visible");
+        assert!(
+            rehold_color_authority().unwrap(),
+            "picker close must take the silence back"
+        );
+        assert_eq!(env.read(), held_off, "the mute is back byte for byte");
+    }
+
+    /// The startup hook: the poisoned state heals on the next start even
+    /// with no picker event (the keeper's measured situation, obs #1568).
+    #[test]
+    fn startup_repair_rebuilds_a_marker_the_session_lost() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        yield_color_authority().unwrap();
+        env.write_authority(); // the apply writes its descriptor after the hold
+        let held_off = env.read();
+        fs::remove_file(env.marker()).unwrap();
+
+        startup_recover_crashed_yield();
+
+        assert!(
+            env.marker().exists(),
+            "the lost marker must be rebuilt at startup"
+        );
+        let marker: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(env.marker()).unwrap()).unwrap();
+        assert_eq!(marker["previous_value"], "wallpaper");
+        assert_eq!(
+            env.read(),
+            held_off,
+            "startup reconstruction must not touch the engine config"
+        );
+    }
+
+    // Every refusal below is its OWN test: `PolicyEnv` holds the global
+    // `ENV_LOCK` for its whole life, so two sandboxes in one function make
+    // the same thread wait on a lock it already owns — a permanent hang.
+
+    /// A real marker is HVE's memory: it is never overwritten.
+    #[test]
+    fn marker_reconstruction_never_overwrites_an_existing_marker() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        yield_color_authority().unwrap();
+        env.write_authority();
+        let marker_before = fs::read_to_string(env.marker()).unwrap();
+        assert!(!reconstruct_missing_yield_marker().unwrap());
+        assert_eq!(fs::read_to_string(env.marker()).unwrap(), marker_before);
+    }
+
+    /// `off` with NO theme claim: the keeper turned the engine off himself —
+    /// not HVE's mute, so nothing may be invented and the config stays put.
+    #[test]
+    fn marker_reconstruction_refuses_off_without_a_theme_claim() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        yield_color_authority().unwrap(); // no descriptor: the apply never ran
+        let held_off = env.read();
+        fs::remove_file(env.marker()).unwrap();
+        assert!(!reconstruct_missing_yield_marker().unwrap());
+        assert!(!env.marker().exists(), "no marker may be invented");
+        assert_eq!(env.read(), held_off, "the config must stay untouched");
+    }
+
+    /// A policy that is not exactly `"off"` is not HVE's mute: never guess.
+    #[test]
+    fn marker_reconstruction_refuses_a_policy_that_is_not_off() {
+        let env = PolicyEnv::new(Some(FIXTURE), None); // policy is "wallpaper"
+        env.write_authority();
+        assert!(!reconstruct_missing_yield_marker().unwrap());
+        assert!(!env.marker().exists());
+        assert_eq!(env.read(), FIXTURE, "the config must stay untouched");
+    }
+
+    /// Two bare `policy` keys: the real switch cannot be confirmed — the
+    /// same rule the yield itself obeys.
+    #[test]
+    fn marker_reconstruction_refuses_an_ambiguous_anchor() {
+        let env = PolicyEnv::new(Some(AMBIGUOUS), None);
+        env.write_authority();
+        assert!(!reconstruct_missing_yield_marker().unwrap());
+        assert!(!env.marker().exists());
+    }
+
+    /// No engine config: nothing to remember, nothing to write.
+    #[test]
+    fn marker_reconstruction_refuses_a_missing_config() {
+        let env = PolicyEnv::new(None, None);
+        env.write_authority();
+        assert!(!reconstruct_missing_yield_marker().unwrap());
+        assert!(!env.marker().exists());
     }
 
     // ── W2: findings closure ──────────────────────────────────────────

@@ -925,6 +925,10 @@ fn picker_voice_tick(picker: Option<bool>) -> Result<(), String> {
     match picker_voice_action(claims, picker, suspended) {
         PickerVoiceAction::Nothing => Ok(()),
         PickerVoiceAction::Speak => {
+            // W6 (16-oct): if the yield marker was lost mid-session, rebuild
+            // it now so this open actually releases the mute instead of
+            // no-opping silently (the poisoned state measured on 16-oct).
+            crate::providers::skwd_policy::reconstruct_missing_yield_marker()?;
             let released = crate::providers::skwd_policy::suspend_color_authority()?;
             if !released {
                 crate::decision_log::record(

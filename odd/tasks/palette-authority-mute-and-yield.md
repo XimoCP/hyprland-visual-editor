@@ -176,6 +176,21 @@ HVE already writes; monitors/HDR (hyprmod); any `.slint` change unless W2's pane
       (restore the engine's own `wallpaper` default only when descriptor present + policy `off` + no
       marker) is the NEXT unit after the event change, per the keeper's "luego mirar como hacer lo del
       papelito".
+      **Marker reconstruction — DONE (16-oct-2026, keeper approved verbatim: "vale").**
+      `reconstruct_missing_yield_marker` (skwd_policy.rs) rebuilds the lost marker ONLY when all
+      of these hold: a valid colour-authority descriptor exists (a theme IS ruling), the bare
+      `policy` token occurs exactly once with the value `"off"` (the exact token HVE writes; an
+      ambiguous anchor is refused like the yield itself), and no marker of ours exists. It writes
+      ONLY HVE's own marker remembering the engine's documented default `"wallpaper"`
+      (`ENGINE_DEFAULT_POLICY_VALUE`; its shipped profiles' value, keeper-confirmed verbatim) —
+      the engine config is NEVER touched by the reconstruction itself, and every refusal leaves
+      the config bytes identical. Hooked twice: at startup (`startup_recover_crashed_yield`, the
+      branch that previously only reported "nothing to repair") and lazily in the picker-open
+      (Speak) path before `suspend_color_authority`, so the measured poison (obs #1568) heals on
+      restart AND mid-session. The decision log records `MUTE RECONSTRUCTED`. Known limit
+      (documented, outside the approved guard): a marker lost mid-session followed by a
+      step-aside release leaves no descriptor, so a later startup refuses to rebuild — that
+      state requires two consecutive failures and the engine stays muted until the next theme apply.
 - [x] **W6 verification — cross-model (GLM 5.3-flash). PASS, twice.** First pass: 5/5 claims CONFIRMED,
       discriminating proofs observed, adversarial state analysis. It found one real WARNING: a palette
       publish landing just after the picker closed (including HVE's own re-assert of the theme's palette,
@@ -660,3 +675,20 @@ Evidence collected while planning (07-08-oct-2026, this machine):
   absent marker WITHOUT recording (silent `Ok(false)`).
 - **L3 (16-oct, incident):** `~/.cache/hve/color_watcher.log` spams ~23k "watched file no longer exists:
   .../palettes/skwd-hover.json" warnings — separate noise bug, not in this scope.
+- **L4 (16-oct, marker reconstruction — keeper's verbatim approval: "vale"):** design recorded in the
+  W6 update above (guard: descriptor present + bare `policy` == exactly `"off"` + no marker; writes only
+  HVE's marker remembering the engine default `"wallpaper"`; config untouched; hooked at startup and in
+  the Speak path). TDD: RED first (`reconstruct_missing_yield_marker` missing → compile error), then
+  GREEN — 7 tests: `marker_reconstruction_heals_the_poisoned_state_and_the_cycle_works_again`,
+  `startup_repair_rebuilds_a_marker_the_session_lost`, and one per refusal:
+  `marker_reconstruction_never_overwrites_an_existing_marker`,
+  `marker_reconstruction_refuses_off_without_a_theme_claim`,
+  `marker_reconstruction_refuses_a_policy_that_is_not_off`,
+  `marker_reconstruction_refuses_an_ambiguous_anchor`,
+  `marker_reconstruction_refuses_a_missing_config`.
+  Gotcha (real hang, root-caused): the first version packed the five refusals into ONE test; each
+  `PolicyEnv` holds the global `test_utils::ENV_LOCK` for its whole life, so a second sandbox in the
+  same function made that thread wait on a lock it already owned — both harness threads stuck in
+  `futex_wait` forever (disguised as a slow link until `wchan` named the futex). Rule recorded: ONE
+  sandbox per test. Verified in parallel (6/6, 0.00s); full suite **1813 passed / 0 failed** (165.14s);
+  rustfmt clean.
