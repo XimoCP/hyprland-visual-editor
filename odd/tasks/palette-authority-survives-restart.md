@@ -4,7 +4,7 @@ Feature name: `palette-authority-survives-restart`
 Branch: `hve2-visual-rewrite` (current; not the default branch)
 Test runner: `cargo test`
 Delivery: work-unit commits on the branch; push/PR are the keeper's decisions
-Status: T1 and T2 DONE, each with RED-then-GREEN evidence; full suite 1829 passed / 9 failed, the 9 being the set that already fails at the base commit (verified by stashing this change); cross-model verification PENDING
+Status: T1 and T2 DONE, each with RED-then-GREEN evidence; full suite 1829 passed / 9 failed, the 9 being the set that already fails at the base commit (verified by stashing this change); cross-model verification DONE on `971e09a` — S1 pass, S2 pass, S3 pass, no blockers (see L7)
 
 ## Objective
 
@@ -105,3 +105,29 @@ the ones that already fail at the base commit (stash-verified: `scripts_contract
 `watcher::tests::watcher_reasserts_the_applied_theme_palette_on_an_external_change`). The
 `architecture_contract` suite is green again. New tests: 7 for the re-arm, 3 for the settle seam,
 1 for the step-aside memory, 1 for the keeper-aware descriptor repair, 2 source-wiring pins.
+
+L7 — cross-model verification (HVE rule: the verifier is never the writer), read-only, against
+`971e09a`, on `opencode-go/mimo-v2.6-flash` (writer: `opencode/deepseek-v4.1-flash-free`).
+Verdicts: **S1 pass, S2 pass, S3 pass, no blockers, 7 advisories**. Evidence it produced:
+- full suite 1831 passed / 8 failed (all inside the known baseline set); focused differential
+  baseline 172 passed → candidate 185 passed, 0 failed, with NO test removed or renamed and the
+  shared writers (`plan_yield`, `locate_policy_value_token`, `write_atomic`, `write_marker`,
+  `recover_crashed_yield`, `reconstruct_missing_yield_marker`, `replace_token`) byte-identical;
+- six mutation experiments in a scratch copy (`/tmp/opencode/palette-verify-9RlD/mutations-out.txt`),
+  each caught by a test: delete the repair inside the settle (2 fail), delete the re-arm branch (1),
+  delete the keeper-marker write (1), delete the early-return (1), reverse the mark/clear order (1),
+  force a same-bytes rewrite while held (1). Deleting the settle call from `main.rs` is caught twice:
+  by the source-wiring test and by the pin checker's STALE-PIN direction;
+- `architecture_contract` 10/10 on both trees and `src/architecture_contract.rs` byte-identical: no
+  pin was raised, and `main.rs` keeps exactly one mention of the engine;
+- the relocation window was traced rather than assumed: the foreign-change watch's first tick sleeps
+  5 s and the picker-voice worker only reacts to IPC events published after the settle, so "spawned
+  early, settled late" is benign in both reachable states (a crashed-mid-yield release is completed
+  by the watch tick with different log wording).
+Advisories accepted as-is, each pre-existing or by design, none fixed: an unreadable-but-present
+engine config still skips the re-arm (the spec's "writes nothing"); a W5 hand palette change still
+releases the mute at the next start (D3); the rebuilt marker hardcodes `"wallpaper"` (pre-existing
+W6 heuristic); a failed `mark_keeper_background` degrades to the pre-fix behaviour rather than to
+silence; the mtime no-op assertion is a proxy (mutation M6 proved it bites). Engine-side behaviour
+(a running skwd-wall honouring the written `"off"`) is outside this repository and stays the
+keeper's live test.
