@@ -784,12 +784,24 @@ impl ThemeManager {
     /// provider that owns it — never from a fresh apply, never from a
     /// backend CLI.
     ///
-    /// Quiet by contract: an empty last-applied name, an existing
-    /// descriptor, a missing or unreadable theme, an unregistered owner and
-    /// a failed write are all logged and swallowed. It never clears a
-    /// descriptor and can never fail startup. Idempotent: with the
-    /// descriptor present the write is skipped entirely.
+    /// Quiet by contract: the keeper owning the colours himself, an empty
+    /// last-applied name, an existing descriptor, a missing or unreadable
+    /// theme, an unregistered owner and a failed write are all logged and
+    /// swallowed. It never clears a descriptor and can never fail startup.
+    /// Idempotent: with the descriptor present the write is skipped entirely.
     pub fn restore_missing_colour_authority(&self) {
+        // S2 of `odd/tasks/palette-authority-survives-restart.md`: the keeper
+        // took the colours over with his own hand, or with the engine's own
+        // picker (the step-aside records it in the same marker). Rebuilding a
+        // theme's claim over that choice is exactly the bug that made a
+        // restart revert the palette he chose (measured 2026-10-18: his
+        // background chosen at 09:32, claimed back at 11:17 and 16:10).
+        if crate::color_authority::keeper_owns_palette() {
+            tracing::debug!(
+                "[themes] The keeper owns the colours; colour-authority repair skipped"
+            );
+            return;
+        }
         // validate_name also rejects hostile names: this string comes from
         // the on-disk config and becomes a directory lookup.
         let Ok(name) = Self::validate_name(&self.last_applied) else {
@@ -2813,6 +2825,37 @@ mod tests {
                 palette_name: "LegacyPal".to_string(),
             }),
             "the descriptor must be rebuilt from the theme's own saved snapshot"
+        );
+    }
+
+    /// S2 of `odd/tasks/palette-authority-survives-restart.md`: while the
+    /// keeper owns the colours — he changed the palette by hand, or he chose
+    /// the background with the engine's own picker — a restart must not claim
+    /// them back. The marker is the memory of that choice.
+    #[test]
+    fn restore_missing_colour_authority_leaves_the_keepers_colours_alone() {
+        let _env = crate::test_utils::TempEnv::new();
+        let config_dir = TempDir::new().unwrap();
+        let themes_dir = config_dir.path().join("hve").join("themes");
+        seed_colours_theme(&themes_dir, "Legacy", "custom LegacyPal\n", true);
+
+        let mut tm = ThemeManager::new(config_dir.path());
+        tm.register_provider(Box::new(
+            crate::providers::noctalia::NoctaliaV5Provider::new(),
+        ));
+        tm.last_applied = "Legacy".to_string();
+        crate::color_authority::mark_keeper_palette("noctalia-v5", "Legacy")
+            .expect("marking the keeper's palette must succeed");
+
+        tm.restore_missing_colour_authority();
+
+        assert!(
+            crate::color_authority::read_descriptor().is_none(),
+            "the keeper's colours must not be claimed again by a restart"
+        );
+        assert!(
+            crate::color_authority::keeper_owns_palette(),
+            "the keeper's marker must stay"
         );
     }
 

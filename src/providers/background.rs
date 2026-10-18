@@ -642,6 +642,15 @@ fn release_claim(reason: &str) -> Result<(), String> {
     crate::color_authority::clear_descriptor()
         .map_err(|e| format!("[background] cannot clear colour-authority descriptor: {e}"))?;
     crate::decision_log::record("STEPPED ASIDE", reason);
+    // S2 of `odd/tasks/palette-authority-survives-restart.md`: the keeper's
+    // choice must OUTLIVE the session, or the next start rebuilds the theme's
+    // claim from `last_applied_theme` over the background he chose (measured
+    // 2026-10-18: chosen at 09:32, claimed back at 11:17 and 16:10). Marked
+    // AFTER the descriptor clear, which drops the marker together with the
+    // claim.
+    if let Err(e) = crate::color_authority::mark_keeper_background("skwd-wall") {
+        tracing::warn!("[background] cannot remember the keeper's takeover: {e}");
+    }
     let pending = crate::providers::skwd_policy::held_previous_value();
     let released = match pending.as_deref() {
         Some(previous) => release_color_authority(previous),
@@ -1995,6 +2004,32 @@ mod tests {
         assert!(
             !color_authority_held(),
             "the pending marker must be cleared with the mute"
+        );
+    }
+
+    /// S2 of `odd/tasks/palette-authority-survives-restart.md`: the step-aside
+    /// must REMEMBER that the keeper took the colours over, or the next start
+    /// rebuilds the theme's claim over his background. Measured 2026-10-18:
+    /// the keeper chose a background with the engine's picker at 09:32, and the
+    /// 11:17 and 16:10 session starts claimed the palette back from
+    /// `last_applied_theme`.
+    #[test]
+    fn the_step_aside_remembers_that_the_keeper_owns_the_colours() {
+        let sandbox = ForeignSandbox::new(Some(FOREIGN_OWNER), Some(&["/keeper/car7.jpg"]));
+        let theme_tmp = tempfile::tempdir().unwrap();
+        let (_theme, provider, _poster) = declared_theme(theme_tmp.path(), "media/poster.png");
+        enter_claimed_state(&sandbox, &provider);
+        assert!(
+            !crate::color_authority::keeper_owns_palette(),
+            "precondition: the theme owns the colours"
+        );
+
+        let outcome = step_aside_if_foreign().expect("the check is an honest Result");
+
+        assert_eq!(outcome, StepAsideOutcome::SteppedAside);
+        assert!(
+            crate::color_authority::keeper_owns_palette(),
+            "the keeper's choice must outlive the restart: no start may claim it back"
         );
     }
 

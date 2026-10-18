@@ -140,6 +140,19 @@ pub fn keeper_owns_palette() -> bool {
     keeper_palette_path().exists()
 }
 
+/// The keeper took the colours over through the engine's own picker (W2/W6
+/// step-aside of `odd/tasks/palette-authority-survives-restart.md`, S2): the
+/// engine paints the background and derives the palette from it, so nothing in
+/// HVE owns the colours any more. Recorded in the SAME marker as a hand-made
+/// palette change on purpose — one state, one predicate
+/// ([`keeper_owns_palette`]), one clear point ([`write_descriptor`] on the next
+/// theme claim) — so that a restart cannot rebuild the theme's claim over the
+/// keeper's own choice.
+pub fn mark_keeper_background(engine: &str) -> std::io::Result<()> {
+    let data = serde_json::json!({ "engine": engine, "origin": "keeper-background" }).to_string();
+    write_atomic(&keeper_palette_path(), data.as_bytes(), "keeper-palette")
+}
+
 /// Drop the keeper-palette marker. Removing an absent marker is Ok.
 pub fn clear_keeper_palette() -> std::io::Result<()> {
     match fs::remove_file(keeper_palette_path()) {

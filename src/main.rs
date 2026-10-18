@@ -3513,15 +3513,7 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     let lock = Arc::new(std::sync::Mutex::new(Some(lock_file)));
 
-    // ── Crash repair for the colour-authority yield (W2) ──────────────
-    // If a previous HVE died between the yield flip and the restore, the
-    // engine's colour scheme would stay off until a manual fix. Replay the
-    // repair once, now (only the owning instance runs it — the handoff
-    // path above exits first): restore the previous value when a marker
-    // says we left it off and log the outcome either way. A failure never
-    // aborts startup.
-    crate::providers::skwd_policy::startup_recover_crashed_yield();
-    // ── W2: watch for a background HVE did not paint ──────────────────
+    // ── Background-watch bootstrap (W2) ───────────────────────────────
     // While a theme owns the palette the engine is mute, so the old
     // bridge-file detector is blind. Sample the engine's OWN state instead
     // (never its private log): if a background the applied theme does not
@@ -3713,6 +3705,18 @@ fn main() -> Result<(), slint::PlatformError> {
         // descriptor is already there or when the state to derive it from
         // is missing. Never fails startup: every error is logged.
         theme_manager.restore_missing_colour_authority();
+        // ── Startup settle of the engine mute (W2 + S1 of
+        //    `odd/tasks/palette-authority-survives-restart.md`) ──────────
+        // The ONE seam main() reaches the engine through, and it runs AFTER
+        // the descriptor repair because only then is ownership final: with a
+        // theme owning the palette the mute is re-armed (the claim used to
+        // come back while the mute did not, and the engine then re-derived a
+        // palette the colour defence read as the keeper's hand — measured
+        // 2026-10-18, ASSERT REFUSED at 16:13:56), and with nobody owning it
+        // it replays the W2 crash repair: a mute a previous process died
+        // holding is put back, and a marker lost while the mute still holds
+        // is rebuilt. Never aborts startup: every outcome is logged inside.
+        crate::providers::skwd_policy::startup_settle_engine_mute();
     }
 
     // Refresh UI theme list
@@ -8161,8 +8165,9 @@ mod tests {
     // ── W2: startup crash repair for the colour-authority yield ───────
     // The keeper's design requires that a crash between the yield flip and
     // the restore is repaired on the NEXT start: main() must invoke the
-    // repair once at startup, after logging is up. Comment lines are
-    // stripped so a commented-out call cannot satisfy this.
+    // startup settle once, after logging is up and after the single-instance
+    // lock is held. Comment lines are stripped so a commented-out call
+    // cannot satisfy this.
     #[test]
     fn startup_repairs_a_crashed_colour_authority_yield() {
         let src = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
@@ -8171,7 +8176,7 @@ mod tests {
             .filter(|l| !l.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
             .join("\n");
-        let repair = ["startup_recover_crashed_yield", "()"].concat();
+        let repair = ["startup_settle_engine_mute", "()"].concat();
         assert!(
             code.contains(&repair),
             "main() must run the startup crash repair for the yield"
@@ -8183,6 +8188,40 @@ mod tests {
         assert!(
             call_at > lock_at,
             "the repair must run only after the owning instance holds the lock"
+        );
+    }
+
+    // ── S1 of `odd/tasks/palette-authority-survives-restart.md`: the startup
+    //    settle of the engine mute ──
+    // The mute used to be armed only around an apply, so after a restart the
+    // claim came back while the engine kept its own `theme.policy`, re-derived
+    // a palette from its remembered background, and the colour defence read
+    // that change as the keeper's hand (measured 2026-10-18: REFUSED at
+    // 16:13:56, theme colours lost until the next apply). main() must settle
+    // the mute at startup and AFTER the descriptor repair: only then is the
+    // ownership state final. Comment lines are stripped so a commented-out
+    // call cannot satisfy this.
+    #[test]
+    fn startup_settles_the_engine_mute_once_ownership_is_final() {
+        let src = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
+        let code: String = src
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let settle = ["startup_settle_engine_mute", "()"].concat();
+        assert!(
+            code.contains(&settle),
+            "main() must settle the engine mute at startup while a theme owns the palette"
+        );
+        let settle_at = code.find(&settle).expect("the call must exist");
+        let repair = ["restore_missing_colour_authority", "()"].concat();
+        let repair_at = code
+            .find(&repair)
+            .expect("the startup descriptor repair must still exist");
+        assert!(
+            settle_at > repair_at,
+            "the mute must be settled after the descriptor repair: only then is ownership final"
         );
     }
 

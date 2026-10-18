@@ -316,6 +316,42 @@ fn sweep_orphaned_temps(dir: &Path, stem: &str) {
     }
 }
 
+/// One-shot STARTUP settle of the engine mute. This is the ONE seam `main()`
+/// reaches the engine's policy module through (architecture pin:
+/// `src/main.rs` × `skwd_policy` = 1), so both startup duties live here and
+/// `main()` calls exactly this.
+///
+/// Ownership decides which half runs:
+/// - a VALID descriptor and no keeper takeover means a theme owns the palette.
+///   The mute is what ownership asks for, so the crash repair's un-mute would
+///   be a step backwards: re-arm (or keep) the mute and leave the marker as the
+///   memory a later release needs. This is S1 of
+///   `odd/tasks/palette-authority-survives-restart.md`: before it, every
+///   restart replayed the mute away while the claim came back, the engine
+///   re-derived a palette from its remembered background and the colour defence
+///   read that change as the keeper's hand (measured 2026-10-18, ASSERT REFUSED
+///   at 16:13:56).
+/// - the keeper owning the colours himself, or nobody claiming them, falls
+///   through to the W2 repair: replay a mute a previous process died holding,
+///   and rebuild a marker lost while the mute still holds (the 16-oct poison).
+///
+/// Never panics and never aborts startup.
+pub(crate) fn startup_settle_engine_mute() {
+    // Only a PRESENT engine can be held silent: with no config there is nothing
+    // to flip, and the repair's own `ENGINE ABSENT` branch is what clears a
+    // marker whose engine is gone.
+    if crate::color_authority::read_descriptor().is_some()
+        && !crate::color_authority::keeper_owns_palette()
+        && config_path().is_file()
+    {
+        if let Err(e) = rearm_mute_for_existing_owner() {
+            tracing::warn!("[skwd-policy] startup settle: mute re-arm FAILED: {}", e);
+        }
+        return;
+    }
+    startup_recover_crashed_yield();
+}
+
 /// One-shot startup repair: replay a yield a previous process died between
 /// flip and restore, and log the outcome (repaired / nothing / failed).
 /// Never panics and never aborts startup.
@@ -1177,6 +1213,83 @@ pub(crate) fn reconstruct_missing_yield_marker() -> Result<bool, String> {
     Ok(true)
 }
 
+/// S1 of `odd/tasks/palette-authority-survives-restart.md`: a restart must not
+/// hand the palette back while a theme owns it.
+///
+/// WHY: the mute is armed around an apply and the startup crash repair replays
+/// the marker away on purpose. After a session restart the claim came back
+/// (rebuilt from `last_applied_theme`) while the engine kept its own
+/// `"wallpaper"`: it re-derived a palette from its remembered background, the
+/// colour defence read that change as the keeper's hand (ASSERT REFUSED) and
+/// the theme's colours were lost until the next apply — measured 2026-10-18 at
+/// 16:13:56. With a valid descriptor the mute is therefore re-armed here, once,
+/// at startup.
+///
+/// Guards, in order:
+/// - the keeper owns the colours (his own hand, or his background chosen with
+///   the engine) => nothing is touched; his choice survives the restart;
+/// - no valid descriptor => nothing (an `off` nobody claims is not our mute);
+/// - a switch the engine does not own (`fixed`, `off`, missing, ambiguous,
+///   exotic encoding) => nothing is flipped, never guessed (`plan_yield`
+///   refuses anything but the plain `"wallpaper"`).
+///
+/// Unlike `yield_color_authority` — which drops a stale claim around an apply —
+/// the descriptor is KEPT: the claim is the very reason for the mute. Marker
+/// first, flip second, like the yield: a marker without a flip is a harmless
+/// no-op for the next repair. When the mute already holds, the marker is
+/// rebuilt if the session lost it (`reconstruct_missing_yield_marker`), so a
+/// later genuine release still knows the value to put back.
+///
+/// `Ok(true)` when the switch was flipped; `Ok(false)` for every quiet case;
+/// `Err` on an honest read/write failure the caller logs and carries on from.
+pub(crate) fn rearm_mute_for_existing_owner() -> Result<bool, String> {
+    if crate::color_authority::read_descriptor().is_none() {
+        return Ok(false);
+    }
+    if crate::color_authority::keeper_owns_palette() {
+        tracing::info!(
+            "[skwd-policy] startup re-arm skipped: the keeper owns the colours; the engine \
+             stays as he left it"
+        );
+        return Ok(false);
+    }
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => {
+            return Err(format!(
+                "[skwd-policy] cannot read engine config {} to re-arm the mute: {}",
+                path.display(),
+                e
+            ))
+        }
+    };
+    let Some(plan) = plan_yield(&text) else {
+        // Either the mute already holds (nothing to flip; the marker is the
+        // memory a later release needs) or the switch is not ours to touch.
+        let _ = reconstruct_missing_yield_marker();
+        return Ok(false);
+    };
+    write_marker(&path, &plan.previous_value)?;
+    write_atomic(&path, &plan.new_text)?;
+    tracing::info!(
+        "[skwd-policy] startup re-arm: a theme owns the palette, the engine is silenced \
+         again (theme.policy \"{}\" -> \"off\", {})",
+        plan.previous_value,
+        path.display()
+    );
+    crate::decision_log::record(
+        "MUTE RE-ARMED",
+        &format!(
+            "a theme owns the palette after a restart; theme.policy \"{}\" -> \"off\" ({})",
+            plan.previous_value,
+            path.display()
+        ),
+    );
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2006,6 +2119,212 @@ mod tests {
     // descriptor exists the engine stays `off` (and the marker — the
     // crash-safety record — stays with it); with no valid descriptor the
     // engine's own value comes back and the mute is not retried.
+
+    // ── The single startup seam: `startup_settle_engine_mute` ──
+    //
+    // WHY: main() reaches the engine's policy module exactly once (architecture
+    // pin), so both startup duties live behind that one call, and ownership
+    // decides which runs. With a theme owning the palette the W2 repair's
+    // un-mute would be a step backwards — the claim came back on a restart
+    // while the mute did not (measured 2026-10-18).
+
+    #[test]
+    fn startup_settle_keeps_the_mute_while_a_theme_owns_the_palette() {
+        let env = PolicyEnv::new(Some(FIXTURE), Some(0o600));
+        env.write_authority();
+
+        startup_settle_engine_mute();
+
+        let expected = FIXTURE.replacen("\"policy\": \"wallpaper\"", "\"policy\": \"off\"", 1);
+        assert_eq!(
+            env.read(),
+            expected,
+            "a restart must not hand the palette back to the engine"
+        );
+        assert!(env.has_authority(), "the theme's claim must survive the settle");
+    }
+
+    #[test]
+    fn startup_settle_leaves_the_keepers_colours_alone() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        env.write_authority();
+        crate::color_authority::mark_keeper_palette("noctalia-v5", "JoKer")
+            .expect("marking the keeper's palette must succeed");
+
+        startup_settle_engine_mute();
+
+        assert_eq!(env.read(), FIXTURE, "the keeper's engine value must stay");
+        assert!(!env.marker().exists(), "no mute may be planted over his choice");
+    }
+
+    #[test]
+    fn startup_settle_clears_a_stale_marker_when_the_engine_is_gone() {
+        // No engine config to hold silent: the claim is untouched and the
+        // stale memory is dropped by the repair's own absent-engine branch,
+        // never left to be "restored" into a file that no longer exists.
+        let env = PolicyEnv::new(None, None);
+        env.write_authority();
+        write_marker(&env.config, "wallpaper").expect("the crashed session's memory");
+
+        startup_settle_engine_mute();
+
+        assert!(
+            !env.marker().exists(),
+            "with no engine to hold, the stale memory must not linger"
+        );
+        assert!(env.has_authority(), "the theme's claim is untouched");
+    }
+
+    #[test]
+    fn startup_settle_still_replays_a_stale_mute_when_nobody_owns_the_palette() {
+        // W2's reason for existing: a process that died between the yield flip
+        // and the restore must not leave the engine silenced forever.
+        let off = FIXTURE.replacen("\"policy\": \"wallpaper\"", "\"policy\": \"off\"", 1);
+        let env = PolicyEnv::new(Some(&off), None);
+        write_marker(&env.config, "wallpaper").expect("the crashed session's memory");
+
+        startup_settle_engine_mute();
+
+        assert_eq!(env.read(), FIXTURE, "the stale mute must be put back");
+        assert!(!env.marker().exists(), "the repaired marker must be cleared");
+    }
+
+    // ── S1 of `odd/tasks/palette-authority-survives-restart.md`: the STARTUP
+    //    re-arm of the mute ──
+    //
+    // WHY: the mute was armed only around an apply, and the startup repair
+    // replays the marker away on purpose. After a session restart the claim was
+    // therefore rebuilt while the engine kept its own `"wallpaper"`: it
+    // re-derived a palette from its remembered background, the colour defence
+    // read that change as the keeper's hand and the theme's colours were lost
+    // until the next apply (measured 2026-10-18). A restart must not hand the
+    // palette back while a theme owns it.
+
+    #[test]
+    fn startup_rearm_flips_the_engine_off_while_a_theme_owns_the_palette() {
+        let env = PolicyEnv::new(Some(FIXTURE), Some(0o600));
+        env.write_authority();
+
+        assert_eq!(
+            rearm_mute_for_existing_owner(),
+            Ok(true),
+            "with a theme owning the palette the re-arm must silence the engine"
+        );
+
+        // Independent, implementation-agnostic expectation: only the bare
+        // `"policy"` value token moves; the dotted per-wallpaper profiles keep
+        // their `"wallpaper"` values byte for byte.
+        let expected = FIXTURE.replacen("\"policy\": \"wallpaper\"", "\"policy\": \"off\"", 1);
+        assert_eq!(env.read(), expected, "only the switch token may change");
+        assert_eq!(env.mode(), 0o600, "the re-arm touches no permissions");
+
+        let marker = read_marker()
+            .expect("the marker read is an honest Result")
+            .expect("the re-arm must remember the value to put back");
+        assert_eq!(marker.previous_value, "wallpaper");
+        assert_eq!(marker.config_path, env.config.display().to_string());
+
+        assert!(
+            env.has_authority(),
+            "the theme keeps the colours: the claim must outlive the re-arm"
+        );
+        let log = fs::read_to_string(crate::decision_log::log_path()).unwrap_or_default();
+        assert!(
+            log.contains("MUTE RE-ARMED"),
+            "the keeper must be able to see the re-arm in decision.log, got: {log}"
+        );
+    }
+
+    #[test]
+    fn startup_rearm_does_nothing_without_an_owner() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+
+        assert_eq!(
+            rearm_mute_for_existing_owner(),
+            Ok(false),
+            "no owner: nothing to silence"
+        );
+        assert_eq!(env.read(), FIXTURE, "no owner: the config must not move");
+        assert!(
+            !env.marker().exists(),
+            "no owner: no marker may be planted"
+        );
+    }
+
+    #[test]
+    fn startup_rearm_stays_quiet_while_the_keeper_owns_the_colours() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        env.write_authority();
+        crate::color_authority::mark_keeper_palette("noctalia-v5", "JoKer")
+            .expect("marking the keeper's palette must succeed");
+
+        assert_eq!(
+            rearm_mute_for_existing_owner(),
+            Ok(false),
+            "the colours the keeper chose must not be silenced again"
+        );
+        assert_eq!(env.read(), FIXTURE, "the keeper's engine value must stay");
+        assert!(!env.marker().exists());
+    }
+
+    #[test]
+    fn startup_rearm_is_a_byte_level_noop_when_the_mute_is_already_held() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        env.write_authority();
+        assert_eq!(rearm_mute_for_existing_owner(), Ok(true));
+        let held = env.read();
+        let stamped = fs::metadata(&env.config).unwrap().modified().unwrap();
+
+        assert_eq!(
+            rearm_mute_for_existing_owner(),
+            Ok(false),
+            "a second start must find the mute already held"
+        );
+        assert_eq!(env.read(), held, "the held mute must stay byte-identical");
+        assert_eq!(
+            fs::metadata(&env.config).unwrap().modified().unwrap(),
+            stamped,
+            "the second start must SKIP the write, not rewrite the same bytes"
+        );
+    }
+
+    #[test]
+    fn startup_rearm_rebuilds_a_lost_marker_while_the_mute_is_already_held() {
+        // Descriptor + `"off"` + no marker: the switch is already what the
+        // claim wants, so nothing is flipped — but the session must still leave
+        // the memory a later genuine release needs, or the engine would stay
+        // silenced forever after the keeper takes the colours back.
+        let off = FIXTURE.replacen("\"policy\": \"wallpaper\"", "\"policy\": \"off\"", 1);
+        let env = PolicyEnv::new(Some(&off), None);
+        env.write_authority();
+
+        assert_eq!(
+            rearm_mute_for_existing_owner(),
+            Ok(false),
+            "the mute already holds: there is nothing to flip"
+        );
+        assert_eq!(env.read(), off, "the held mute must not be rewritten");
+
+        let marker = read_marker()
+            .expect("the marker read is an honest Result")
+            .expect("the lost memory must be rebuilt for a later release");
+        assert_eq!(marker.previous_value, ENGINE_DEFAULT_POLICY_VALUE);
+    }
+
+    #[test]
+    fn startup_rearm_never_touches_a_switch_the_engine_does_not_own() {
+        let fixed = r#"{"theme": {"policy": "fixed"}}"#;
+        let env = PolicyEnv::new(Some(fixed), None);
+        env.write_authority();
+
+        assert_eq!(
+            rearm_mute_for_existing_owner(),
+            Ok(false),
+            "`fixed` is the keeper's own choice: never ours to flip"
+        );
+        assert_eq!(env.read(), fixed);
+        assert!(!env.marker().exists());
+    }
 
     #[test]
     fn release_keeps_the_mute_while_a_theme_owns_the_palette() {
