@@ -664,7 +664,7 @@ fn reassert_decision(permit: crate::hypr_ipc::ReassertPermit) -> (&'static str, 
     match permit {
         crate::hypr_ipc::ReassertPermit::None => (
             "ASSERT REFUSED",
-            "no monitor event and no resume grace; the palette change is presumed legitimate"
+            "no monitor event and no resume grace; the writer is decided from the palette-change evidence (engine, HVE itself, or the keeper)"
                 .to_string(),
         ),
         granted => ("ASSERT GRANTED", format!("source={}", granted.as_str())),
@@ -678,9 +678,9 @@ fn cmd_assert_color_authority(proj: &Path) -> String {
     if permit == crate::hypr_ipc::ReassertPermit::None {
         tracing::info!(
             "[colour-defence] re-assert REFUSED (no monitor event, no resume grace): \
-             the keeper changed the palette; releasing the theme's colours to him, engine stays mute"
+             asking the palette-change evidence who wrote it (engine, HVE itself, or the keeper)"
         );
-        return handle_keeper_palette_change();
+        return handle_keeper_palette_change(proj);
     }
     tracing::info!(
         "[colour-defence] re-assert GRANTED (source={})",
@@ -698,7 +698,7 @@ fn cmd_assert_color_authority(proj: &Path) -> String {
 /// engine mute is a skwd-side concern, and only a foreign BACKGROUND change
 /// (W2) or a theme re-apply touches it. Answers `noop` to the watcher, exactly
 /// like the refusal always did.
-fn handle_keeper_palette_change() -> String {
+fn handle_keeper_palette_change(proj: &Path) -> String {
     // W6: while the picker-voice suspension is live — or inside its short
     // grace window after the picker closes — the engine is publishing on
     // purpose (or HVE is re-asserting the theme), so this palette change is
@@ -709,6 +709,47 @@ fn handle_keeper_palette_change() -> String {
             "the engine published for its own picker (or just after it closed); the theme keeps the colours",
         );
         return "noop\n".to_string();
+    }
+
+    // THREE writers reach this palette, not two: HVE itself, the engine, and
+    // the keeper. The refusal used to assume the keeper for every change
+    // without a monitor event or a resume grace, which is how skwd's own
+    // wallpaper-derived palette disarmed the guard for good (2026-10-22
+    // 04:48:27, one second after HVE applied the theme and handed skwd the
+    // poster) and how HVE's own repair re-disarmed it (2026-10-23 17:31:44).
+    // The picker's own surface is the one signal that really means his hand.
+    let picker_open = crate::providers::picker_presence() == Some(true);
+    if !picker_open {
+        let engine_published = crate::providers::engine_palette_epoch();
+        let our_stamp = crate::color_authority::self_write_epoch();
+        let engine_wrote_after_us = match (engine_published, our_stamp) {
+            // The engine overwrote the palette after our own write: that is
+            // the hijack, and re-asserting is what defends it. The freshness
+            // bound keeps it to THIS burst: without it an engine publish an
+            // hour ago (and our older stamp) would let the engine branch
+            // claim any later keeper change, and revert a deliberate pick.
+            (Some(published), Some(stamp)) => {
+                published > stamp && crate::providers::engine_palette_is_fresh(60)
+            }
+            // No stamp of ours: the engine's write is ours only if it is
+            // fresh enough to belong to this burst.
+            (Some(_), None) => crate::providers::engine_palette_is_fresh(10),
+            _ => false,
+        };
+        if engine_wrote_after_us {
+            crate::decision_log::record(
+                "ENGINE PALETTE",
+                "the engine published its own wallpaper-derived palette; re-asserting the theme instead of releasing it",
+            );
+            return resolve_applied_authority(proj);
+        }
+        if crate::providers::background::hve_is_acting() || crate::color_authority::self_write_recent() {
+            crate::decision_log::record(
+                "HVE WRITE",
+                "HVE itself wrote this palette (apply or repair); the change is ours, not the keeper's",
+            );
+            return "noop\n".to_string();
+        }
     }
     if let Some(descriptor) = crate::color_authority::read_descriptor() {
         match crate::color_authority::mark_keeper_palette(&descriptor.backend, &descriptor.theme) {
@@ -752,6 +793,10 @@ fn cmd_repair_color_authority(proj: &Path) -> String {
 /// picker-voice watch can give the theme its colours back when the picker
 /// closes without a background change.
 pub(crate) fn resolve_applied_authority(proj: &Path) -> String {
+    // This function is about to make the backend write a palette. The colour
+    // watcher will report that write as an EXTERNAL change; the stamp is how
+    // the refusal tells "HVE did it" from "a foreign writer did it".
+    let _ = crate::color_authority::stamp_self_write();
     let cfg = Config::load();
     let config_dir = dirs::config_dir()
         .or_else(|| {
@@ -782,6 +827,7 @@ fn cmd_quit(window: &slint::Weak<crate::MainWindow>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::os::unix::fs::PermissionsExt as _;
 
     // ── get_next_index ───────────────────────────────────────────────
@@ -1315,8 +1361,10 @@ mod tests {
             palette_name: "JokerTheme".to_string(),
         };
         crate::color_authority::write_descriptor(&authority).expect("claim must be written");
+        crate::providers::set_picker_running_for_test(Some(true));
 
-        let response = handle_keeper_palette_change();
+        let project = tempfile::tempdir().unwrap();
+        let response = handle_keeper_palette_change(project.path());
 
         assert_eq!(
             response, "noop\n",
@@ -1338,8 +1386,119 @@ mod tests {
     #[test]
     fn a_refused_reassert_without_a_claim_marks_nothing() {
         let _env = crate::test_utils::TempEnv::new();
-        assert_eq!(handle_keeper_palette_change(), "noop\n");
+        let project = tempfile::tempdir().unwrap();
+        assert_eq!(handle_keeper_palette_change(project.path()), "noop\n");
         assert!(!crate::color_authority::keeper_owns_palette());
+    }
+
+    /// A palette change HVE itself just wrote (the repair, or a granted
+    /// re-assert) comes back through the colour watcher as an external
+    /// change. Reading that as the keeper's hand disarms the guard forever:
+    /// measured 2026-10-23 17:31:44 — `repair-color-authority` repainted the
+    /// theme's palette, the watcher asked, the refusal marked the keeper, and
+    /// the guard was dead again one second after the repair.
+    #[test]
+    #[serial]
+    fn a_palette_change_hve_itself_wrote_is_not_the_keepers_hand() {
+        let _env = crate::test_utils::TempEnv::new();
+        crate::providers::set_picker_running_for_test(Some(false));
+        let authority = crate::color_authority::ColorAuthority {
+            backend: "noctalia-v5".to_string(),
+            theme: "Work".to_string(),
+            palette_file: "/tmp/hve/themes/Work/providers/noctalia-v5/palette.json".to_string(),
+            palette_name: "JokerTheme".to_string(),
+        };
+        crate::color_authority::write_descriptor(&authority).expect("claim must be written");
+        crate::color_authority::stamp_self_write().expect("the self-write stamp must land");
+
+        let project = tempfile::tempdir().unwrap();
+        assert_eq!(
+            handle_keeper_palette_change(project.path()),
+            "noop\n",
+            "the watcher must still see a quiet answer"
+        );
+        assert!(
+            !crate::color_authority::keeper_owns_palette(),
+            "HVE's own write must never be read as the keeper's hand"
+        );
+        assert_eq!(
+            crate::color_authority::read_descriptor(),
+            Some(authority),
+            "the claim must survive: only the keeper's own hand releases it"
+        );
+    }
+
+    /// The engine publishes its own wallpaper-derived palette. That change is
+    /// NOT the keeper's hand even though no monitor event and no resume grace
+    /// exist (the exact shape of the 2026-10-22 04:48:27 marker, written one
+    /// second after HVE applied the theme and handed skwd the poster).
+    #[test]
+    #[serial]
+    fn a_freshly_published_engine_palette_is_not_the_keepers_hand() {
+        let _env = crate::test_utils::TempEnv::new();
+        crate::providers::set_picker_running_for_test(Some(false));
+        let authority = crate::color_authority::ColorAuthority {
+            backend: "noctalia-v5".to_string(),
+            theme: "Work".to_string(),
+            palette_file: "/tmp/hve/themes/Work/providers/noctalia-v5/palette.json".to_string(),
+            palette_name: "JokerTheme".to_string(),
+        };
+        crate::color_authority::write_descriptor(&authority).expect("claim must be written");
+        crate::providers::publish_engine_palette_for_test()
+            .expect("the engine palette must be publishable");
+
+        let project = tempfile::tempdir().unwrap();
+        assert_eq!(handle_keeper_palette_change(project.path()), "noop\n");
+        assert!(
+            !crate::color_authority::keeper_owns_palette(),
+            "the engine's own palette must not disarm the guard"
+        );
+    }
+
+    /// An engine publish an hour old must NOT claim a change made now: with
+    /// no freshness bound, our older stamp plus that write would send every
+    /// later keeper change into the engine branch and revert a deliberate
+    /// pick. Outside its burst the engine is not evidence, so the change is
+    /// credited to the keeper and the guard steps aside (W5).
+    #[test]
+    #[serial]
+    fn an_old_engine_publish_does_not_claim_a_later_keepers_change() {
+        let _env = crate::test_utils::TempEnv::new();
+        crate::providers::set_picker_running_for_test(Some(false));
+        let authority = crate::color_authority::ColorAuthority {
+            backend: "noctalia-v5".to_string(),
+            theme: "Work".to_string(),
+            palette_file: "/tmp/hve/themes/Work/providers/noctalia-v5/palette.json".to_string(),
+            palette_name: "JokerTheme".to_string(),
+        };
+        crate::color_authority::write_descriptor(&authority).expect("claim must be written");
+        crate::providers::publish_engine_palette_for_test()
+            .expect("the engine palette must be publishable");
+        let engine = crate::providers::engine_palette_path().expect("engine palette path");
+        let status = std::process::Command::new("touch")
+            .arg("-d")
+            .arg("1 hour ago")
+            .arg(&engine)
+            .status()
+            .expect("touch must run");
+        assert!(status.success());
+        // Our own write is older still: the order alone must not decide.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        std::fs::write(
+            crate::color_authority::self_write_path(),
+            (now - 7200).to_string(),
+        )
+        .expect("the old stamp must land");
+
+        let project = tempfile::tempdir().unwrap();
+        assert_eq!(handle_keeper_palette_change(project.path()), "noop\n");
+        assert!(
+            crate::color_authority::keeper_owns_palette(),
+            "an engine write outside its burst is not evidence; the change is the keeper's"
+        );
     }
 
     /// The startup repair re-asserts the applied theme's colours. While the
@@ -1402,7 +1561,7 @@ mod tests {
             "a refusal must say so, with its reason, next time"
         );
         assert!(
-            body.contains("handle_keeper_palette_change()"),
+            body.contains("handle_keeper_palette_change(proj)"),
             "the refusal must hand the colours to the keeper (W5), not just answer noop"
         );
         let helper_index = code
@@ -1468,7 +1627,8 @@ mod tests {
         crate::providers::skwd_policy::suspend_color_authority().unwrap();
         assert!(crate::providers::skwd_policy::color_authority_suspended());
 
-        let response = handle_keeper_palette_change();
+        let project = tempfile::tempdir().unwrap();
+        let response = handle_keeper_palette_change(project.path());
 
         assert_eq!(response, "noop\n");
         assert!(
@@ -1485,7 +1645,7 @@ mod tests {
         // in flight (or HVE's own re-assert) must not release the theme either.
         crate::providers::skwd_policy::rehold_color_authority().unwrap();
         assert!(crate::providers::skwd_policy::color_authority_recently_suspended());
-        assert_eq!(handle_keeper_palette_change(), "noop\n");
+        assert_eq!(handle_keeper_palette_change(project.path()), "noop\n");
         assert!(
             !crate::color_authority::keeper_owns_palette(),
             "the grace window must keep the theme's colours after the picker closes"

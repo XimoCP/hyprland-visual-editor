@@ -369,8 +369,13 @@ const KNOWN_LEAKS: &[(&str, &str, usize)] = &[
     // with the v4 backend, so `quickshell` and `hyprctl` (the v4 reload
     // command) measure 0 and the `noctalia` token counts only the v5 path
     // module's own identity — lowered 1 → 0, 6 → 0 and 33 → 12.
+    // 12 → 13 (2026-10-23): `palette_file_path` joins this module so a
+    // backend's palettes directory is resolved HERE and never by the caller
+    // that needs a palette file (the engine's published palette was the
+    // first such caller). Self-identity, the sanctioned place for it: the
+    // wiring that names both backends lives in `providers/mod.rs`.
     ("src/providers/noctalia_paths.rs", "hyprctl", 0),
-    ("src/providers/noctalia_paths.rs", "noctalia", 12),
+    ("src/providers/noctalia_paths.rs", "noctalia", 13),
     ("src/providers/noctalia_paths.rs", "quickshell", 0),
     ("assets/scripts/colors.sh", "noctalia", 4),
     ("assets/scripts/colors.sh", "matugen", 2),

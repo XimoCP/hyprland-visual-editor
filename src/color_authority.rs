@@ -153,6 +153,87 @@ pub fn mark_keeper_background(engine: &str) -> std::io::Result<()> {
     write_atomic(&keeper_palette_path(), data.as_bytes(), "keeper-palette")
 }
 
+/// File name of the self-write stamp inside HVE's cache dir.
+///
+/// Meaning: HVE itself just wrote a palette into the backend (a repair, a
+/// granted re-assert, the picker-voice close). That write comes back through
+/// the colour watcher as an EXTERNAL change, and reading it as the keeper's
+/// hand disarmed the guard for good (measured 2026-10-23 17:31:44: the repair
+/// repainted the theme's palette and the refusal marked the keeper one second
+/// later). The stamp lets the refusal tell its own write from a foreign one.
+pub const SELF_WRITE_FILE: &str = "color-write.last";
+
+/// How long a self-write stamp may explain a palette change. Short on
+/// purpose: it must cover the watcher's debounce and inner burst loop, and
+/// nothing more, so a genuine foreign write right after ours is still judged
+/// on its own evidence (the engine's palette mtime settles that tie).
+const SELF_WRITE_WINDOW_SECS: u64 = 10;
+
+/// Absolute path of the self-write stamp on this machine.
+pub fn self_write_path() -> PathBuf {
+    hve_cache_dir().join(SELF_WRITE_FILE)
+}
+
+/// Record "HVE wrote the palette now". Best-effort by contract: a failed
+/// stamp must never block a repair.
+pub fn stamp_self_write() -> std::io::Result<()> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    write_atomic(&self_write_path(), now.to_string().as_bytes(), "color-write")
+}
+
+/// Epoch seconds of the last self-write, when the stamp exists and parses.
+pub fn self_write_epoch() -> Option<u64> {
+    fs::read_to_string(self_write_path())
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+}
+
+/// Whether HVE wrote a palette within [`SELF_WRITE_WINDOW_SECS`].
+pub fn self_write_recent() -> bool {
+    let Some(stamp) = self_write_epoch() else {
+        return false;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    now.saturating_sub(stamp) <= SELF_WRITE_WINDOW_SECS
+}
+
+/// Drop a marker the engine has since overwritten.
+///
+/// The marker means "the keeper chose this palette by hand". If the engine's
+/// own wallpaper-derived palette was written AFTER the marker, that sentence
+/// is no longer true: the last hand that touched the palette was the machine's
+/// (measured 2026-10-22 04:48:27 marker vs 2026-10-23 16:54:11 engine write).
+/// Called on resume from suspend, where the keeper's own logic holds: waking
+/// up is not a palette choice.
+///
+/// Returns `true` when a marker was dropped. Absent marker or absent engine
+/// palette → `false`, silently: nothing to judge.
+pub fn drop_marker_the_engine_overwrote() -> bool {
+    let marker = match fs::metadata(keeper_palette_path()).and_then(|m| m.modified()) {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    let Some(engine) = crate::providers::engine_palette_modified() else {
+        return false;
+    };
+    if engine > marker && clear_keeper_palette().is_ok() {
+        crate::decision_log::record(
+            "KEEPER PALETTE DROPPED",
+            "the engine wrote its own palette after the marker; waking up is not a palette choice",
+        );
+        return true;
+    }
+    false
+}
+
 /// Drop the keeper-palette marker. Removing an absent marker is Ok.
 pub fn clear_keeper_palette() -> std::io::Result<()> {
     match fs::remove_file(keeper_palette_path()) {
@@ -322,5 +403,54 @@ mod tests {
             !keeper_owns_palette(),
             "clearing the claim must clear the keeper's takeover"
         );
+    }
+
+    /// A marker the engine has since overwritten was never the keeper's hand,
+    /// so waking up drops it and the guard comes back armed. Measured case:
+    /// marker 2026-10-22 04:48:27, engine write 2026-10-23 16:54:11.
+    #[test]
+    fn a_marker_the_engine_overwrote_is_dropped() {
+        let _env = TempEnv::new();
+        mark_keeper_palette("noctalia-v5", "Work").expect("mark must succeed");
+        backdate(&keeper_palette_path(), "2 hours ago");
+        crate::providers::publish_engine_palette_for_test()
+            .expect("the engine palette must be publishable");
+
+        assert!(
+            drop_marker_the_engine_overwrote(),
+            "a marker older than the engine's own write must be dropped"
+        );
+        assert!(!keeper_owns_palette());
+    }
+
+    /// The keeper's own choice survives: a marker NEWER than the engine's last
+    /// publish is a real hand-made choice, and resume must leave it alone.
+    #[test]
+    fn a_marker_newer_than_the_engine_palette_survives_on_resume() {
+        let _env = TempEnv::new();
+        crate::providers::publish_engine_palette_for_test()
+            .expect("the engine palette must be publishable");
+        let engine = crate::providers::engine_palette_path()
+            .expect("the engine palette path must resolve");
+        backdate(&engine, "2 hours ago");
+        mark_keeper_palette("noctalia-v5", "Work").expect("mark must succeed");
+
+        assert!(
+            !drop_marker_the_engine_overwrote(),
+            "the keeper's later choice must not be dropped"
+        );
+        assert!(keeper_owns_palette());
+    }
+
+    /// Backdate a file so the marker/engine order is unambiguous without
+    /// sleeping a real second in the suite.
+    fn backdate(path: &std::path::Path, when: &str) {
+        let status = std::process::Command::new("touch")
+            .arg("-d")
+            .arg(when)
+            .arg(path)
+            .status()
+            .expect("touch must run");
+        assert!(status.success(), "touch must succeed on {path:?}");
     }
 }

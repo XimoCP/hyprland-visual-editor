@@ -485,6 +485,11 @@ fn note_clock_sample() {
     let mut resume = RESUME_STATE.lock().unwrap_or_else(|e| e.into_inner());
     if resume.observe(clock_sample()) {
         log_resume_detected();
+        // Waking up is not a palette choice: a marker the engine has since
+        // overwritten was never the keeper's hand, so resume drops it and the
+        // guard comes back armed (measured 2026-10-22 marker, engine write the
+        // next day at 16:54:11).
+        crate::color_authority::drop_marker_the_engine_overwrote();
     }
 }
 

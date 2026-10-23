@@ -169,6 +169,20 @@ impl NoctaliaV5Paths {
     }
 }
 
+/// Absolute path of one of Noctalia's OWN palette files, resolved by palette
+/// name (`<config>/palettes/<name>.json`).
+///
+/// Here, not in the caller: naming Noctalia's palette directory is this
+/// module's job, and the capability-routing contract keeps a backend's paths
+/// inside its backend. The caller supplies the name it owns (the engine's
+/// published palette name is engine knowledge) and this only resolves the
+/// directory the shell writes into. `None` when the config dir is unknown.
+pub fn palette_file_path(name: &str) -> Option<PathBuf> {
+    NoctaliaV5Paths
+        .config_dir()
+        .map(|dir| dir.join("palettes").join(format!("{name}.json")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,3 +284,4 @@ mod tests {
         }
     }
 }
+

@@ -3049,12 +3049,14 @@ impl ThemeProvider for NoctaliaV5Provider {
             );
             return Ok(());
         }
-        // While an apply holds the engine's colour authority off, the hold
-        // is in flight and the re-assert worker owns the palette — a
-        // watcher-driven re-assert now would fight it. Same held state the
-        // apply path opens and clears, asked of the router; quiet by
-        // design, nothing alarming.
-        if background::color_authority_held() {
+        // While an APPLY holds the engine's colour authority off, the hold is
+        // in flight and the apply's own worker owns the palette — a
+        // watcher-driven re-assert now would fight it. The held state alone is
+        // NOT that window: after a restart the startup re-arm leaves a PENDING
+        // mute marker with no apply running (measured 2026-10-23 17:55), and
+        // skipping there made every re-assert a silent noop, so a wrong
+        // palette stayed wrong with the guard wide awake and useless.
+        if background::color_authority_held() && background::hve_is_acting() {
             tracing::debug!(
                 "[noctalia-v5] colour authority yielded to the engine; skipping colour re-assert"
             );
@@ -8224,6 +8226,65 @@ scale = 1.3
         assert!(
             !background::color_authority_held(),
             "the dropped hold must clear the held state"
+        );
+    }
+
+    /// The REST mute is not an apply window: after a restart the startup
+    /// re-arm leaves a PENDING marker while no apply runs. The re-assert must
+    /// still repair a drifted palette then — measured 2026-10-23 17:55, when
+    /// `color_authority_held()` alone turned the defence into a silent noop
+    /// and the wrong palette survived.
+    #[test]
+    #[serial]
+    fn reassert_colours_runs_while_only_the_rest_mute_is_held() {
+        let stub = ColorStub::new("custom skwd-wall", 0, None, true);
+        let theme = stub.custom_theme("custom JokerTheme", true);
+        // The startup re-arm's own state: a pending mute marker, engine off,
+        // no apply in flight.
+        let marker = crate::providers::skwd_policy::marker_path();
+        std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        std::fs::write(
+            &marker,
+            format!(
+                r#"{{"previous_value":"wallpaper","config_path":"{}"}}"#,
+                stub.skwd_cfg.display()
+            ),
+        )
+        .unwrap();
+        assert!(
+            background::color_authority_held(),
+            "precondition: the rest mute holds the marker"
+        );
+        assert!(
+            !background::hve_is_acting(),
+            "precondition: no apply is in flight"
+        );
+        let live_path = PathBuf::from(std::env::var("HVE_NOCTALIA_CONFIG").unwrap())
+            .join("palettes")
+            .join("JokerTheme.json");
+        std::fs::create_dir_all(live_path.parent().unwrap()).unwrap();
+        std::fs::write(&live_path, br#"{"palette":"hijacked"}"#).unwrap();
+
+        let res = NoctaliaV5Provider::new().reassert_colours(theme.path());
+
+        let _ = std::fs::remove_file(&marker);
+        assert!(res.is_ok(), "the re-assert must succeed: {:?}", res);
+        assert_eq!(
+            stub.sets(),
+            1,
+            "a drifted palette must be repaired while only the rest mute is held"
+        );
+        assert_eq!(
+            std::fs::read(&live_path).unwrap(),
+            std::fs::read(
+                theme
+                    .path()
+                    .join("providers")
+                    .join("noctalia-v5")
+                    .join("palette.json")
+            )
+            .unwrap(),
+            "the live palette must converge on the theme's snapshot"
         );
     }
 

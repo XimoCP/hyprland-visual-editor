@@ -28,6 +28,65 @@ pub use background::{
 /// exactly like `start_foreign_change_watch`.
 pub(crate) use skwd_policy::color_authority_recently_suspended;
 
+/// The engine's own published palette, routed as facts for the CORE.
+///
+/// `ipc.rs` judges a palette change by asking "did the engine write this one?",
+/// and it must not name the engine module to do it: the palette NAME is engine
+/// knowledge (`skwd_engine`), the palettes directory is Noctalia's
+/// (`noctalia_paths`), and this router is the one place allowed to hold both
+/// together. Every answer is evidence-only: `None` means "cannot tell", which
+/// callers treat as "no evidence", never as "the engine did it".
+pub(crate) fn engine_palette_path() -> Option<std::path::PathBuf> {
+    noctalia_paths::palette_file_path(skwd_engine::ENGINE_PALETTE_NAME)
+}
+
+/// When the engine last published its palette, as `SystemTime`.
+pub(crate) fn engine_palette_modified() -> Option<std::time::SystemTime> {
+    let path = engine_palette_path()?;
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+/// When the engine last published its palette, in epoch seconds.
+pub(crate) fn engine_palette_epoch() -> Option<u64> {
+    engine_palette_modified()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs())
+}
+
+/// Whether the engine published its palette freshly enough to explain a
+/// palette change the watcher just reported.
+pub(crate) fn engine_palette_is_fresh(window_secs: u64) -> bool {
+    let Some(published) = engine_palette_epoch() else {
+        return false;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    now.saturating_sub(published) <= window_secs
+}
+
+/// Test seam: publish the engine's palette now, so a hermetic test can prove a
+/// fresh engine write is judged as the engine's own and never as the keeper's
+/// hand.
+#[cfg(test)]
+pub(crate) fn publish_engine_palette_for_test() -> std::io::Result<()> {
+    let path = engine_palette_path()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no config dir"))?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&path, b"{\"dark\":{}}")
+}
+
+/// Test seam: force the engine-picker answer so a hermetic test never depends
+/// on what runs on the box.
+#[cfg(test)]
+pub(crate) fn set_picker_running_for_test(value: Option<bool>) {
+    skwd_engine::set_picker_running_for_test(value);
+}
+
 use crate::config::Config;
 use crate::engine::Engine;
 use crate::theme_manager::{ThemeManager, ThemeProvider};

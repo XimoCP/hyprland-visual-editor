@@ -258,6 +258,12 @@ pub(crate) fn picker_is_running() -> Option<bool> {
 /// open/close signal (keeper's directive: events instead of timers).
 pub(crate) const ENGINE_PICKER_LAYER: &str = "skwd-wall";
 
+/// The palette NAME the engine publishes for its own wallpaper-derived
+/// colours, and therefore the file it lands in under the backend's palettes
+/// directory. Engine knowledge: it is how a palette change can say "the
+/// engine did this" instead of guessing the keeper's hand.
+pub(crate) const ENGINE_PALETTE_NAME: &str = "skwd-wall";
+
 /// Whether a Hyprland layer namespace is the engine's own picker surface.
 /// `skwd-paper` — the still renderer HVE itself launches — is a DIFFERENT
 /// namespace, present all the time; it must never read as "the keeper opened
