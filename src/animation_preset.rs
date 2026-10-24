@@ -563,24 +563,6 @@ mod tests {
         Some(body[..end].to_string())
     }
 
-    /// Styles the generator can emit for one canonical leaf. This table sits next
-    /// to the generator and mirrors its assumptions, so it can only confirm
-    /// self-consistency — it can never see a wrong entry of its own. The
-    /// independent check is `every_emitted_family_is_used_by_the_shipped_corpus_on_the_same_leaf`,
-    /// which derives the truth from `assets/animations/*.lua`.
-    ///
-    /// Derived from the 19 real presets in `assets/animations/`: `windowsMove`
-    /// is slide-only, `workspaces` never uses popin, and the windows leaves
-    /// never use `fade` (Hyprland rejects it there).
-    fn allowed_styles_for(leaf: &str) -> &'static [&'static str] {
-        match leaf {
-            "windowsIn" | "windowsOut" => &["slide", "popin 80%", "popin 100%", "slidefade 20%"],
-            "windowsMove" => &["slide"],
-            "workspaces" => &["slide", "fade", "slidefade 20%"],
-            other => panic!("unexpected leaf {other}"),
-        }
-    }
-
     /// Leading style family of a raw Lua style value, parameters stripped:
     /// `popin 95%` → `popin`, `slidefade 20%` → `slidefade`,
     /// `slidevert` → `slidevert`, `slide right` → `slide`.
@@ -594,8 +576,11 @@ mod tests {
 
     /// Style families observed per leaf across the shipped preset corpus in
     /// `assets/animations/` — files Hyprland already accepts. This is the
-    /// generator's INDEPENDENT source of truth: unlike `allowed_styles_for`,
-    /// no entry here was written from the generator's own assumptions.
+    /// generator's INDEPENDENT source of truth: no entry here was written
+    /// from the generator's own assumptions. The table that used to sit
+    /// beside the generator (`allowed_styles_for`) is gone on purpose: it
+    /// encoded the generator's assumption back at itself, so it passed
+    /// while Hyprland rejected the emitted style.
     fn corpus_families_per_leaf() -> BTreeMap<String, BTreeSet<String>> {
         let mut map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut files = 0usize;
@@ -655,7 +640,13 @@ mod tests {
                 style,
             };
             let lua = generate("Corpus Check", &p);
-            for (leaf, value) in emitted_leaf_styles(&lua) {
+            let emitted = emitted_leaf_styles(&lua);
+            assert_eq!(
+                emitted.len(),
+                4,
+                "four canonical leaves must carry a style (style {style:?})\n{lua}"
+            );
+            for (leaf, value) in emitted {
                 let family = style_family(&value);
                 if CORPUS_UNCONFIRMED.contains(&(leaf.as_str(), family.as_str())) {
                     continue;
@@ -677,34 +668,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn generate_emits_a_style_valid_for_each_leaf() {
-        for style in [
-            AnimationStyle::Slide,
-            AnimationStyle::Fade,
-            AnimationStyle::Popin,
-            AnimationStyle::SlideFade,
-        ] {
-            let p = AnimationParams {
-                bezier: [0.4, -0.3, 0.2, 1.15],
-                speed: 2.0,
-                style,
-            };
-            let lua = generate("Leaf Map", &p);
-            let emitted = emitted_leaf_styles(&lua);
-            assert_eq!(
-                emitted.len(),
-                4,
-                "four canonical leaves must carry a style (style {style:?})\n{lua}"
-            );
-            for (leaf, value) in &emitted {
-                assert!(
-                    allowed_styles_for(leaf).contains(&value.as_str()),
-                    "style {value:?} is invalid for leaf {leaf:?} (style {style:?})\n{lua}"
-                );
-            }
-        }
-    }
 
     #[test]
     fn popin_never_reaches_workspaces_or_windows_move() {
