@@ -55,6 +55,8 @@ if [ "$LANG_CODE" = "es" ]; then
     MSG_THEMES_TO="Temas de referencia → %s"
     MSG_THEME_KEPT="Tema existente conservado: %s"
     MSG_DESKTOP_TO="Acceso directo → %s (%s)"
+    MSG_ICON_TO="Icono del lanzador → %s"
+    MSG_ICON_MISSING="No se encontró el icono del lanzador (%s) — el acceso directo quedará sin imagen"
     MSG_DETECTING_COLOR="Detectando herramienta de colores..."
     MSG_COLOR_TOOL="Herramienta de colores: %s"
     MSG_WATCHING="Vigilando:  %s"
@@ -104,6 +106,8 @@ else
     MSG_THEMES_TO="Reference themes → %s"
     MSG_THEME_KEPT="kept existing theme: %s"
     MSG_DESKTOP_TO="Desktop entry → %s (%s)"
+    MSG_ICON_TO="Launcher icon → %s"
+    MSG_ICON_MISSING="Launcher icon not found (%s) — the desktop entry will show no picture"
     MSG_DETECTING_COLOR="Detecting color tool..."
     MSG_COLOR_TOOL="Color tool: %s"
     MSG_WATCHING="Watching:    %s"
@@ -160,6 +164,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HVE_BIN="$HOME/.local/bin/hve"
 HVE_SCRIPTS="$HOME/.local/bin/assets/scripts"
 HVE_DESKTOP="$HOME/.local/share/applications/hve.desktop"
+# `Icon=hve` in the desktop entry is a bare name resolved through the icon
+# theme, which keeps the entry portable. This is where that name resolves.
+HVE_ICON_DIR="$HOME/.local/share/icons/hicolor"
+HVE_ICON="$HVE_ICON_DIR/256x256/apps/hve.png"
 HVE_CONFIG_DIR="$(xdg_dir "${XDG_CONFIG_HOME:-}" "$HOME/.config")/hve"
 HVE_CONFIG_JSON="$HVE_CONFIG_DIR/config.json"
 HVE_IPC="$HOME/.local/bin/hve-ipc"
@@ -404,6 +412,33 @@ if [ -d "$SCRIPT_DIR/assets/themes" ]; then
     done
 fi
 
+# Launcher icons. The desktop entry ships `Icon=hve`, a bare name that the icon
+# theme resolves, so the pictures must live in the hicolor theme under the
+# user's data dir — where every other application's icon lives. They are NOT
+# runtime assets: ~/.local/bin/assets/ is HVE's own data dir and no icon theme
+# reads it, so the asset allowlist above deliberately omits `icons`.
+if [ -d "$SCRIPT_DIR/assets/icons/hicolor" ]; then
+    mkdir -p "$HVE_ICON_DIR"
+    # An icon theme answers a size request with the CLOSEST image it has, so a
+    # leftover hve.png from an earlier install — another size, another artwork
+    # — keeps winning over the new picture. Those files are ours by name, so
+    # drop every one before laying down the current set.
+    for stale in "$HVE_ICON_DIR"/*/apps/hve.png; do
+        [ -e "$stale" ] || continue
+        rm -f "$stale"
+    done
+    cp -r "$SCRIPT_DIR/assets/icons/hicolor/." "$HVE_ICON_DIR/"
+    # Launchers cache icon lookups. Without a refresh some keep showing the
+    # previous picture until the next login. Best-effort: a missing tool only
+    # costs the user a logout.
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -f -t "$HVE_ICON_DIR" >/dev/null 2>&1 || true
+    fi
+    ok "$(msg_fmt "$MSG_ICON_TO" "$HVE_ICON")"
+else
+    warn "$(msg_fmt "$MSG_ICON_MISSING" "$SCRIPT_DIR/assets/icons/hicolor")"
+fi
+
 # Desktop entry
 if [ -f "$SCRIPT_DIR/hve.desktop" ]; then
     mkdir -p "$HOME/.local/share/applications"
@@ -541,6 +576,9 @@ echo ""
 echo "   $(msg_fmt "$MSG_BINARY_TO" "$HVE_BIN")"
 echo "   $(msg_fmt "$MSG_ASSETS_TO")"
 echo "   $(msg_fmt "$MSG_DESKTOP_TO" "$HVE_DESKTOP" "$HVE_BIN")"
+if [ -f "$HVE_ICON" ]; then
+    echo "   $(msg_fmt "$MSG_ICON_TO" "$HVE_ICON")"
+fi
 if [ "$AUTOSTART_INSTALLED" = true ]; then
     echo "   $MSG_AUTOSTART_TO"
 elif [ "$AUTOSTART_REQUESTED" = true ]; then

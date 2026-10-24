@@ -2105,6 +2105,109 @@ fn install_sh_leaves_the_portable_desktop_exec_line_alone() {
     );
 }
 
+/// The launcher entry must point at the icon HVE actually ships. It used to
+/// point at `preferences-desktop-theme`, a generic icon borrowed from the
+/// system icon theme: HVE appeared in the launcher wearing another app's face.
+/// `Icon=hve` (a bare name, not a path) lets the icon theme resolve it, which
+/// keeps the desktop entry portable across machines and home directories.
+#[test]
+fn desktop_entry_uses_the_shipped_hve_icon() {
+    let desktop = std::fs::read_to_string(repo_root().join("hve.desktop")).unwrap();
+    let icon_line = desktop
+        .lines()
+        .find(|l| l.starts_with("Icon="))
+        .expect("hve.desktop must declare an Icon");
+    assert_eq!(
+        icon_line, "Icon=hve",
+        "the launcher icon must be our own, resolved through the icon theme"
+    );
+}
+
+/// The icons the launcher reads are files on disk, so they must exist as
+/// square PNGs. Several sizes are shipped because an icon theme answers a
+/// size request with the CLOSEST image it has: a missing size means a request
+/// for it falls back to a downscale or, worse, to a stale file.
+#[test]
+fn shipped_launcher_icons_are_square_pngs_at_their_declared_sizes() {
+    for size in [48u32, 64, 128, 256] {
+        let path = repo_root().join(format!(
+            "assets/icons/hicolor/{size}x{size}/apps/hve.png"
+        ));
+        let png = std::fs::read(&path).unwrap_or_else(|e| {
+            panic!(
+                "{} must be shipped ({e}); regenerate it with scripts/gen-icon.sh",
+                path.display()
+            )
+        });
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n", "{} must be a real PNG", path.display());
+        let width = u32::from_be_bytes(png[16..20].try_into().unwrap());
+        let height = u32::from_be_bytes(png[20..24].try_into().unwrap());
+        assert_eq!(
+            (width, height),
+            (size, size),
+            "{} must be exactly {size}x{size}: an icon theme trusts the directory name",
+            path.display()
+        );
+    }
+}
+
+/// `Icon=hve` only resolves if the files sit in the user's hicolor icon theme.
+/// The runtime asset loop copies the binary's own data into
+/// `~/.local/bin/assets/`, which no icon theme reads, so the icons need their
+/// own install step — plus an icon-cache refresh, or some launchers keep
+/// showing the old picture. Stale `hve.png` files from an earlier install must
+/// also go: they are ours by name and would shadow the new artwork.
+#[test]
+fn install_sh_installs_the_launcher_icons_into_the_icon_theme() {
+    let src = std::fs::read_to_string(repo_root().join("install.sh")).unwrap();
+    assert!(
+        src.contains("assets/icons/hicolor"),
+        "install.sh must copy the shipped launcher icons"
+    );
+    assert!(
+        src.contains("HVE_ICON_DIR=\"$HOME/.local/share/icons/hicolor\""),
+        "the icons must land in the hicolor theme, where `Icon=hve` resolves"
+    );
+    assert!(
+        src.contains("\"$HVE_ICON_DIR\"/*/apps/hve.png"),
+        "install.sh must clear stale hve.png files from every size directory, \
+         or an older picture keeps winning the size lookup"
+    );
+    assert!(
+        src.contains("cp -r \"$SCRIPT_DIR/assets/icons/hicolor/.\""),
+        "install.sh must actually copy the shipped icon tree, not only name it"
+    );
+    assert!(
+        src.contains("gtk-update-icon-cache -f -t \"$HVE_ICON_DIR\" >/dev/null 2>&1 || true"),
+        "the icon cache refresh must stay best-effort: under set -e a failing \
+         gtk-update-icon-cache would abort the whole install"
+    );
+    let loop_line = src
+        .lines()
+        .find(|l| l.contains("for dir in"))
+        .expect("install.sh must keep the explicit asset allowlist");
+    assert!(
+        !loop_line.contains("icons"),
+        "the launcher icons are not runtime data for ~/.local/bin/assets/: {loop_line}"
+    );
+}
+
+/// Uninstall must not leave a recognizable HVE icon in the user's launcher
+/// after the application is gone — at any size, since whichever the theme
+/// keeps would still resolve.
+#[test]
+fn uninstall_sh_removes_every_launcher_icon_size() {
+    let src = std::fs::read_to_string(repo_root().join("uninstall.sh")).unwrap();
+    assert!(
+        src.contains("\"$HVE_ICON_DIR\"/*/apps/hve.png"),
+        "uninstall.sh must remove the launcher icons it installed, at every size"
+    );
+    assert!(
+        src.contains("rm -f \"$icon\""),
+        "the removal call must actually exist, not just the path variable"
+    );
+}
+
 /// The same sandbox with the installed binary present: the watchdog must do
 /// nothing at all.
 #[test]

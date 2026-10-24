@@ -107,6 +107,7 @@ prompt_yes_no() {
 HVE_BIN="$HOME/.local/bin/hve"
 HVE_ASSETS="$HOME/.local/bin/assets"
 HVE_DESKTOP="$HOME/.local/share/applications/hve.desktop"
+HVE_ICON_DIR="$HOME/.local/share/icons/hicolor"
 HVE_IPC="$HOME/.local/bin/hve-ipc"
 # HVE_FIRST_TOGGLE removed — priming is now internal via winit/xdg-shell
 HVE_IPC_SYMLINK="/usr/local/bin/hve-ipc"
@@ -181,8 +182,27 @@ remove_file "$HVE_BIN" "Binario (~/.local/bin/hve)"
 # ── 2. Assets (scripts, borders, shaders, etc.) ────────────────────────────
 remove_dir "$HVE_ASSETS" "Assets (~/.local/bin/assets/)"
 
-# ── 3. Desktop entry ───────────────────────────────────────────────────────
+# ── 3. Desktop entry + launcher icon ───────────────────────────────────────
 remove_file "$HVE_DESKTOP" "Acceso directo (.local/share/applications/hve.desktop)"
+# The icons live in the hicolor theme, not next to the binary. Leaving them
+# behind keeps a familiar face in the launcher for an application that is gone,
+# and a stale copy in any size directory would shadow a future install.
+REMOVED_ICONS=0
+for icon in "$HVE_ICON_DIR"/*/apps/hve.png; do
+    [ -e "$icon" ] || continue
+    rm -f "$icon"
+    REMOVED_ICONS=$((REMOVED_ICONS + 1))
+done
+if [ "$REMOVED_ICONS" -gt 0 ]; then
+    ok "Iconos del lanzador (.local/share/icons/hicolor/*/apps/hve.png) → $MSG_OK"
+    REMOVED+=("Iconos del lanzador")
+else
+    warn "Iconos del lanzador (.local/share/icons/hicolor/*/apps/hve.png) → $MSG_NOT_FOUND"
+    NOT_FOUND+=("Iconos del lanzador")
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1 && [ -d "$HVE_ICON_DIR" ]; then
+    gtk-update-icon-cache -f -t "$HVE_ICON_DIR" >/dev/null 2>&1 || true
+fi
 
 # ── 4. Autostart ───────────────────────────────────────────────────────────
 # Install never writes ~/.config/autostart/hve.desktop; the real autostart is

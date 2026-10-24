@@ -464,6 +464,7 @@ hve/
 │       └── hve_presets.rs  ← Provider de presets HVE (anim/border/shader/geometría)
 ├── assets/
 │   ├── hve_logo.svg        ← Icono vectorial
+│   ├── icons/hicolor/      ← Iconos del lanzador, 48/64/128/256 (regenerar: scripts/gen-icon.sh)
 │   ├── scripts/            ← 15 scripts bash (ver abajo)
 │   ├── animations/         ← 18 presets × 2 formatos = 36 archivos
 │   ├── borders/            ← 14 presets × 2 formatos = 28 archivos

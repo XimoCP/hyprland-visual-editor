@@ -29,6 +29,7 @@ hve/
 ├── src/                    ← Source code (see below)
 └── assets/
     ├── hve_logo.svg        ← Vector icon
+    ├── icons/hicolor/      ← Launcher icons, 48/64/128/256 (regenerate with scripts/gen-icon.sh)
     ├── owl_neon.png        ← Decorative image
     ├── branding/           ← Social preview / promo art (the GitHub OG image)
     ├── themes/             ← Reference themes, shipped as self-contained packages
