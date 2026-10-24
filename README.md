@@ -139,6 +139,8 @@ For dependencies, installation paths and everything the installer does:
 
 **→ [Installation](docs/wiki/Installation.md)**
 
+> **Tested on Arch.** The installer also knows Debian, Fedora, openSUSE, Void and Gentoo, but those package paths have never been run. They are implemented, not proven — if one fails, install the dependencies by hand and open an issue.
+
 ---
 
 ## 🏃 Quick start

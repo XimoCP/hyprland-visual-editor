@@ -202,11 +202,12 @@ hiding behind green tests.
       `cargo clippy --all-targets -- -D warnings` from any cwd. The 15 `neg_cmp_op_on_partial_ord`
       sites route through `not_positive_or_nan`, which keeps the NaN-safe negation instead of flipping
       the operator. Verified cross-model (glm-5.3-flash): behaviour-identical.
-- [ ] **M4 — `install.sh`**: five of its six distro branches have never run. OPEN, and it needs a
-      decision before work starts: the detection reads `/etc/os-release` by absolute path, so proving
-      the other five branches means either real environments or extracting the detection into a
-      sourceable function with an injectable path. The second is a refactor of the installer (Tier 3)
-      and it changes a script whose contract tests read it by string — it is not a last-minute edit.
+- [x] **M4 — `install.sh`**: CLOSED BY THE KEEPER'S DECISION (2026-10-24) — document it, do not
+      build the harness. The Arch-family path is the only one that has run end to end; Debian, Fedora,
+      openSUSE, Void and Gentoo are implemented and reviewed but unproven. That statement is now in
+      `README.md` (one line under Install) and `docs/wiki/Installation.md` (a blockquote under "What
+      you need first"), telling the reader to install the dependencies by hand and open an issue if a
+      package step fails — the report is what turns a branch into a tested one. No code changed.
 
 ## Acceptance criteria
 
@@ -252,7 +253,11 @@ hiding behind green tests.
 - **P8/H1/M1/M3/H2 commits** are on `hve2-visual-rewrite`; the suite stands at 1845 passed / 3 failed,
   those 3 being the pre-existing colour-ownership and watcher set.
 
+- **M4 closed by decision** (2026-10-24) — documented as Arch-tested-only in `README.md` and
+  `docs/wiki/Installation.md`; the installer itself was not touched.
+
 ## Next step
 
-M4 needs the keeper's call (real environments vs. extracting the detection). Nothing else in this
-tracker blocks publication.
+Nothing in this tracker blocks publication. The only open thread is H2's remaining pattern (51 tests
+in `ui_tests.rs` that read source text), and the unexplained forced close that H1's log capture waits
+for.

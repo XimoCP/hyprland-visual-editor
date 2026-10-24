@@ -13,6 +13,8 @@ HVE installs from a clone of the repository. It builds the app, puts the binary 
 
 The installer knows Arch, Manjaro, EndeavourOS, CachyOS, Artix, Debian, Ubuntu, Pop, Linux Mint, Elementary, Fedora, openSUSE, Void and Gentoo, and installs the system packages for you. On any other distribution it stops with an "unsupported" message and asks you to install the dependencies by hand.
 
+> **Tested on Arch only.** The Arch-family path is the one that has actually run end to end. The Debian, Fedora, openSUSE, Void and Gentoo branches are implemented and reviewed, but nobody has run them yet — treat them as unproven. If a package step fails on your distribution, install the dependencies listed below by hand and open an issue: that report is what turns the branch into a tested one.
+
 ## ⚡ Install
 
 From a clone of the repository, at its root:
