@@ -117,8 +117,10 @@ impl BorderParams {
 /// Parse preset file text into structured params. Never panics.
 pub fn parse(text: &str) -> BorderParams {
     let aliases = collect_locals(text);
-    let mut params = BorderParams::default();
-    params.active_colors = extract_colors(text, &aliases);
+    let mut params = BorderParams {
+        active_colors: extract_colors(text, &aliases),
+        ..Default::default()
+    };
     if let Some(angle) = extract_int_value(text, "angle") {
         params.angle = angle;
     }
@@ -290,8 +292,8 @@ fn find_colors_block(text: &str) -> Option<&str> {
         let rel = find_key(search, "colors")?;
         let abs = text.len() - search.len() + rel;
         let after_key = text[abs + "colors".len()..].trim_start();
-        if after_key.starts_with('=') {
-            let after_eq = after_key[1..].trim_start();
+        if let Some(stripped) = after_key.strip_prefix('=') {
+            let after_eq = stripped.trim_start();
             if after_eq.starts_with('{') {
                 return match_brace(after_eq);
             }
@@ -430,8 +432,8 @@ fn find_shadow_block(text: &str) -> Option<&str> {
         let rel = find_key(search, "shadow")?;
         let abs = text.len() - search.len() + rel;
         let after = text[abs + "shadow".len()..].trim_start();
-        if after.starts_with('=') {
-            let after_eq = after[1..].trim_start();
+        if let Some(stripped) = after.strip_prefix('=') {
+            let after_eq = stripped.trim_start();
             if after_eq.starts_with('{') {
                 return match_brace(after_eq);
             }

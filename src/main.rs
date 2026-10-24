@@ -2760,10 +2760,10 @@ pub(crate) fn reassert_gallery_fullscreen() {
     run_fullscreen_cycle(crate::shell::Shell::is_gallery_expanded);
 }
 
-/// Timed safety net after a theme apply: REMOVED — the single unset->set
-/// cycle now runs inside the transparent fade window (event-driven path in
-/// hypr_ipc, or the 4.8s fallback here), so timed retries would only add
-/// visible flashes after fade-in.
+// Timed safety net after a theme apply: REMOVED — the single unset->set
+// cycle now runs inside the transparent fade window (event-driven path in
+// hypr_ipc, or the 4.8s fallback here), so timed retries would only add
+// visible flashes after fade-in.
 
 // ── Fullscreen survives a config reload ────────────────────────────────
 // Every `hyprctl reload` resets the runtime keyword overrides AND
@@ -3846,7 +3846,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     physical.height as f32 / scale,
                 )
             });
-            if !(stage_w > 0.0) || !(stage_h > 0.0) {
+            if crate::shell::gallery::views::not_positive_or_nan(stage_w)
+                || crate::shell::gallery::views::not_positive_or_nan(stage_h)
+            {
                 return;
             }
             let mut pg = pages.lock().unwrap();
@@ -3985,7 +3987,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     physical.height as f32 / scale,
                 )
             });
-            if !(stage_w > 0.0) {
+            if crate::shell::gallery::views::not_positive_or_nan(stage_w) {
                 return;
             }
             let tiles = crate::shell::gallery::views::slice::slice_delta_tiles(
@@ -4314,7 +4316,9 @@ fn main() -> Result<(), slint::PlatformError> {
             let refresh_mosaic = refresh_mosaic_page.clone();
             let refresh_slice = refresh_slice_ring.clone();
             window.on_gallery_stage_geometry_changed(move |width: f32, height: f32| {
-                if !(width > 0.0) || !(height > 0.0) {
+                if crate::shell::gallery::views::not_positive_or_nan(width)
+                    || crate::shell::gallery::views::not_positive_or_nan(height)
+                {
                     return; // degenerate dims: keep last-known-good state
                 }
                 *dims.lock().unwrap() = Some((width, height));
@@ -4333,7 +4337,6 @@ fn main() -> Result<(), slint::PlatformError> {
             let animate = animate_slice_step.clone();
             let gallery_themes_root = gallery_themes_root.clone();
             let shell_c = shell.clone();
-            let guard_permits = guard_permits;
             let guard_block_message = guard_block_message.clone();
             let gallery_state_c = gallery_state_slot.clone();
             let proj_c = proj.clone();
@@ -5551,7 +5554,6 @@ fn main() -> Result<(), slint::PlatformError> {
             let proj_c = proj.clone();
             let gallery_themes_root_c = gallery_themes_root.clone();
             let weak = window.as_weak();
-            let guard_permits = guard_permits;
             let guard_block_message = guard_block_message.clone();
             window.on_panel_apply_saved_theme(move |idx| {
                 tracing::debug!(
@@ -6023,7 +6025,6 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let state_c = state.clone();
         let weak = window.as_weak();
-        let guard_permits = guard_permits;
         let guard_block_message = guard_block_message.clone();
         let persist_pending = geometry_persist_pending.clone();
         let persist_timer = geometry_persist_timer.clone();
@@ -6091,7 +6092,6 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let state_c = state.clone();
         let weak = window.as_weak();
-        let guard_permits = guard_permits;
         let guard_block_message = guard_block_message.clone();
         let proj_c = proj.clone();
         window.on_panel_apply_border(move |idx, file| {
@@ -6157,7 +6157,6 @@ fn main() -> Result<(), slint::PlatformError> {
         let state_c = state.clone();
         let weak = window.as_weak();
         let proj_c = proj.clone();
-        let guard_permits = guard_permits;
         let guard_block_message = guard_block_message.clone();
         window.on_panel_apply_animation(move |idx, file| {
             tracing::debug!(
@@ -6635,7 +6634,6 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let state_c = state.clone();
         let weak = window.as_weak();
-        let guard_permits = guard_permits;
         let guard_block_message = guard_block_message.clone();
         window.on_panel_apply_shader(move |idx, file| {
             tracing::debug!(
@@ -7846,11 +7844,13 @@ mod tests {
         let _env = crate::test_utils::TempEnv::new();
         let (engine, proj, record) = temp_geometry_engine();
 
-        let mut cfg = crate::config::Config::default();
-        cfg.border_size = 2;
-        cfg.border_radius = 32;
-        cfg.gaps_in = 5;
-        cfg.gaps_out = 5;
+        let cfg = crate::config::Config {
+            border_size: 2,
+            border_radius: 32,
+            gaps_in: 5,
+            gaps_out: 5,
+            ..Default::default()
+        };
         let tm = crate::theme_manager::ThemeManager::new(proj.path());
         let state = Arc::new(std::sync::Mutex::new(AppState::new(cfg, engine, tm)));
 
@@ -9201,9 +9201,11 @@ mod tests {
     /// theme saved next therefore carries the look that is live.
     #[test]
     fn saving_a_border_preset_records_it_as_the_active_border() {
-        let mut cfg = crate::config::Config::default();
-        cfg.active_border_file = "03_duo.lua".into();
-        cfg.active_anim_file = "11_futurista.lua".into();
+        let mut cfg = crate::config::Config {
+            active_border_file: "03_duo.lua".into(),
+            active_anim_file: "11_futurista.lua".into(),
+            ..Default::default()
+        };
 
         record_saved_preset_active(&mut cfg, SavedPresetSlot::Border, "keeper_border");
 
@@ -9221,9 +9223,11 @@ mod tests {
     /// the extension is recorded as it is — never doubled.
     #[test]
     fn saving_an_animation_preset_records_it_as_the_active_animation() {
-        let mut cfg = crate::config::Config::default();
-        cfg.active_anim_file = "11_futurista.lua".into();
-        cfg.active_border_file = "03_duo.lua".into();
+        let mut cfg = crate::config::Config {
+            active_anim_file: "11_futurista.lua".into(),
+            active_border_file: "03_duo.lua".into(),
+            ..Default::default()
+        };
 
         record_saved_preset_active(&mut cfg, SavedPresetSlot::Animation, "keeper_motion.lua");
 

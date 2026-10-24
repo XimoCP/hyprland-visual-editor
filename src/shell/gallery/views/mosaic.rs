@@ -7,7 +7,7 @@
 //
 // Pure Rust — no Slint types. MosaicCell/MosaicView .slint handle visuals.
 
-use super::{GalleryKey, GalleryStyle, GalleryView};
+use super::{not_positive_or_nan, GalleryKey, GalleryStyle, GalleryView};
 
 // ── Constants (spec R2.3) ───────────────────────────────────────────
 
@@ -117,7 +117,7 @@ pub fn mosaic_display_aspect(idx: usize) -> f32 {
 /// for `(stage_w, stage_h)`. Empty input or non-positive stage → all
 /// zeros. See the module docs for the deterministic algorithm.
 pub fn justified_layout(aspects: &[f32], stage_w: f32, stage_h: f32) -> MosaicLayout {
-    if aspects.is_empty() || !(stage_w > 0.0) || !(stage_h > 0.0) {
+    if aspects.is_empty() || not_positive_or_nan(stage_w) || not_positive_or_nan(stage_h) {
         return MosaicLayout {
             tiles: vec![],
             content_w: 0.0,
@@ -282,7 +282,7 @@ pub fn justified_hero_layout(
     stage_w: f32,
     stage_h: f32,
 ) -> (MosaicLayout, Vec<usize>) {
-    if aspects.is_empty() || !(stage_w > 0.0) || !(stage_h > 0.0) {
+    if aspects.is_empty() || not_positive_or_nan(stage_w) || not_positive_or_nan(stage_h) {
         return (
             MosaicLayout {
                 tiles: vec![],
@@ -525,9 +525,7 @@ pub fn mosaic_neighbor(tiles: &[MosaicTileRect], cur: usize, dir: MosaicDir) -> 
         MosaicDir::Right => (cur + 1 < tiles.len()).then_some(cur + 1),
         MosaicDir::Up | MosaicDir::Down => {
             let rows = tile_rows(tiles);
-            let Some(row) = rows.iter().position(|r| r.contains(&cur)) else {
-                return None;
-            };
+            let row = rows.iter().position(|r| r.contains(&cur))?;
             let target_row = match dir {
                 MosaicDir::Up => row.checked_sub(1)?,
                 _ => {
@@ -603,7 +601,7 @@ pub fn mosaic_layout_rows(layout: &MosaicLayout) -> Vec<Vec<usize>> {
 /// active — the reorder moves reals only, and `justified_hero_layout` computes
 /// its geometry from `aspects` alone.
 pub fn mosaic_page_capacity(stage_w: f32, stage_h: f32) -> usize {
-    if !(stage_w > 0.0) || !(stage_h > 0.0) {
+    if not_positive_or_nan(stage_w) || not_positive_or_nan(stage_h) {
         return 0;
     }
     let fits = |n: usize| -> bool {
@@ -690,6 +688,9 @@ pub struct MosaicPages {
 }
 
 impl MosaicPages {
+    // The two `1` arms are distinct by intent (degenerate stage vs. the
+    // library fitting one page) and must stay separately documented.
+    #[allow(clippy::if_same_then_else)]
     pub fn new(real_count: usize, stage_w: f32, stage_h: f32) -> Self {
         let capacity = mosaic_page_capacity(stage_w, stage_h);
         let total_pages = if real_count == 0 {
@@ -723,6 +724,9 @@ impl MosaicPages {
 
     /// Recompute on a real-count / stage change. The ONLY operation that
     /// increments `geometry_rebuilds`; page flips never call this.
+    // The two `1` arms are distinct by intent (degenerate stage vs. the
+    // library fitting one page) and must stay separately documented.
+    #[allow(clippy::if_same_then_else)]
     pub fn recompute(&mut self, real_count: usize, stage_w: f32, stage_h: f32) {
         let capacity = mosaic_page_capacity(stage_w, stage_h);
         let total_pages = if real_count == 0 {

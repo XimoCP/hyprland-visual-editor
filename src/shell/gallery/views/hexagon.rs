@@ -62,9 +62,9 @@ pub fn hex_vertices(cx: f32, cy: f32, radius: f32) -> [(f32, f32); 6] {
     let mut verts = [(0.0, 0.0); 6];
     // pointy-top: offset 30deg so flat sides top/bottom
     let offset = std::f32::consts::PI / 6.0; // 30deg
-    for i in 0..6 {
+    for (i, vert) in verts.iter_mut().enumerate() {
         let angle = offset + i as f32 * std::f32::consts::PI / 3.0;
-        verts[i] = (cx + radius * angle.cos(), cy + radius * angle.sin());
+        *vert = (cx + radius * angle.cos(), cy + radius * angle.sin());
     }
     verts
 }

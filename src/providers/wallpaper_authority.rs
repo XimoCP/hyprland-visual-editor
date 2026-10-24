@@ -468,13 +468,9 @@ pub fn parse_compositor_layers_with_reference(
             let mut top: Option<(&LayerEntry, u8)> = None;
             for (level_no, level_key) in [0u8, 1u8].iter().zip(BACKGROUND_LEVELS) {
                 if let Some(entries) = out.levels.get(level_key) {
-                    if let Some(entry) = entries
-                        .iter()
-                        .filter(|e| {
-                            is_background_candidate(e.alpha, e.w, e.h, reference_for_output)
-                        })
-                        .next_back()
-                    {
+                    if let Some(entry) = entries.iter().rfind(|e| {
+                        is_background_candidate(e.alpha, e.w, e.h, reference_for_output)
+                    }) {
                         top = Some((entry, *level_no));
                     }
                 }
@@ -1158,6 +1154,7 @@ const MEDIA_EXTENSIONS: [&str; 9] = [
 /// * <video>`, `skwd-wall-vk * <video> --transition-from <previous> ...`),
 /// while a video-to-video switch appends the PREVIOUS video behind
 /// `--transition-from` — the last media argument is then the old video.
+///
 /// Rules:
 /// - exactly one `*`: the first absolute media path after it (or `None`
 ///   when there is none — arguments before the marker are the previous
@@ -1165,6 +1162,7 @@ const MEDIA_EXTENSIONS: [&str; 9] = [
 /// - several `*` (per-output painters in one argv): ambiguous, `None`;
 /// - no `*`: only a single absolute media candidate is unambiguous
 ///   (`None` when there are zero or several).
+///
 /// Existence on disk is checked by the live caller, never here, so tests
 /// stay hermetic.
 pub fn extract_video_path_from_argv(argv: &[&str]) -> Option<String> {

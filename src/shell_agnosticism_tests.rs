@@ -105,8 +105,10 @@ fn the_core_backfills_the_active_theme_through_a_fake_shell() {
             .expect("save fake theme");
     }
 
-    let mut shell = FakeShell::default();
-    shell.live = Some("/wall/beta.png".into());
+    let mut shell = FakeShell {
+        live: Some("/wall/beta.png".into()),
+        ..Default::default()
+    };
     shell.saved.insert("Alpha".into(), "/wall/alpha.png".into());
     shell.saved.insert("Beta".into(), "/wall/beta.png".into());
 

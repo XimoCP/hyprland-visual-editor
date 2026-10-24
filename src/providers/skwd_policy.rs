@@ -2743,14 +2743,13 @@ mod tests {
     //    and the step-aside release fed by a reconstructed marker. ──────
 
     fn log_contains(needle: &str) -> bool {
-        crate::decision_log::log_path()
-            .exists()
-            .then(|| {
-                std::fs::read_to_string(crate::decision_log::log_path())
-                    .unwrap_or_default()
-                    .contains(needle)
-            })
-            .unwrap_or(false)
+        if crate::decision_log::log_path().exists() {
+            std::fs::read_to_string(crate::decision_log::log_path())
+                .unwrap_or_default()
+                .contains(needle)
+        } else {
+            false
+        }
     }
 
     #[test]

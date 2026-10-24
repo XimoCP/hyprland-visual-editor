@@ -299,12 +299,12 @@ pub fn notify_video_backend(notice: &VideoBackendNotice) {
         .output();
 }
 
-/// Historical API-compat shell removed by Lane C (2026-10-14, S4): it existed
-/// only to keep `bg_info::notify_plugin_required` / `mpvpaper::notify_plugin_required`
-/// resolving, nothing in the binary called it, and its only consumer was a
-/// signature binding in a test — a compat path kept alive by the pin that pinned
-/// it. The production path is [`notify_video_backend`], called by
-/// `providers::background` with the decision's own notice.
+// Historical API-compat shell removed by Lane C (2026-10-14, S4): it existed
+// only to keep `bg_info::notify_plugin_required` / `mpvpaper::notify_plugin_required`
+// resolving, nothing in the binary called it, and its only consumer was a
+// signature binding in a test — a compat path kept alive by the pin that pinned
+// it. The production path is [`notify_video_backend`], called by
+// `providers::background` with the decision's own notice.
 
 // ── Video-backend notice (theme-packages T6) ────────────────────────────
 
@@ -410,7 +410,7 @@ pub fn video_backend_notice(facts: VideoBackendFacts, lang: &str) -> Option<Vide
         // has its video played by the manifest when the plugin is enabled, so
         // the notice is silent unless BOTH painters are blocked.
         VideoWant::ExactPath => {
-            !facts.engine_socket && !(facts.has_manifest && facts.mpvpaper_enabled)
+            !(facts.engine_socket || facts.has_manifest && facts.mpvpaper_enabled)
         }
         VideoWant::Url => !facts.mpvpaper_enabled || !facts.has_manifest,
     };

@@ -56,9 +56,9 @@ pub fn content_cache_key_from_bytes(bytes: &[u8]) -> String {
     format!("{}-{:016x}", bytes.len(), h.finish())
 }
 
-/// Content key for a source file on disk — superseded by
-/// `content_cache_key_from_bytes` + single read in `generate_set`.
-/// Removed in Tramo 7; tests now compute keys via `*_from_bytes` directly.
+// Content key for a source file on disk — superseded by
+// `content_cache_key_from_bytes` + single read in `generate_set`.
+// Removed in Tramo 7; tests now compute keys via `*_from_bytes` directly.
 
 /// Modification time of a file, None when it cannot be read.
 pub fn source_mtime(source: &Path) -> Option<SystemTime> {
@@ -98,9 +98,9 @@ pub fn cover_geometry(
     )
 }
 
-/// Artifact naming is inline in `generate_set` via
-/// `format!("{key}-thumb.png")` etc. (content-keyed `{len}-{hash}`).
-/// No separate path helpers — single source of truth is the key string.
+// Artifact naming is inline in `generate_set` via
+// `format!("{key}-thumb.png")` etc. (content-keyed `{len}-{hash}`).
+// No separate path helpers — single source of truth is the key string.
 
 /// Pure CONTAIN fit math (HF5): scale the WHOLE source to fit ENTIRELY
 /// within (max_w × max_h) preserving aspect ratio — integer-exact in the
@@ -248,8 +248,8 @@ pub fn generate_set(source: &Path, out_dir: &Path) -> Result<BakedSet, String> {
     })
 }
 
-/// `generate_pair` was superseded by `generate_set` (single decode → four
-/// artifacts). Removed in Tramo 7 — use `generate_set`.
+// `generate_pair` was superseded by `generate_set` (single decode → four
+// artifacts). Removed in Tramo 7 — use `generate_set`.
 
 /// `$XDG_CACHE_HOME/hve/thumbs`, falling back to `~/.cache/hve/thumbs`
 /// (design D8 cache location).

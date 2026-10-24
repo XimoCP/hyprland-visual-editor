@@ -12,7 +12,7 @@
 //
 // MIT credit: visual language translated from skwd-wall (MIT, © liixini).
 
-use super::{GalleryStyle, GalleryView};
+use super::{not_positive_or_nan, GalleryStyle, GalleryView};
 
 /// Slice carousel geometry (skwd-wall exact values, design D2/D3).
 pub const SLICE_COLLAPSED_WIDTH: f32 = 135.0;
@@ -46,7 +46,7 @@ pub struct SliceMetrics {
 
 /// Scale factor in (0,1] for a logical stage width.
 pub fn slice_scale(stage_width: f32) -> f32 {
-    if !(stage_width > 0.0) {
+    if not_positive_or_nan(stage_width) {
         return 1.0;
     }
     let expanded = (stage_width * 0.58).min(SLICE_EXPANDED_WIDTH);
@@ -56,7 +56,7 @@ pub fn slice_scale(stage_width: f32) -> f32 {
 pub fn scaled_metrics(stage_width: f32) -> SliceMetrics {
     let expanded = (stage_width * 0.58).min(SLICE_EXPANDED_WIDTH);
     // Preserve caller intent for degenerate widths: return exact constants.
-    let expanded = if !(stage_width > 0.0) {
+    let expanded = if not_positive_or_nan(stage_width) {
         SLICE_EXPANDED_WIDTH
     } else {
         expanded
@@ -317,10 +317,10 @@ pub fn cum_offset(i: usize, focused: usize) -> f32 {
     (0..i).map(|j| card_width_at(j, focused)).sum::<f32>()
 }
 
-/// ── Ring model S1 (infinite carousel, pure math) ─────────────────────
-/// Focused card centered at stage_width/2 with expanded width 924;
-/// collapsed slats 135 contiguous (zero gap); clones wrap modulo count.
-/// Deterministic: computed from focused index + geometry, no running offsets.
+// ── Ring model S1 (infinite carousel, pure math) ─────────────────────
+// Focused card centered at stage_width/2 with expanded width 924;
+// collapsed slats 135 contiguous (zero gap); clones wrap modulo count.
+// Deterministic: computed from focused index + geometry, no running offsets.
 
 /// Visible slot in the infinite ring — feeds Slint positions.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -512,7 +512,7 @@ pub fn ring_shortest_delta(from: usize, to: usize, count: usize) -> isize {
 /// body inside either inset zone.
 /// Deterministic: computed from focused + geometry, no running offsets.
 pub fn ring_visible_slots(real_count: usize, focused: usize, stage_width: f32) -> Vec<RingSlot> {
-    if real_count == 0 || !(stage_width > 0.0) {
+    if real_count == 0 || not_positive_or_nan(stage_width) {
         return Vec::new();
     }
     // Clamp focused to valid range (defensive; caller should ensure)
@@ -616,7 +616,7 @@ pub fn edge_fade_full_zone_scaled(half_view: f32, stage_width: f32) -> f32 {
     (numerator / half_view).min(EDGE_FADE_FULL_ZONE_CAP)
 }
 pub fn ring_slot_fade(slot: &RingSlot, stage_width: f32) -> f32 {
-    if !(stage_width > 0.0) {
+    if not_positive_or_nan(stage_width) {
         return 1.0;
     }
     let inset = ring_edge_inset(stage_width);

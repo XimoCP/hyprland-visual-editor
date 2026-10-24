@@ -117,9 +117,7 @@ pub fn glide_to(current: f32, target: f32, duration_ms: f32) {
 /// including the final exact target write — then `None` when idle.
 pub fn step(dt: f32) -> Option<f32> {
     let mut reel = REEL.lock().unwrap();
-    let Some(spring) = reel.as_mut() else {
-        return None;
-    };
+    let spring = reel.as_mut()?;
     spring.tick(dt);
     let value = spring.value();
     if spring.settled() {

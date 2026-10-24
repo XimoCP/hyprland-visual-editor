@@ -69,6 +69,7 @@ pub(crate) fn docs_open_command() -> Vec<String> {
 /// Dependencies are passed by reference; each callback clones what it
 /// captures. All Slint callbacks run on the same thread, so
 /// clone-then-save is safe.
+#[allow(clippy::too_many_arguments)] // shared wiring hub: flattening the window/state/shell/page deps into a struct would only move the same nine values around
 pub fn setup_callbacks(
     window: &crate::MainWindow,
     state: &SharedState,
@@ -1656,11 +1657,13 @@ mod geometry_tune_tests {
     // single place the pane reads geometry from.
     #[test]
     fn border_geometry_reads_persisted_config() {
-        let mut cfg = crate::config::Config::default();
-        cfg.border_size = 5;
-        cfg.border_radius = 20;
-        cfg.gaps_in = 10;
-        cfg.gaps_out = 10;
+        let cfg = crate::config::Config {
+            border_size: 5,
+            border_radius: 20,
+            gaps_in: 10,
+            gaps_out: 10,
+            ..Default::default()
+        };
         assert_eq!(
             BorderGeometry::from_config(&cfg),
             BorderGeometry {

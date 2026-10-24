@@ -471,9 +471,9 @@ fn reseed_marks_a_user_animation_card_from_a_bare_stem() {
 /// Every keyboard-focus move in the panel must leave a --verbose trace:
 /// panel-kbd (the single panel scope) and shell-kbd (shell) report gain
 /// + loss with the FocusReason mapped to a string, through the generic
-/// `focus-trace` cable (same pattern as `panel-mouse-trace`). Construction
-/// check so future scopes cannot go mute silently. No focus moves, no
-/// visual changes — trace only.
+///   `focus-trace` cable (same pattern as `panel-mouse-trace`). Construction
+///   check so future scopes cannot go mute silently. No focus moves, no
+///   visual changes — trace only.
 #[test]
 fn panel_every_focus_move_leaves_verbose_trace_by_construction() {
     let main = std::fs::read_to_string("src/main.rs").expect("src/main.rs must exist");
@@ -3896,9 +3896,9 @@ fn mosaic_hero_centered_renders_with_pagination() {
     // ONLY in which theme each rectangle shows. (This is the check that the
     // delivered D1 defect failed: the hero used to adopt the active theme's
     // shape phase, so the whole composition reflowed on every theme apply.)
-    let rects = |p: &[((f32, f32, f32, f32), i32)]| p.iter().map(|(g, _)| *g).collect::<Vec<_>>();
-    let pictures =
-        |p: &[((f32, f32, f32, f32), i32)]| p.iter().map(|(_, r)| *r).collect::<Vec<_>>();
+    type PlacedTile = ((f32, f32, f32, f32), i32);
+    let rects = |p: &[PlacedTile]| p.iter().map(|(g, _)| *g).collect::<Vec<_>>();
+    let pictures = |p: &[PlacedTile]| p.iter().map(|(_, r)| *r).collect::<Vec<_>>();
     assert_eq!(
         rects(&page2_plain).len(),
         rects(&page2_active).len(),
@@ -5540,8 +5540,10 @@ fn test_system_minimize_10s() {
         "System ON/OFF status block must be present"
     );
     // Also verify Config can hold 10s (engine sealed — no engine edit)
-    let mut cfg = crate::config::Config::default();
-    cfg.minimize_seconds = 10;
+    let cfg = crate::config::Config {
+        minimize_seconds: 10,
+        ..Default::default()
+    };
     assert_eq!(
         cfg.minimize_seconds, 10,
         "minimize_seconds 10s via toggle_system path"
@@ -9697,6 +9699,7 @@ fn count_color_in_box(
 /// pixels. An optional `signal` — `(color, tol, min_pixels)` — requires the band
 /// to carry at least `min_pixels` of that colour, so a plain card band is
 /// skipped and the caller can target the curve preview among the cards.
+#[allow(clippy::too_many_arguments)] // pixel-scan probe: the argument list mirrors the scan box plus its optional colour signal
 fn first_color_band_bbox(
     buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
     rgb: (u8, u8, u8),
@@ -10201,8 +10204,8 @@ fn borders_geometry_block_edits_one_value_and_keeps_the_rest() {
     win.set_gap_out(6);
     focus_settle();
 
-    let applied: std::rc::Rc<std::cell::RefCell<Vec<(i32, i32, i32, i32)>>> =
-        std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    type AppliedGeometryLog = std::rc::Rc<std::cell::RefCell<Vec<(i32, i32, i32, i32)>>>;
+    let applied: AppliedGeometryLog = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     {
         let applied = applied.clone();
         win.on_panel_apply_geometry(move |s, r, gi, go| {
@@ -12368,8 +12371,8 @@ fn borders_strip_flow_renders() {
 /// > on red, never reads as a ring).
 fn strip_ring_chip(buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>, n: usize) -> Option<usize> {
     let mut found = None;
-    for i in 0..n {
-        let (x0, y0, x1, y1) = exact_color_bbox(buf, CHIP_COLORS[i], 8)?;
+    for (i, color) in CHIP_COLORS.iter().enumerate().take(n) {
+        let (x0, y0, x1, y1) = exact_color_bbox(buf, *color, 8)?;
         let ring = count_color_in_box(
             buf,
             ICY,
@@ -15305,6 +15308,7 @@ fn ink_span_in_band(
 /// Rows of `y0..=y1` where `rgb` paints at least `min_run` pixels inside
 /// `x0..=x1`: a card's own border (full width) is such a row, and no control
 /// inside a card ever is.
+#[allow(clippy::too_many_arguments)] // pixel-scan probe: the argument list mirrors the row band and its scan window
 fn wide_ink_rows(
     buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
     rgb: (u8, u8, u8),
@@ -15344,6 +15348,7 @@ fn wide_ink_rows(
 /// `min_w` and `max_w` pixels inside `x0..=x1`: one small control's face (the
 /// apply pill's 40x22 rounded rectangle), never a row of the card's own border,
 /// which spans the whole window.
+#[allow(clippy::too_many_arguments)] // pixel-scan probe: the argument list mirrors the row band, its scan window and the width window
 fn narrow_ink_row_run(
     buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
     rgb: (u8, u8, u8),
@@ -15432,6 +15437,7 @@ fn ink_x_span(
 /// band, split wherever two painted columns are `min_gap` apart or more. The
 /// active USER card paints its name AND its ★ badge in the same accent ink, so
 /// this is what tells the two apart: the badge is the last cluster.
+#[allow(clippy::too_many_arguments)] // pixel-scan probe: the argument list mirrors the column band, its scan window and the cluster gap
 fn ink_column_clusters(
     buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
     rgb: (u8, u8, u8),
@@ -15536,6 +15542,7 @@ impl CardCentring {
 /// a built-in card, 40+6+32+6+32 for a user card, whose two IconButtons sit
 /// beside it). `face` is the pill's colour in this frame: accent-green while the
 /// card is the active one, `HveColors.border` while it is not.
+#[allow(clippy::too_many_arguments)] // test-measurement helper: the argument list mirrors the card box plus the five measured controls' colours
 fn measure_card(
     buf: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
     state: &str,
@@ -17692,8 +17699,10 @@ fn mark_theme_applied_never_reverts_theme_border_on_disk() {
     let _env = crate::test_utils::TempEnv::new();
 
     // Disk holds the theme's border (as left behind by the provider apply).
-    let mut on_disk = crate::config::Config::default();
-    on_disk.active_border_file = "theme-border.ron".to_string();
+    let on_disk = crate::config::Config {
+        active_border_file: "theme-border.ron".to_string(),
+        ..Default::default()
+    };
     on_disk
         .save()
         .expect("seed disk config with the theme border");
@@ -17709,8 +17718,10 @@ fn mark_theme_applied_never_reverts_theme_border_on_disk() {
         })
         .expect("sandboxed config dir");
     let tm = crate::theme_manager::ThemeManager::new(&config_dir);
-    let mut stale = crate::config::Config::default();
-    stale.active_border_file = "manual-border.ron".to_string();
+    let stale = crate::config::Config {
+        active_border_file: "manual-border.ron".to_string(),
+        ..Default::default()
+    };
     let mut state = crate::app_state::AppState::new(stale, engine, tm);
 
     state.mark_theme_applied("SomeTheme");

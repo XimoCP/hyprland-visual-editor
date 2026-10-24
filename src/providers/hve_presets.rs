@@ -455,8 +455,10 @@ mod tests {
         }
 
         // The record an older save left behind: the stem alone, no extension.
-        let mut cfg = Config::default();
-        cfg.active_border_file = "Space".into();
+        let cfg = Config {
+            active_border_file: "Space".into(),
+            ..Default::default()
+        };
         cfg.save().unwrap();
 
         let user_border = dirs::config_dir().unwrap().join("hve/presets/borders");
@@ -489,8 +491,10 @@ mod tests {
         for category in crate::theme_presets::CATEGORIES {
             fs::create_dir_all(proj.path().join("assets").join(category)).unwrap();
         }
-        let mut cfg = Config::default();
-        cfg.active_anim_file = "../../evil.lua".into();
+        let cfg = Config {
+            active_anim_file: "../../evil.lua".into(),
+            ..Default::default()
+        };
         cfg.save().unwrap();
         let user_root = dirs::config_dir().unwrap().join("hve/presets");
         fs::create_dir_all(user_root.join("animations")).unwrap();

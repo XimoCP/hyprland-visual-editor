@@ -123,9 +123,9 @@ pub fn baked_slat_rgba(src: RgbaImage, expanded: bool) -> RgbaImage {
     bake_parallelogram(src, tw, th, SLICE_SKEW_PX)
 }
 
-/// `baked_slat_image` / `baked_slat_image_from_path` removed in Tramo 7:
-/// UI wraps `baked_slat_rgba` buffers itself via `Image::from_rgba8` (no
-/// Slint image helper on the baking side). Use `baked_slat_rgba` directly.
+// `baked_slat_image` / `baked_slat_image_from_path` removed in Tramo 7:
+// UI wraps `baked_slat_rgba` buffers itself via `Image::from_rgba8` (no
+// Slint image helper on the baking side). Use `baked_slat_rgba` directly.
 
 #[cfg(test)]
 mod tests {

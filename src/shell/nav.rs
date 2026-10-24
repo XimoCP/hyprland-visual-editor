@@ -112,11 +112,7 @@ impl PanelSection {
     #[allow(dead_code)]
     pub fn from_shortcut(s: &str) -> Option<Self> {
         let key = s.trim().to_ascii_lowercase();
-        let bare = if key.starts_with("alt+") {
-            &key[4..]
-        } else {
-            &key
-        };
+        let bare = key.strip_prefix("alt+").unwrap_or(&key);
         match bare {
             "a" | "s" | "save" => Some(PanelSection::Save),
             "b" | "borders" => Some(PanelSection::Borders),

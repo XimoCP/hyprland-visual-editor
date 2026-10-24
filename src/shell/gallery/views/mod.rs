@@ -22,6 +22,16 @@ pub use hexagon::HexagonView;
 pub use mosaic::MosaicView;
 pub use slice::{GalleryKey, SliceView};
 
+/// True when `value` is not strictly positive, INCLUDING NaN.
+///
+/// `!(v > 0.0)` is deliberately not `v <= 0.0`: for NaN the negation is
+/// true and the comparison is false, and these guards must reject NaN
+/// rather than let it through into the layout arithmetic.
+#[allow(clippy::neg_cmp_op_on_partial_ord)] // this IS the documented NaN-safe negation; the lint fires on its single line by design
+pub(crate) fn not_positive_or_nan(value: f32) -> bool {
+    !(value > 0.0)
+}
+
 /// Chrome style-switch cross-fade duration 200ms S6 (3.8).
 pub const CHROME_SWITCH_DURATION_MS: u64 = 200;
 
