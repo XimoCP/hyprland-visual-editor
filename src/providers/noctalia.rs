@@ -2332,6 +2332,14 @@ impl ThemeProvider for NoctaliaV5Provider {
             return Err("Noctalia v5 provider data not found in theme".into());
         }
 
+        // The palette this apply is about to write comes back through the colour
+        // watcher as an EXTERNAL change. Stamp it as HVE's own before the first
+        // write, so the palette-change evidence can tell our hand from the
+        // keeper's: without it every legitimate apply marked itself
+        // "the keeper changed the palette by hand" two seconds later and
+        // planted the `keeper-palette` marker (measured 2026-10-24 16:04:43Z).
+        let _ = crate::color_authority::stamp_self_write();
+
         let palette_src = provider_dir.join("palette.json");
         let source_src = provider_dir.join("source.txt");
 
@@ -4942,6 +4950,33 @@ exit 0
         // (it would otherwise run against a removed stub PATH).
         std::thread::sleep(Duration::from_millis(2500));
         assert_eq!(stub.sets(), 2, "re-assert held: no further sets");
+    }
+
+    #[test]
+    #[serial]
+    fn v5_apply_stamps_its_own_palette_write() {
+        // The apply writes the backend's palette, and that write comes back
+        // through the colour watcher as an EXTERNAL change. Without the
+        // self-write stamp the palette-change evidence reads it as the keeper's
+        // hand and re-creates the `keeper-palette` marker two seconds later
+        // (measured 2026-10-24 16:04:43Z: HVE's own apply, then ASSERT REFUSED
+        // -> KEEPER PALETTE).
+        let stub = ColorStub::new("custom skwd-wall", 1, Some(OWNER_JSON), false);
+        let theme = stub.custom_theme("custom JokerTheme", true);
+        assert!(
+            !crate::color_authority::self_write_recent(),
+            "precondition: the sandbox starts with no self-write stamp"
+        );
+
+        let res = NoctaliaV5Provider::new().apply(theme.path());
+        assert!(res.is_ok(), "apply must succeed: {:?}", res);
+
+        assert!(
+            crate::color_authority::self_write_recent(),
+            "the apply must stamp the palette it just wrote as HVE's own"
+        );
+        // Let the re-assert worker finish so no thread outlives the test.
+        std::thread::sleep(Duration::from_millis(2500));
     }
 
     #[test]

@@ -101,3 +101,16 @@ the old binary wrote `crash repair: theme.policy put back to "wallpaper"`. The
 marker that HVE had written over its own apply at 16:04:43 (stamp
 `color-write.last` unchanged since 06:48, so the apply path never stamped) was
 removed as false; the overlay keeps the theme's palette (`#879a39`).
+
+L9 (follow-up of L5, closed): `NoctaliaV5Provider::apply` now stamps
+`color-write.last` before its first write, so the palette an apply puts in the
+backend is recognised as HVE's own instead of the keeper's hand. Test:
+`v5_apply_stamps_its_own_palette_write`, RED before the stamp.
+
+L10 (test isolation, closed): the three tests that were red at the parent commit
+were reading the keeper's LIVE `$XDG_CONFIG_HOME/hve` from the spawned scripts,
+because the sandboxes overrode `HOME` but not the XDG roots a desktop session
+exports (`scripts_contract` now derives them in `sandbox_xdg_roots`, the watcher
+spawns pin `XDG_CONFIG_HOME`). Full suite green: 1850 passed, 0 failed.
+`cargo fmt --check` is NOT a gate and already reports drift on lines this unit
+never touched; clippy `-D warnings` is clean.
