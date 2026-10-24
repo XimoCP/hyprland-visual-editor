@@ -321,29 +321,32 @@ fn sweep_orphaned_temps(dir: &Path, stem: &str) {
 /// `src/main.rs` × `skwd_policy` = 1), so both startup duties live here and
 /// `main()` calls exactly this.
 ///
-/// Ownership decides which half runs:
-/// - a VALID descriptor and no keeper takeover means a theme owns the palette.
-///   The mute is what ownership asks for, so the crash repair's un-mute would
-///   be a step backwards: re-arm (or keep) the mute and leave the marker as the
-///   memory a later release needs. This is S1 of
+/// Ownership decides which half runs, and ownership is the CLAIM, nothing else
+/// (S1 of `odd/tasks/skwd-mute-always-off.md`):
+/// - a VALID descriptor means a theme owns the palette, so the engine is
+///   silenced — always, on every start, whatever the keeper's hand last did to
+///   the palette. The `keeper-palette` marker only decides which palette HVE's
+///   overlay paints; it never buys the engine its colour authority back. An
+///   unmuted engine republishes its wallpaper-derived palette on the next
+///   resume and wipes the very palette the marker was protecting (measured
+///   2026-10-24 15:43Z). The crash repair's un-mute would be a step backwards
+///   here: re-arm (or keep) the mute and leave the marker as the memory a
+///   later release needs. This is also S1 of
 ///   `odd/tasks/palette-authority-survives-restart.md`: before it, every
 ///   restart replayed the mute away while the claim came back, the engine
-///   re-derived a palette from its remembered background and the colour defence
-///   read that change as the keeper's hand (measured 2026-10-18, ASSERT REFUSED
-///   at 16:13:56).
-/// - the keeper owning the colours himself, or nobody claiming them, falls
-///   through to the W2 repair: replay a mute a previous process died holding,
-///   and rebuild a marker lost while the mute still holds (the 16-oct poison).
+///   re-derived a palette from its remembered background and the colour
+///   defence read that change as the keeper's hand (measured 2026-10-18,
+///   ASSERT REFUSED at 16:13:56).
+/// - nobody claiming the colours falls through to the W2 repair: replay a mute
+///   a previous process died holding, and rebuild a marker lost while the mute
+///   still holds (the 16-oct poison).
 ///
 /// Never panics and never aborts startup.
 pub(crate) fn startup_settle_engine_mute() {
     // Only a PRESENT engine can be held silent: with no config there is nothing
     // to flip, and the repair's own `ENGINE ABSENT` branch is what clears a
     // marker whose engine is gone.
-    if crate::color_authority::read_descriptor().is_some()
-        && !crate::color_authority::keeper_owns_palette()
-        && config_path().is_file()
-    {
+    if crate::color_authority::read_descriptor().is_some() && config_path().is_file() {
         if let Err(e) = rearm_mute_for_existing_owner() {
             tracing::warn!("[skwd-policy] startup settle: mute re-arm FAILED: {}", e);
         }
@@ -1226,12 +1229,15 @@ pub(crate) fn reconstruct_missing_yield_marker() -> Result<bool, String> {
 /// at startup.
 ///
 /// Guards, in order:
-/// - the keeper owns the colours (his own hand, or his background chosen with
-///   the engine) => nothing is touched; his choice survives the restart;
 /// - no valid descriptor => nothing (an `off` nobody claims is not our mute);
 /// - a switch the engine does not own (`fixed`, `off`, missing, ambiguous,
 ///   exotic encoding) => nothing is flipped, never guessed (`plan_yield`
 ///   refuses anything but the plain `"wallpaper"`).
+///
+/// The `keeper-palette` marker is NOT a guard here (S2 of
+/// `odd/tasks/skwd-mute-always-off.md`): the keeper's hand decides which
+/// palette the overlay paints, never whether the engine keeps its colour
+/// authority. A theme claims the palette => the engine is silenced, every time.
 ///
 /// Unlike `yield_color_authority` — which drops a stale claim around an apply —
 /// the descriptor is KEPT: the claim is the very reason for the mute. Marker
@@ -1244,13 +1250,6 @@ pub(crate) fn reconstruct_missing_yield_marker() -> Result<bool, String> {
 /// `Err` on an honest read/write failure the caller logs and carries on from.
 pub(crate) fn rearm_mute_for_existing_owner() -> Result<bool, String> {
     if crate::color_authority::read_descriptor().is_none() {
-        return Ok(false);
-    }
-    if crate::color_authority::keeper_owns_palette() {
-        tracing::info!(
-            "[skwd-policy] startup re-arm skipped: the keeper owns the colours; the engine \
-             stays as he left it"
-        );
         return Ok(false);
     }
     let path = config_path();
@@ -2144,8 +2143,14 @@ mod tests {
         assert!(env.has_authority(), "the theme's claim must survive the settle");
     }
 
+    /// S1 of `odd/tasks/skwd-mute-always-off.md`. The keeper's hand on the
+    /// palette is protected by the `keeper-palette` marker (the overlay paints
+    /// the live palette), NOT by handing the engine its colour authority back:
+    /// an unmuted engine republished its wallpaper-derived palette on the next
+    /// resume and wiped the very palette it was supposed to protect (measured
+    /// 2026-10-24 15:43Z).
     #[test]
-    fn startup_settle_leaves_the_keepers_colours_alone() {
+    fn startup_settle_mutes_the_engine_even_when_the_keeper_changed_the_palette() {
         let env = PolicyEnv::new(Some(FIXTURE), None);
         env.write_authority();
         crate::color_authority::mark_keeper_palette("noctalia-v5", "JoKer")
@@ -2153,8 +2158,47 @@ mod tests {
 
         startup_settle_engine_mute();
 
-        assert_eq!(env.read(), FIXTURE, "the keeper's engine value must stay");
-        assert!(!env.marker().exists(), "no mute may be planted over his choice");
+        let expected = FIXTURE.replacen("\"policy\": \"wallpaper\"", "\"policy\": \"off\"", 1);
+        assert_eq!(
+            env.read(),
+            expected,
+            "a theme claims the palette: the engine stays mute whatever the keeper's hand did"
+        );
+        assert!(
+            env.marker().exists(),
+            "the mute must remember the value a later release puts back"
+        );
+        assert!(
+            crate::color_authority::keeper_owns_palette(),
+            "the keeper's own palette choice is untouched; it only paints the overlay"
+        );
+    }
+
+    /// The exact measured failure of 2026-10-24: a genuine keeper palette change
+    /// left the marker, the previous process died holding the mute, and the
+    /// startup had to choose between the crash repair (unmute) and the claim
+    /// (mute). The claim wins: the repair's value and the claim's value are the
+    /// same `"wallpaper"`, so the mute is simply armed again.
+    #[test]
+    fn startup_settle_mutes_over_a_stale_crash_marker_from_the_measured_failure() {
+        let env = PolicyEnv::new(Some(FIXTURE), None);
+        env.write_authority();
+        crate::color_authority::mark_keeper_palette("noctalia-v5", "Minimal")
+            .expect("marking the keeper's palette must succeed");
+        write_marker(&env.config, "wallpaper").expect("the crashed session's memory");
+
+        startup_settle_engine_mute();
+
+        let expected = FIXTURE.replacen("\"policy\": \"wallpaper\"", "\"policy\": \"off\"", 1);
+        assert_eq!(
+            env.read(),
+            expected,
+            "the engine must not come back unmuted on the resume that follows"
+        );
+        let marker = read_marker()
+            .expect("the marker read is an honest Result")
+            .expect("the mute keeps the value to restore");
+        assert_eq!(marker.previous_value, "wallpaper");
     }
 
     #[test]
@@ -2251,8 +2295,10 @@ mod tests {
         );
     }
 
+    /// S1/S2 of `odd/tasks/skwd-mute-always-off.md`: the marker no longer has
+    /// any say over the engine mute. One theme claim, one mute.
     #[test]
-    fn startup_rearm_stays_quiet_while_the_keeper_owns_the_colours() {
+    fn startup_rearm_silences_the_engine_while_the_keeper_owns_the_colours() {
         let env = PolicyEnv::new(Some(FIXTURE), None);
         env.write_authority();
         crate::color_authority::mark_keeper_palette("noctalia-v5", "JoKer")
@@ -2260,11 +2306,20 @@ mod tests {
 
         assert_eq!(
             rearm_mute_for_existing_owner(),
-            Ok(false),
-            "the colours the keeper chose must not be silenced again"
+            Ok(true),
+            "the theme claims the palette, so the engine is silenced even after his hand"
         );
-        assert_eq!(env.read(), FIXTURE, "the keeper's engine value must stay");
-        assert!(!env.marker().exists());
+
+        let expected = FIXTURE.replacen("\"policy\": \"wallpaper\"", "\"policy\": \"off\"", 1);
+        assert_eq!(env.read(), expected, "only the switch token may change");
+        let marker = read_marker()
+            .expect("the marker read is an honest Result")
+            .expect("the re-arm must remember the value to put back");
+        assert_eq!(marker.previous_value, "wallpaper");
+        assert!(
+            crate::color_authority::keeper_owns_palette(),
+            "his palette choice survives as the overlay's palette"
+        );
     }
 
     #[test]
