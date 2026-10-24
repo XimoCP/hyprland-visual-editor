@@ -1383,6 +1383,22 @@ pub(crate) fn schedule_post_apply_focus_restores(
     }
 }
 
+/// Take one of the process-wide theme mutexes, RECOVERING the guard when a
+/// previous holder panicked.
+///
+/// These statics are touched from several threads (the UI thread, the config
+/// watcher, the IPC listener, the tray). A bare `.lock().unwrap()` turns ONE
+/// panic — anywhere, in any of those callers — into a cascade: the mutex stays
+/// poisoned and every later caller panics too, so a single defect takes the
+/// whole theme pipeline down and the screen keeps whatever was last painted.
+/// The data behind these locks is plain bookkeeping (generations, staged
+/// workspace, captured originals), never a partially written structure, so the
+/// guard is safe to reuse after a panic: recovering it is what keeps the app
+/// alive long enough for the keeper to see the real error in the log.
+fn lock_recover<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Debounce guard: overlapping reasserts (timed fallbacks + event-driven)
 /// must not stack multiple unset->set cycles — each cycle is a visible
 /// fullscreen drop, and five stacked retries meant five visible minimizes.
@@ -1869,7 +1885,7 @@ pub(crate) fn signal_advances_step(
 /// Claim a waiting step so a signal and its fallback cannot both run it.
 /// True for exactly one caller: the first to clear the wait.
 pub(crate) fn claim_waiting_step(step: TransitionStep) -> bool {
-    let mut waiting = THEME_WAITING_STEP.lock().unwrap();
+    let mut waiting = lock_recover(&THEME_WAITING_STEP);
     if *waiting == Some(step) {
         *waiting = None;
         true
@@ -1926,11 +1942,11 @@ static THEME_SETTLE_BUMP: std::sync::atomic::AtomicU64 = std::sync::atomic::Atom
 pub(crate) fn theme_reload_signal() {
     if !reload_restarts_settle(
         is_theme_transitioning_flag(),
-        *THEME_WAITING_STEP.lock().unwrap(),
+        *lock_recover(&THEME_WAITING_STEP),
     ) {
         return;
     }
-    let gen = *THEME_GEN.lock().unwrap();
+    let gen = *lock_recover(&THEME_GEN);
     THEME_SETTLE_GEN.store(gen, std::sync::atomic::Ordering::Relaxed);
     // Bump a counter the armed timer watches: if it changed, the timer knows a
     // newer reload arrived and it must NOT run the finale yet.
@@ -1962,8 +1978,8 @@ pub(crate) fn theme_fullscreen_signal() {
     if !is_theme_transitioning_flag() {
         return;
     }
-    let live_gen = *THEME_GEN.lock().unwrap();
-    let waiting = *THEME_WAITING_STEP.lock().unwrap();
+    let live_gen = *lock_recover(&THEME_GEN);
+    let waiting = *lock_recover(&THEME_WAITING_STEP);
     if !signal_advances_step(waiting, TransitionStep::Fullscreen, live_gen, live_gen) {
         return;
     }
@@ -1979,16 +1995,14 @@ pub(crate) fn theme_fullscreen_signal() {
         // Re-check on arrival: the hop may land after a newer apply superseded
         // this transition. Running then would drive a fresh transition's finale
         // from a stale signal.
-        if *THEME_GEN.lock().unwrap() != live_gen {
+        if *lock_recover(&THEME_GEN) != live_gen {
             tracing::debug!(
                 "[theme] stale fullscreen signal dropped on arrival (gen {} is not live)",
                 live_gen
             );
             return;
         }
-        if let Some(w) = THEME_FINALE_WINDOW
-            .lock()
-            .unwrap()
+        if let Some(w) = lock_recover(&THEME_FINALE_WINDOW)
             .as_ref()
             .and_then(|w| w.upgrade())
         {
@@ -2058,11 +2072,11 @@ pub(crate) fn begin_interlude_display(win: slint::Weak<crate::MainWindow>, gen: 
     slint::Timer::single_shot(
         std::time::Duration::from_millis(interlude_stage_ms()),
         move || {
-            if *THEME_GEN.lock().unwrap() != gen {
+            if *lock_recover(&THEME_GEN) != gen {
                 return; // superseded
             }
             let target = {
-                let st = THEME_INTERLUDE.lock().unwrap();
+                let st = lock_recover(&THEME_INTERLUDE);
                 if !st.should_move() {
                     None
                 } else {
@@ -2071,7 +2085,7 @@ pub(crate) fn begin_interlude_display(win: slint::Weak<crate::MainWindow>, gen: 
             };
             if let Some(target) = target {
                 if hypr_switch_view(&target) {
-                    THEME_INTERLUDE.lock().unwrap().mark_moved();
+                    lock_recover(&THEME_INTERLUDE).mark_moved();
                     tracing::info!(
                         "[theme] interlude: view staged on empty ws {} (gen {})",
                         target,
@@ -2089,7 +2103,7 @@ pub(crate) fn begin_interlude_display(win: slint::Weak<crate::MainWindow>, gen: 
             slint::Timer::single_shot(
                 std::time::Duration::from_millis(interlude_display_ms()),
                 move || {
-                    if *THEME_GEN.lock().unwrap() != gen {
+                    if *lock_recover(&THEME_GEN) != gen {
                         return; // superseded
                     }
                     if let Some(w) = weak_hold.upgrade() {
@@ -2116,7 +2130,7 @@ pub(crate) fn begin_interlude_display(win: slint::Weak<crate::MainWindow>, gen: 
 /// then hands off to the interlude. Bounded only by the 3500ms watchdog upstream.
 fn arm_settle_poll(win: slint::Weak<crate::MainWindow>, gen: u64, armed_bump: u64) {
     slint::Timer::single_shot(reload_settle_window(), move || {
-        if *THEME_GEN.lock().unwrap() != gen {
+        if *lock_recover(&THEME_GEN) != gen {
             return; // superseded by a newer apply
         }
         if !reload_settled_since(armed_bump, gen) {
@@ -2142,7 +2156,7 @@ fn arm_settle_poll(win: slint::Weak<crate::MainWindow>, gen: u64, armed_bump: u6
 /// returns the view and restores the masks. Extracted to a named function so the
 /// settled reload and the safety timer can both run it — exactly once.
 pub(crate) fn theme_finale_run(win: crate::MainWindow, gen: u64) {
-    if THEME_INTERLUDE.lock().unwrap().staged() {
+    if lock_recover(&THEME_INTERLUDE).staged() {
         // View is on the stage: SKIP the focusing cycle. A focusing cycle
         // focuses HVE by title first, and focusing a window on another workspace
         // drags the VIEW back with it — the user would see floating HVE plus
@@ -2165,7 +2179,7 @@ pub(crate) fn theme_finale_run(win: crate::MainWindow, gen: u64) {
         THEME_TRANSITIONING_FLAG.store(false, std::sync::atomic::Ordering::Relaxed);
         // Return the view FIRST — masks are still ON, so the flip is an instant
         // cut, and the entrance fade then plays over the real desktop.
-        if let Some(orig) = THEME_INTERLUDE.lock().unwrap().take_restore() {
+        if let Some(orig) = lock_recover(&THEME_INTERLUDE).take_restore() {
             // Reload chains may have re-floated HVE — re-set fullscreen with the
             // window-targeted dispatcher BEFORE the flip (no focus step, so the
             // view is never dragged back; idempotent when already fullscreen).
@@ -2612,7 +2626,7 @@ pub(crate) fn choose_originals(
 
 /// Capture (first writer only) and persist the marker BEFORE the mask lands.
 fn begin_mask() -> Result<std::collections::BTreeMap<&'static str, String>, String> {
-    let mut store = THEME_MASK_ORIGINALS.lock().unwrap();
+    let mut store = lock_recover(&THEME_MASK_ORIGINALS);
     let (originals, _first) = mask_plan(&mut store, write_mask_marker, || {
         choose_originals(read_mask_marker(), capture_mask_originals)
     })?;
@@ -2622,7 +2636,7 @@ fn begin_mask() -> Result<std::collections::BTreeMap<&'static str, String>, Stri
 /// Startup repair: replay a mask a previous process died between masking and
 /// restoring. Never panics and never aborts startup.
 pub(crate) fn startup_recover_crashed_masks() {
-    let _serial = MASK_WRITE_SERIAL.lock().unwrap();
+    let _serial = lock_recover(&MASK_WRITE_SERIAL);
     let Some(originals) = read_mask_marker() else {
         tracing::info!("[theme] mask startup repair: nothing to repair");
         return;
@@ -2643,20 +2657,20 @@ pub(crate) fn startup_recover_crashed_masks() {
 /// success, so a failed restore can be retried — the transition watchdog calls
 /// this path a second time.
 fn restore_theme_masks_with(runner: impl Fn(&str) -> Result<(), String>) -> Vec<String> {
-    let originals = THEME_MASK_ORIGINALS.lock().unwrap().clone();
+    let originals = lock_recover(&THEME_MASK_ORIGINALS).clone();
     if originals.is_empty() {
         return Vec::new();
     }
     let failures = write_mask_payload(false, &originals, runner);
     if failures.is_empty() {
-        THEME_MASK_ORIGINALS.lock().unwrap().clear();
+        lock_recover(&THEME_MASK_ORIGINALS).clear();
     }
     failures
 }
 
 pub(crate) fn restore_theme_masks() {
-    let _serial = MASK_WRITE_SERIAL.lock().unwrap();
-    if THEME_MASK_ORIGINALS.lock().unwrap().is_empty() {
+    let _serial = lock_recover(&MASK_WRITE_SERIAL);
+    if lock_recover(&THEME_MASK_ORIGINALS).is_empty() {
         // Nothing was masked in this process. Do NOT clear a surviving marker:
         // it may be the last copy of the real originals after a crashed
         // transition, and the next apply or startup heals from it.
@@ -2682,8 +2696,8 @@ pub(crate) fn should_reapply(transitioning: bool, have_originals: bool) -> bool 
 /// un-masks the transition mid-flight. Called on EVERY configreloaded line
 /// during a theme transition — bypasses the 3s throttle (cheap, idempotent).
 pub(crate) fn reapply_theme_masks() {
-    let _serial = MASK_WRITE_SERIAL.lock().unwrap();
-    let originals = THEME_MASK_ORIGINALS.lock().unwrap().clone();
+    let _serial = lock_recover(&MASK_WRITE_SERIAL);
+    let originals = lock_recover(&THEME_MASK_ORIGINALS).clone();
     if !should_reapply(is_theme_transitioning_flag(), !originals.is_empty()) {
         return;
     }
@@ -2695,7 +2709,7 @@ pub(crate) fn reapply_theme_masks() {
 }
 
 fn reassert_debounce_ok() -> bool {
-    let mut last = LAST_REASSERT.lock().unwrap();
+    let mut last = lock_recover(&LAST_REASSERT);
     let now = std::time::Instant::now();
     if last.is_some_and(|t| {
         now.duration_since(t) < std::time::Duration::from_millis(REASSERT_DEBOUNCE_MS)
@@ -2724,9 +2738,9 @@ pub(crate) fn reassert_gallery_fullscreen() {
     // The first caller (event-driven OR fallback) claims the generation and
     // the second becomes a no-op — guarantees one visible floating->fullscreen.
     if is_theme_transitioning_flag() {
-        let gen = *THEME_GEN.lock().unwrap();
+        let gen = *lock_recover(&THEME_GEN);
         {
-            let mut fired = THEME_CYCLE_FIRED_GEN.lock().unwrap();
+            let mut fired = lock_recover(&THEME_CYCLE_FIRED_GEN);
             if fired.is_some_and(|g| g == gen) {
                 tracing::info!("[reassert] skip — generation {} already fired", gen);
                 return;
@@ -3253,7 +3267,7 @@ static THEME_DND_ORIG: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(
 /// the captured original with its own silenced "on".
 fn theme_dnd_engage_with(shell: &dyn crate::providers::shell_capabilities::ShellCapabilities) {
     let orig = {
-        let mut slot = THEME_DND_ORIG.lock().unwrap();
+        let mut slot = lock_recover(&THEME_DND_ORIG);
         if slot.is_some() {
             return; // already engaged by an earlier generation
         }
@@ -3278,7 +3292,7 @@ fn theme_dnd_engage() {
 
 /// Restore the pre-swap DND state, exactly once (take()).
 fn theme_dnd_release_with(shell: &dyn crate::providers::shell_capabilities::ShellCapabilities) {
-    if let Some(orig) = THEME_DND_ORIG.lock().unwrap().take() {
+    if let Some(orig) = lock_recover(&THEME_DND_ORIG).take() {
         let ok = shell.dnd_set(&orig);
         tracing::info!("[theme] DND restored to {} ok={}", orig, ok);
     }
@@ -4476,11 +4490,11 @@ fn main() -> Result<(), slint::PlatformError> {
                         // durations in ui/main.slint (states block).
                         let orig_ws = get_active_workspace_name();
                         {
-                            let mut g = THEME_GEN.lock().unwrap();
+                            let mut g = lock_recover(&THEME_GEN);
                             *g += 1;
                             tracing::info!("[theme] new generation {} for ws {}", *g, orig_ws);
                         }
-                        *THEME_CYCLE_FIRED_GEN.lock().unwrap() = None;
+                        *lock_recover(&THEME_CYCLE_FIRED_GEN) = None;
                         THEME_TRANSITIONING_FLAG.store(true, std::sync::atomic::Ordering::Relaxed);
                         // W5: arm the signal wait AT THE START (T=0), not inside
                         // the timer. The compositor's `fullscreen>>1` can arrive
@@ -4489,13 +4503,13 @@ fn main() -> Result<(), slint::PlatformError> {
                         // ever fires. Arming at the timer (the previous shape)
                         // made every early signal unlistenable — the fix was
                         // wired but inert.
-                        *THEME_WAITING_STEP.lock().unwrap() = Some(TransitionStep::Fullscreen);
-                        *THEME_FINALE_WINDOW.lock().unwrap() = Some(win.clone());
+                        *lock_recover(&THEME_WAITING_STEP) = Some(TransitionStep::Fullscreen);
+                        *lock_recover(&THEME_FINALE_WINDOW) = Some(win.clone());
                         // Interlude bookkeeping BEFORE the view moves: first
                         // writer wins, so a rapid successive theme apply keeps
                         // returning to the user's REAL workspace.
                         if is_safe_workspace_name(&orig_ws) {
-                            THEME_INTERLUDE.lock().unwrap().capture(&orig_ws);
+                            lock_recover(&THEME_INTERLUDE).capture(&orig_ws);
                         }
                         // Silence the notify-send machine-gun while the stage
                         // is exposed (first-writer-wins, see theme_dnd_engage).
@@ -4513,7 +4527,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         // Reloads wipe runtime options — hypr_ipc re-applies them
                         // on every configreloaded line.
                         {
-                            let _serial = MASK_WRITE_SERIAL.lock().unwrap();
+                            let _serial = lock_recover(&MASK_WRITE_SERIAL);
                             match begin_mask() {
                                 Err(e) => tracing::warn!(
                                     "[theme] masking SKIPPED (no crash marker): {}",
@@ -4534,7 +4548,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             w.set_theme_transitioning(true);
                         }
                         let weak_back = win.clone();
-                        let fallback_gen = *THEME_GEN.lock().unwrap();
+                        let fallback_gen = *lock_recover(&THEME_GEN);
                         // T+560ms: the interlude stage now lives inside
                         // `begin_interlude_display`, which runs it after the
                         // reload settles AND holds it for the display time. The
@@ -4550,7 +4564,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         // -> stage the empty desktop -> HOLD it for the display
                         // time -> finale.
                         let armed_bump = arm_reload_settle(fallback_gen);
-                        *THEME_WAITING_STEP.lock().unwrap() = Some(TransitionStep::Restore);
+                        *lock_recover(&THEME_WAITING_STEP) = Some(TransitionStep::Restore);
                         // W5c + review fix: the wait must survive an ARBITRARILY
                         // long burst. The first shape re-armed only ONCE and then
                         // gave up to the fixed clock, so a burst longer than two
@@ -4564,7 +4578,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         // Safety net: a transition that never sees a reload still
                         // finishes. Unchanged from the pre-W5 behaviour.
                         slint::Timer::single_shot(std::time::Duration::from_millis(1500), move || {
-                            let cur_gen = *THEME_GEN.lock().unwrap();
+                            let cur_gen = *lock_recover(&THEME_GEN);
                             if cur_gen != fallback_gen {
                                 tracing::info!(
                                     "[theme] finale skip — stale generation {} (current {})",
@@ -4601,7 +4615,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         let weak_watch = win.clone();
                         let watch_gen = fallback_gen;
                         slint::Timer::single_shot(std::time::Duration::from_millis(3500), move || {
-                            let cur = *THEME_GEN.lock().unwrap();
+                            let cur = *lock_recover(&THEME_GEN);
                             if cur != watch_gen {
                                 return; // superseded by newer theme
                             }
@@ -4613,7 +4627,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             }
                             THEME_TRANSITIONING_FLAG.store(false, std::sync::atomic::Ordering::Relaxed);
                             restore_theme_masks();
-                            if let Some(orig) = THEME_INTERLUDE.lock().unwrap().take_restore() {
+                            if let Some(orig) = lock_recover(&THEME_INTERLUDE).take_restore() {
                                 let fs_ok = reassert_hve_fullscreen_targeted();
                                 let ok = hypr_switch_view(&orig);
                                 tracing::warn!(
@@ -7194,10 +7208,43 @@ mod tests {
     }
 
     #[test]
+    fn a_poisoned_theme_lock_recovers_instead_of_cascading() {
+        // H1 (audit item 6): the theme statics are locked from several threads.
+        // With a bare `.lock().unwrap()` one panic poisons the mutex and every
+        // later caller panics too, so a single defect takes the whole theme
+        // pipeline down. The fixture reproduces exactly that poison and proves
+        // the recovered guard still carries the data and still works.
+        let mutex = std::sync::Arc::new(std::sync::Mutex::new(7u64));
+        let worker = mutex.clone();
+        let panicked = std::thread::spawn(move || {
+            let _guard = worker.lock().unwrap();
+            panic!("simulated failure while the theme lock is held");
+        })
+        .join();
+        assert!(panicked.is_err(), "the fixture must actually panic");
+        assert!(
+            mutex.is_poisoned(),
+            "the fixture must actually poison the mutex"
+        );
+
+        assert_eq!(
+            *lock_recover(&mutex),
+            7,
+            "the recovered guard must carry the data the panicking holder left"
+        );
+        *lock_recover(&mutex) = 9;
+        assert_eq!(
+            *lock_recover(&mutex),
+            9,
+            "the recovered lock must stay usable afterwards, not just readable once"
+        );
+    }
+
+    #[test]
     fn signal_and_fallback_cannot_both_run_the_same_step() {
         // The claim is the race breaker: whoever gets it runs the step; the
         // loser (the fallback timer, or a duplicate signal) is refused.
-        *THEME_WAITING_STEP.lock().unwrap() = Some(TransitionStep::Fullscreen);
+        *lock_recover(&THEME_WAITING_STEP) = Some(TransitionStep::Fullscreen);
         assert!(
             claim_waiting_step(TransitionStep::Fullscreen),
             "first claim wins"
@@ -7208,7 +7255,7 @@ mod tests {
         );
         // Nothing was waiting after the claim: a later signal is a no-op.
         assert!(!claim_waiting_step(TransitionStep::Fullscreen));
-        *THEME_WAITING_STEP.lock().unwrap() = None;
+        *lock_recover(&THEME_WAITING_STEP) = None;
     }
 
     #[test]
@@ -7217,7 +7264,7 @@ mod tests {
         // that arrives BEFORE the fallback timer can claim the step. The first
         // implementation armed it inside the timer, which made every early
         // signal unlistenable (the fix was wired but inert).
-        *THEME_WAITING_STEP.lock().unwrap() = Some(TransitionStep::Fullscreen);
+        *lock_recover(&THEME_WAITING_STEP) = Some(TransitionStep::Fullscreen);
         // Early signal: it finds a step waiting and claims it.
         assert!(
             claim_waiting_step(TransitionStep::Fullscreen),
@@ -7229,7 +7276,7 @@ mod tests {
             !claim_waiting_step(TransitionStep::Fullscreen),
             "the fallback must not re-run a step the signal already took"
         );
-        *THEME_WAITING_STEP.lock().unwrap() = None;
+        *lock_recover(&THEME_WAITING_STEP) = None;
     }
 
     // ── W5b: the finale waits for the reload burst to settle ──
@@ -7376,12 +7423,12 @@ mod tests {
         originals.insert("blur", "1".to_string());
         originals.insert("border", "2".to_string());
         originals.insert("shadow", "1".to_string());
-        *THEME_MASK_ORIGINALS.lock().unwrap() = originals;
+        *lock_recover(&THEME_MASK_ORIGINALS) = originals;
 
         let failures = restore_theme_masks_with(|_lua| Err("boom".to_string()));
         assert_eq!(failures.len(), 1, "the failure must be reported");
         assert_eq!(
-            THEME_MASK_ORIGINALS.lock().unwrap().len(),
+            lock_recover(&THEME_MASK_ORIGINALS).len(),
             3,
             "a failed restore must keep the originals so the watchdog can retry"
         );
@@ -7390,7 +7437,7 @@ mod tests {
         let failures = restore_theme_masks_with(|_lua| Ok(()));
         assert!(failures.is_empty(), "got {:?}", failures);
         assert!(
-            THEME_MASK_ORIGINALS.lock().unwrap().is_empty(),
+            lock_recover(&THEME_MASK_ORIGINALS).is_empty(),
             "a successful restore must clear the store"
         );
     }
@@ -8439,7 +8486,7 @@ mod tests {
         composer::init_global(ctrl);
 
         // Prime the shared debounce to the past so the claim is granted.
-        *LAST_REASSERT.lock().unwrap() =
+        *lock_recover(&LAST_REASSERT) =
             Some(std::time::Instant::now() - std::time::Duration::from_secs(10));
 
         let action = apply_reload_fs_action(
@@ -8517,9 +8564,9 @@ mod tests {
 
         // Reload A already cycled: the shared debounce stamp is 1.4s old,
         // so a reload B arriving NOW is refused (inside the 1.5s window).
-        *LAST_REASSERT.lock().unwrap() =
+        *lock_recover(&LAST_REASSERT) =
             Some(std::time::Instant::now() - std::time::Duration::from_millis(1400));
-        *PENDING_RECONSULT_AT.lock().unwrap() = None;
+        *lock_recover(&PENDING_RECONSULT_AT) = None;
 
         // The re-consult tick (the real one re-gathers live state; here the
         // decision inputs are injected headlessly): once the window has
@@ -8579,9 +8626,9 @@ mod tests {
         let win = crate::MainWindow::new().unwrap();
         win.show().unwrap();
 
-        *LAST_REASSERT.lock().unwrap() =
+        *lock_recover(&LAST_REASSERT) =
             Some(std::time::Instant::now() - std::time::Duration::from_millis(1400));
-        *PENDING_RECONSULT_AT.lock().unwrap() = None;
+        *lock_recover(&PENDING_RECONSULT_AT) = None;
 
         let cycles = std::sync::Arc::new(std::sync::Mutex::new(0u32));
         {
@@ -8623,9 +8670,9 @@ mod tests {
         let win = crate::MainWindow::new().unwrap();
         win.show().unwrap();
 
-        *LAST_REASSERT.lock().unwrap() =
+        *lock_recover(&LAST_REASSERT) =
             Some(std::time::Instant::now() - std::time::Duration::from_millis(1400));
-        *PENDING_RECONSULT_AT.lock().unwrap() = None;
+        *lock_recover(&PENDING_RECONSULT_AT) = None;
 
         let cycles = std::sync::Arc::new(std::sync::Mutex::new(0u32));
         {
@@ -8670,9 +8717,9 @@ mod tests {
         let win = crate::MainWindow::new().unwrap();
         win.show().unwrap();
 
-        *LAST_REASSERT.lock().unwrap() =
+        *lock_recover(&LAST_REASSERT) =
             Some(std::time::Instant::now() - std::time::Duration::from_millis(1400));
-        *PENDING_RECONSULT_AT.lock().unwrap() = None;
+        *lock_recover(&PENDING_RECONSULT_AT) = None;
 
         let ticks = std::sync::Arc::new(std::sync::Mutex::new(0u32));
         {
@@ -8701,7 +8748,7 @@ mod tests {
         // The pending marker is cleared once the timer fires: a later burst
         // can arm again (bounded, not wedged).
         assert!(
-            PENDING_RECONSULT_AT.lock().unwrap().is_none(),
+            lock_recover(&PENDING_RECONSULT_AT).is_none(),
             "the pending marker must clear once the re-consult fires"
         );
         let _ = &win;

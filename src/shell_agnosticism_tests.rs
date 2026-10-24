@@ -133,7 +133,7 @@ fn the_core_asks_the_adapter_whether_an_apply_arms_the_reassert() {
 #[test]
 fn the_core_engages_and_restores_dnd_through_a_fake_shell() {
     // The static slot may hold a value from another test in this binary.
-    crate::THEME_DND_ORIG.lock().unwrap().take();
+    crate::lock_recover(&crate::THEME_DND_ORIG).take();
 
     let shell = FakeShell {
         dnd: Some("off".into()),
