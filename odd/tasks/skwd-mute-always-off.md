@@ -41,6 +41,8 @@ encoding, an `"off"` nobody claims) is never guessed: `plan_yield` refuses it.
 - T5 (inline) live check: rebuilt binary, HVE restarted, `theme.policy` reads
   `"off"` while a `keeper-palette` marker is present.
 
+Status: T1-T5 done.
+
 ## Risk
 
 Item 3 (contract with another program: the `theme.policy` handshake other
@@ -83,3 +85,19 @@ watcher_reasserts_the_applied_theme_palette_on_an_external_change`. They are a
 separate defect (bash contract / watcher ask), not caused by this unit; the
 first two fail deterministically even with HOME and XDG redirected.
 `cargo clippy --all-targets -- -D warnings` is clean.
+
+L7 (T4, cross-model): independent verification by mimo-v2.6-flash over
+847cd2d..e761733 returned PASS on S1-S5 with its own probe module, including a
+probe at the baseline that reproduces the exact measured failure and fails
+there. It also confirmed S3 (`background.rs` untouched) and that no production
+path other than the overlay/repair-skip reads the marker.
+
+L8 (T5, live): rebuilt the release binary (md5 1774f3b2...), backed the running
+one up to `~/.local/bin/hve.bak-2026-10-24-mute`, installed and restarted HVE
+with the `keeper-palette` marker present and `theme.policy` set to `"wallpaper"`
+(the exact pre-fix startup state). Result: `MUTE RE-ARMED a theme owns the
+palette after a restart; theme.policy "wallpaper" -> "off"` at 16:45:00Z, where
+the old binary wrote `crash repair: theme.policy put back to "wallpaper"`. The
+marker that HVE had written over its own apply at 16:04:43 (stamp
+`color-write.last` unchanged since 06:48, so the apply path never stamped) was
+removed as false; the overlay keeps the theme's palette (`#879a39`).
