@@ -57,15 +57,55 @@ fn run_bash(script: &str, args: &[&str], envs: &[(&str, &str)], cwd: &Path) -> O
         bin.display(),
         std::env::var("PATH").unwrap_or_default()
     );
-    std::process::Command::new("bash")
+    let mut command = std::process::Command::new("bash");
+    command
         .arg("-c")
         .arg(script)
         .args(args)
         .env("PATH", path)
         .envs(envs.iter().copied())
-        .current_dir(cwd)
-        .output()
-        .expect("bash must be available")
+        .current_dir(cwd);
+    sandbox_xdg_roots(envs, &mut command);
+    command.output().expect("bash must be available")
+}
+
+/// Point the child's XDG roots at the sandbox whenever the caller hands it its
+/// own `HOME`, and drop every XDG override the caller did not name.
+///
+/// WHY: a desktop session exports `XDG_CONFIG_HOME` (Hyprland always does), so
+/// a child spawned with only `HOME` overridden still resolved `HVE_CONFIG_DIR`
+/// from the KEEPER'S live config and the scripts under test stopped owning the
+/// colours. Measured 2026-10-24: `hostile_palette_names_never_own_colours`
+/// refused a plain palette name and the watcher's re-assert test never asked,
+/// on a Hyprland session, while both passed in a bare shell. A caller that
+/// names an XDG root itself keeps it: `OverlaySandbox` deliberately pins
+/// `XDG_CONFIG_HOME` to a distinct root.
+fn sandbox_xdg_roots(envs: &[(&str, &str)], command: &mut std::process::Command) {
+    const ROOTS: [(&str, &str); 4] = [
+        ("XDG_CONFIG_HOME", ".config"),
+        ("XDG_CACHE_HOME", ".cache"),
+        ("XDG_DATA_HOME", ".local/share"),
+        ("XDG_STATE_HOME", ".local/state"),
+    ];
+    let named = |key: &str| envs.iter().any(|(k, _)| *k == key);
+    let home = envs
+        .iter()
+        .find(|(k, _)| *k == "HOME")
+        .map(|(_, v)| Path::new(*v));
+    for (key, _) in ROOTS {
+        if named(key) {
+            continue;
+        }
+        match home {
+            Some(home) => {
+                let (_, suffix) = ROOTS.iter().find(|(k, _)| *k == key).unwrap();
+                command.env(key, home.join(suffix));
+            }
+            None => {
+                command.env_remove(key);
+            }
+        }
+    }
 }
 
 fn read_script(name: &str) -> String {
@@ -458,6 +498,7 @@ fn run_get_colors_with_scheme(home: &Path, scheme: &str) -> serde_json::Value {
         .arg(&script)
         .env("PATH", path)
         .env("HOME", home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("HVE_SAFE_DIR", &cache)
         .current_dir(home)
         .output()
