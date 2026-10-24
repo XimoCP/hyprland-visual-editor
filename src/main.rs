@@ -4666,8 +4666,8 @@ fn main() -> Result<(), slint::PlatformError> {
             let slot = gallery_slot.clone();
             let tm = gallery_tm.clone();
             let refresh_slice = refresh_slice_ring.clone();
-            // The chrome is the ONE writer of the style (mouse drawer, FilterBar
-            // and keyboard all land here), so this is the single place the
+            // The chrome is the ONE writer of the style (mouse drawer and
+            // keyboard all land here), so this is the single place the
             // keeper's choice has to reach the config on disk. The window is
             // built before `AppState` exists, so the shared state is reached
             // through the slot — same idiom as the card-clicked handler.

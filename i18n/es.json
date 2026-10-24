@@ -1,22 +1,14 @@
 {
   "meta": {
     "lang": "es",
-    "name": "Español",
-    "author": "Ximo & AI"
-  },
-  "widget": {
-    "tooltip": "Hyprland Visual Editor",
-    "menu_settings": "Ajustes del Plugin"
+    "name": "Español"
   },
   "panel": {
-    "header_title": "Hyprland Visual Editor",
-    "header_subtitle": "Centro de Control Estético",
     "tabs": {
       "home": "Inicio",
       "animations": "Animaciones",
       "borders": "Bordes",
-      "effects": "Efectos",
-      "themes": "Temas"
+      "effects": "Efectos"
     },
     "nav": {
       "save": "Guardar",
@@ -53,42 +45,10 @@
       "enabled": "Editor Visual Habilitado",
       "disabled": "Editor Visual Deshabilitado"
     },
-    "activation_title": "Activación del Sistema",
-    "system_active": "El sistema está operativo. Los efectos visuales están gestionados por HVE de forma segura.",
-    "system_inactive": "Sistema detenido. Requiere aceptación del contrato de persistencia para continuar.",
-    "enable_label": "Habilitar Visual Editor",
-    "warning": {
-      "title": "CONTRATO DE PERSISTENCIA SEGURA",
-      "text": "Al activar, HVE desplegará un <b>escudo guardián</b> e inyectará una ruta segura en tu <code>hyprland.conf</code>. Si desinstalas el plugin desde la Shell, el sistema se autolimpiará en el próximo reinicio sin causar errores en Hyprland."
-    },
-    "features": {
-      "title": "Características & Bondades",
-      "description": "Hyprland Visual Editor es la evolución estética de tu escritorio.",
-      "list": {
-        "fluid_anim": "✨ <b>Animaciones Fluidas</b>",
-        "smart_borders": "🎨 <b>Bordes Inteligentes</b>",
-        "realtime_shaders": "🕶️ <b>Shaders Real-Time</b>",
-        "non_destructive": "🛡️ <b>No Destructivo</b>"
-      }
-    },
-    "docs": {
-      "title": "Arquitectura y Documentación",
-      "description": "Descubre cómo funciona HVE por debajo.",
-      "summary": "<b>Hyprland Visual Editor</b> utiliza un sistema de <i>Fragmentos y Ensamblaje</i> en tiempo real. Nunca toca tu configuración principal. Todo se genera de forma segura en un archivo maestro <code>overlay.conf</code> aislado.",
-      "btn_readme": "Leer Manual Completo",
-      "btn_folder": "Explorar Archivos"
-    },
-    "credits": {
-      "title": "Créditos",
-      "description": "Agradecimientos especiales al <b>HyDE Project</b>.",
-      "btn_hyde": "Inspirado en HyDE Project",
-      "ai_title": "Co-Programado con IA",
-      "ai_desc": "Gracias a Gemini (Google) por la asistencia en arquitectura y depuración de rutas."
-    }
+    "activation_title": "Activación del Sistema"
   },
   "animations": {
     "header_title": "Biblioteca de Movimiento",
-    "header_subtitle": "Selecciona el estilo de animación para tu escritorio",
     "section_desc": "Ajustá la curva y guardála como preajuste. O elegí una animación existente.",
     "kbd_hint": "↑↓ navegar • ←→ cambiar de panel • Enter/Space aplicar/activar • flechas ajustar • Esc volver",
     "controls": {
@@ -206,8 +166,6 @@
       "desc": "Redondeo de las esquinas en píxeles (0 cuadrado, 100 totalmente redondeado)."
     },
     "gaps": {
-      "title": "Espacios",
-      "desc": "Define el espacio entre ventanas (0-30px)",
       "in": {
         "title": "Espacio Interno",
         "desc": "Espacio entre una ventana y las de al lado (espacio interno)."
@@ -359,8 +317,6 @@
     }
   },
   "shaders": {
-    "header_title": "Filtros de Pantalla",
-    "header_subtitle": "Post-procesado de imagen en tiempo real",
     "presets": {
       "01_night": {
         "title": "Luz Nocturna",
@@ -407,13 +363,6 @@
     "quit": "Salir"
   },
   "settings": {
-    "preview_label": "Vista previa",
-    "change_icon_button": "Cambiar icono del widget",
-    "icon_color_label": "Color del icono",
-    "autoapply_label": "Aplicar automáticamente",
-    "autoapply_description": "Actualiza Hyprland al instante al guardar",
-    "path_label": "Ruta de Configuración",
-    "path_desc": "Ruta absoluta para el archivo de configuración satélite.",
     "title": "Ajustes",
     "auto_minimize": "Retardo al ocultar",
     "timer": "Retardo:",
@@ -422,30 +371,10 @@
     "autostart": "Inicio automático",
     "theme": "Tema",
     "reset_presets": "Restablecer ajustes",
-    "theme_dark": "oscuro",
-    "theme_light": "claro",
-    "theme_system": "sistema",
     "restart_banner": "⚠ Reinicio requerido",
-    "restart_button": "Reiniciar",
-    "keybinds": "Atajos de teclado"
+    "restart_button": "Reiniciar"
   },
   "home": {
-    "status_active": "Sistema Activo",
-    "status_inactive": "Sistema Detenido",
-    "nav_animations": "Animaciones",
-    "nav_borders": "Bordes",
-    "nav_shaders": "Shaders",
-    "count_styles": " estilos",
-    "count_filters": " filtros",
-    "active_config": "Configuración Activa",
-    "active_anim": "Animación:",
-    "active_border": "Borde:",
-    "active_shader": "Shader:",
-    "active_theme": "Tema:",
-    "none_anim": "Ninguna",
-    "none_border": "Ninguno",
-    "none_shader": "Ninguno",
-    "none_theme": "Ninguno",
     "about_title": "Acerca de HVE",
     "about_short": "Hyprland Visual Editor es la evolución estética de tu escritorio.",
     "about_full": "HVE es una aplicación gráfica para gestionar visualmente la estética de tu escritorio Hyprland: animaciones, bordes, esquinas redondeadas, espacios entre ventanas y efectos visuales, todo con vista previa en vivo.\n\nLa pestaña Temas te deja guardar, aplicar, renombrar y eliminar configuraciones completas, incluyendo fondos estáticos y animados (mpvpaper) según el proveedor activo (tu proveedor de shell, presets HVE y wallpapers).\n\nAdemás incluye tiling mode, auto-minimización al perder el foco, autostart con tu sesión, navegación completa por teclado, idiomas español/inglés y control desde la bandeja del sistema.\n\nTodo se aplica de forma segura: HVE ensambla fragmentos y nunca reescribe tu configuración personal. Al desactivar el sistema o desinstalar, un watchdog limpia los cambios y tu configuración original siempre queda intacta.",
@@ -563,8 +492,6 @@
     }
   },
   "themes": {
-    "header_title": "Gestor de Temas",
-    "header_subtitle": "Guardá y aplicá temas completos del escritorio",
     "save_placeholder": "Nombre del tema...",
     "save_button": "Guardar",
     "search_placeholder": "Buscar temas...",
@@ -582,14 +509,10 @@
     "overwrite_title": "Sobrescribir tema",
     "overwrite_msg": "ya existe. ¿Sobrescribirlo con la configuración actual?",
     "cancel": "Cancelar",
-    "include": "Incluir:",
-    "action_overwrite": "Sobrescribir",
     "provider": {
       "noctalia": "Noctalia",
       "hve-presets": "Presets HVE"
-    },
-    "save_section": "Guardar Estado Actual",
-    "list_section": "Mis Temas"
+    }
   },
   "bg": {
     "video_notice": {

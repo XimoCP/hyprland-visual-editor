@@ -1,22 +1,14 @@
 {
   "meta": {
     "lang": "en",
-    "name": "English",
-    "author": "Ximo & AI"
-  },
-  "widget": {
-    "tooltip": "Hyprland Visual Editor",
-    "menu_settings": "Plugin Settings"
+    "name": "English"
   },
   "panel": {
-    "header_title": "Hyprland Visual Editor",
-    "header_subtitle": "Aesthetic Control Center",
     "tabs": {
       "home": "Home",
       "animations": "Animations",
       "borders": "Borders",
-      "effects": "Effects",
-      "themes": "Themes"
+      "effects": "Effects"
     },
     "nav": {
       "save": "Save",
@@ -53,42 +45,10 @@
       "enabled": "Visual Editor Enabled",
       "disabled": "Visual Editor Disabled"
     },
-    "activation_title": "System Activation",
-    "system_active": "The system is operational. Visual effects are safely managed by HVE.",
-    "system_inactive": "System halted. Requires acceptance of the persistence contract to continue.",
-    "enable_label": "Enable Visual Editor",
-    "warning": {
-      "title": "SECURE PERSISTENCE CONTRACT",
-      "text": "Upon activation, HVE will deploy a <b>guardian shield</b> and inject a secure path into your <code>hyprland.conf</code>. If you uninstall the plugin from the Shell, the system will self-clean on the next reboot without causing Hyprland errors."
-    },
-    "features": {
-      "title": "Features & Benefits",
-      "description": "Hyprland Visual Editor is the aesthetic evolution of your desktop.",
-      "list": {
-        "fluid_anim": "✨ <b>Fluid Animations</b>",
-        "smart_borders": "🎨 <b>Smart Borders</b>",
-        "realtime_shaders": "🕶️ <b>Real-Time Shaders</b>",
-        "non_destructive": "🛡️ <b>Non-Destructive</b>"
-      }
-    },
-    "docs": {
-      "title": "Architecture & Documentation",
-      "description": "Discover how HVE works under the hood.",
-      "summary": "<b>Hyprland Visual Editor</b> uses a real-time <i>Fragments and Assembly</i> system. It never touches your main configuration. Everything is safely generated in an isolated <code>overlay.conf</code> master file.",
-      "btn_readme": "Read Full Manual",
-      "btn_folder": "Browse Files"
-    },
-    "credits": {
-      "title": "Credits",
-      "description": "Special thanks to the <b>HyDE Project</b>.",
-      "btn_hyde": "Inspired by HyDE Project",
-      "ai_title": "AI Co-Programmed",
-      "ai_desc": "QML Architecture and path debugging assistance by Gemini (Google)."
-    }
+    "activation_title": "System Activation"
   },
   "animations": {
     "header_title": "Motion Library",
-    "header_subtitle": "Select the animation style for your desktop",
     "section_desc": "Shape the curve, then save as a preset. Or pick an existing animation.",
     "kbd_hint": "↑↓ navigate • ←→ switch panel • Enter/Space apply/engage • arrows adjust • Esc back",
     "controls": {
@@ -206,8 +166,6 @@
       "desc": "Corner rounding in pixels (0 square, 100 fully round)."
     },
     "gaps": {
-      "title": "Gaps",
-      "desc": "Define spacing between windows (0-30px)",
       "in": {
         "title": "Inner Gap",
         "desc": "Space between a window and its neighbors (inner gap)."
@@ -359,8 +317,6 @@
     }
   },
   "shaders": {
-    "header_title": "Screen Filters",
-    "header_subtitle": "Real-time image post-processing",
     "presets": {
       "01_night": {
         "title": "Night Light",
@@ -407,13 +363,6 @@
     "quit": "Quit"
   },
   "settings": {
-    "preview_label": "Preview",
-    "change_icon_button": "Change Widget Icon",
-    "icon_color_label": "Icon Color",
-    "autoapply_label": "Auto Apply",
-    "autoapply_description": "Instantly reload Hyprland when saving",
-    "path_label": "Config Path",
-    "path_desc": "Absolute path for the satellite configuration file.",
     "title": "Settings",
     "auto_minimize": "Hide delay",
     "timer": "Delay:",
@@ -422,30 +371,10 @@
     "autostart": "Autostart",
     "theme": "Theme",
     "reset_presets": "Reset presets",
-    "theme_dark": "dark",
-    "theme_light": "light",
-    "theme_system": "system",
     "restart_banner": "⚠ Restart required",
-    "restart_button": "Restart",
-    "keybinds": "Keyboard shortcuts"
+    "restart_button": "Restart"
   },
   "home": {
-    "status_active": "System Active",
-    "status_inactive": "System Stopped",
-    "nav_animations": "Animations",
-    "nav_borders": "Borders",
-    "nav_shaders": "Shaders",
-    "count_styles": " styles",
-    "count_filters": " filters",
-    "active_config": "Active Configuration",
-    "active_anim": "Animation:",
-    "active_border": "Border:",
-    "active_shader": "Shader:",
-    "active_theme": "Theme:",
-    "none_anim": "None",
-    "none_border": "None",
-    "none_shader": "None",
-    "none_theme": "None",
     "about_title": "About HVE",
     "about_short": "Hyprland Visual Editor is the aesthetic evolution of your desktop.",
     "about_full": "HVE is a graphical app to visually manage the aesthetics of your Hyprland desktop: animations, borders, rounded corners, window gaps, and visual effects — all with live preview.\n\nThe Themes tab lets you save, apply, rename, and delete complete configurations, including static and animated wallpapers (mpvpaper) depending on the active provider (your shell provider, HVE presets, and wallpapers).\n\nIt also includes tiling mode, auto-minimize on focus loss, autostart with your session, full keyboard navigation, Spanish/English languages, and system tray control.\n\nEverything applies safely: HVE assembles fragments and never rewrites your personal config. When you disable the system or uninstall, a watchdog cleans up and your original config always stays intact.",
@@ -563,8 +492,6 @@
     }
   },
   "themes": {
-    "header_title": "Theme Manager",
-    "header_subtitle": "Save and apply full desktop themes",
     "save_placeholder": "Theme name...",
     "save_button": "Save",
     "search_placeholder": "Search themes...",
@@ -582,14 +509,10 @@
     "overwrite_title": "Overwrite theme",
     "overwrite_msg": "already exists. Overwrite it with the current setup?",
     "cancel": "Cancel",
-    "include": "Include:",
-    "action_overwrite": "Overwrite",
     "provider": {
       "noctalia": "Noctalia",
       "hve-presets": "HVE Presets"
-    },
-    "save_section": "Save Current State",
-    "list_section": "My Themes"
+    }
   },
   "bg": {
     "video_notice": {

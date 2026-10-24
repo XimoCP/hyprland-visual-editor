@@ -5941,46 +5941,6 @@ fn test_panel_layer_gated() {
     );
 }
 
-#[test]
-fn test_filterbar_focus_scope_behind_pills() {
-    let content = std::fs::read_to_string("ui/gallery/FilterBar.slint")
-        .expect("ui/gallery/FilterBar.slint must exist");
-    let focus_pos = content
-        .find("focus-scope := FocusScope")
-        .expect("focus-scope := FocusScope must exist in FilterBar.slint");
-    let pills_pos = content
-        .find("pills-wrapper := VerticalLayout")
-        .expect("pills-wrapper := VerticalLayout must exist");
-    assert!(
-        focus_pos < pills_pos,
-        "focus-scope must be declared BEFORE pills-wrapper so pills TouchAreas sit on top — got focus-scope at {focus_pos} pills-wrapper at {pills_pos} (FocusScope on top consumes clicks)"
-    );
-    // FocusScope body must contain real key handling (arrow navigation + Return/Enter)
-    let body_end = std::cmp::min(content.len(), focus_pos + 3500);
-    let body = &content[focus_pos..body_end];
-    assert!(
-        body.contains("ArrowLeft") || body.contains("ArrowRight") || body.contains("LeftArrow") || body.contains("RightArrow"),
-        "FocusScope must handle arrow keys (ArrowLeft/ArrowRight) — no arrow handling found in FocusScope body"
-    );
-    assert!(
-        body.contains("Return"),
-        "FocusScope must handle Return (Enter) to activate pill — no Return handling found in FocusScope body"
-    );
-    // No FocusScope with width 100% may appear AFTER pills-wrapper (would sit on top again)
-    let tail = &content[pills_pos..];
-    assert!(
-        !tail.contains("focus-scope := FocusScope"),
-        "no FocusScope should appear AFTER pills-wrapper — found FocusScope after pills-wrapper (still on top, pills never receive clicks)"
-    );
-    // Tail must not contain a width:100% FocusScope declaration (the overlay trick).
-    // Comments mentioning FocusScope are allowed; only declarations count.
-    if tail.contains("FocusScope") {
-        assert!(
-            !tail.contains(":= FocusScope"),
-            "no width:100% FocusScope may appear after pills-wrapper — tail still contains FocusScope declaration"
-        );
-    }
-}
 
 // ── Theme interlude fade — headless visual verification ────────────────
 // The swap choreography relies on a REAL opacity dissolve (fade-out on
@@ -12148,25 +12108,19 @@ fn the_panel_chrome_reads_every_label_from_the_text_global() {
 }
 
 // ── Gallery drawer pills — the five section words ARE panel chrome ─────
-// The deployed drawers (and FilterBar's bottom row) repeat the rail's five
-// section labels, so a Spanish keeper reading English there is the SAME bug
-// as an untranslated rail. The translation already exists (`PanelText.nav-*`,
-// filled by `panel_i18n::apply_panel_chrome`), so every pill must READ it the
-// way `PanelMenu` does. Asserting the English word would pass on the
+// The deployed drawers repeat the rail's five section labels, so a Spanish
+// keeper reading English there is the SAME bug as an untranslated rail. The
+// translation already exists (`PanelText.nav-*`, filled by
+// `panel_i18n::apply_panel_chrome`), so every pill must READ it the way
+// `PanelMenu` does. Asserting the English word would pass on the
 // untranslated file — this asserts the BINDING.
 
 /// (file, source) for every file that paints one of the drawer pills.
-fn gallery_pill_sources() -> [(&'static str, &'static str); 2] {
-    [
-        (
-            "ui/gallery/FilterBar.slint",
-            include_str!("../../ui/gallery/FilterBar.slint"),
-        ),
-        (
-            "ui/gallery/GalleryRoot.slint",
-            include_str!("../../ui/gallery/GalleryRoot.slint"),
-        ),
-    ]
+fn gallery_pill_sources() -> [(&'static str, &'static str); 1] {
+    [(
+        "ui/gallery/GalleryRoot.slint",
+        include_str!("../../ui/gallery/GalleryRoot.slint"),
+    )]
 }
 
 #[test]
@@ -12180,13 +12134,9 @@ fn gallery_drawer_pills_read_the_panel_text_global() {
     assert_eq!(nav.len(), 5, "the drawers repeat the five rail sections");
 
     for (file, src) in gallery_pill_sources() {
-        // FilterBar paints one pill per section; GalleryRoot paints the drawer
-        // twice (behind the stage in Slider, in front in Mosaic).
-        let expected = if file.ends_with("FilterBar.slint") {
-            1
-        } else {
-            2
-        };
+        // GalleryRoot paints the drawer twice (behind the stage in Slider, in
+        // front in Mosaic).
+        let expected = 2;
         for (name, en) in &nav {
             let binding = format!("label: PanelText.{name};");
             assert_eq!(

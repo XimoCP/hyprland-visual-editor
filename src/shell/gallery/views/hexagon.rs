@@ -4,7 +4,8 @@
 // border, subtle parallax, video on selected hex.
 // Spec R2.2, S4. Translated from skwd-wall honeycomb (MIT, © liixini).
 //
-// Pure Rust — no Slint types. Slint side is HexDelegate.slint.
+// Pure Rust — no Slint types. The Slint side is the hexagon view in
+// `ui/gallery/`.
 
 use super::{GalleryKey, GalleryStyle, GalleryView};
 

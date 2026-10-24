@@ -570,10 +570,10 @@ impl Shell {
         window.set_panel_section(section);
         window.set_is_mutating(is_mutating);
         window.set_is_panel_open(is_open);
-        // Also forward panel-section to gallery for FilterBar mirror (pills active)
-        // The FilterBar reads panel-section via ShellRoot.panel-section, mirrored above via MainWindow already?
-        // ShellRoot.panel-section is now set via MainWindow.panel-section above; need to ensure gallery also sees it.
-        // No extra step — ShellRoot.panel-section is driven by MainWindow.panel-section.
+        // Also forward panel-section to the gallery so its drawer pills follow
+        // the active section. ShellRoot.panel-section is already set via
+        // MainWindow.panel-section above, and the gallery reads it from there:
+        // no extra step is needed here.
     }
 
     // ── Internals ─────────────────────────────────────────────────────
