@@ -162,26 +162,51 @@ hiding behind green tests.
       documents the contract. Verified cross-model (GLM), which caught and forced
       the fix of a surviving FAQ claim, a wrong colour-source location and an
       overstated guard scope.
-- [ ] **P8 — no troubleshooting section anywhere** (keeper's decision, 2026-10-05):
+- [x] **P8 — no troubleshooting section anywhere** (keeper's decision, 2026-10-05): closed
+      2026-10-24. Verified: `grep -rn -i troubleshoot docs README.md WIKI.md` returns nothing, and
+      `docs/wiki/` holds no troubleshooting page;
       people report issues in the repository instead. Remove `Troubleshooting` from the
       wiki page list and keep it out of the README.
 
 ### Load-bearing findings (the audit's items 6-7)
-- [ ] **H1 — the forced close and the poisoned locks.** Keep the log capture ready for
-      the next occurrence, and remove the bare `THEME_*.lock().unwrap()` pattern that
-      turns one panic into an immediate cascade.
-- [ ] **H2 — the source-text tests.** Convert the assertions that guard real behaviour
-      into binding or behaviour assertions, starting with the two that hid defects.
+- [x] **H1 — the forced close and the poisoned locks.** Closed 2026-10-24 (`85ff9e8`): the bare
+      `THEME_*.lock().unwrap()` pattern is gone from the ten process-wide theme statics, replaced by
+      `lock_recover` (`main.rs`), which recovers a poisoned guard instead of cascading the panic.
+      Verified cross-model (glm-5.3-flash), which caught the one multi-line call site a single-line
+      rewrite had missed; `grep` for the bare pattern on those statics is now empty. The forced close
+      itself stays open: its log capture is still the only path to a cause.
+- [ ] **H2 — the source-text tests.** PARTIAL (2026-10-24): both named cases are resolved. The
+      construction guard that passed on comments was already fixed (`9cf66c1`); the preset-style
+      validator that echoed the generator is gone (`3e483f8`) — its table `allowed_styles_for` and the
+      test that consumed it were deleted, the `four canonical leaves` assert moved into the independent
+      corpus validator, and only `every_emitted_family_is_used_by_the_shipped_corpus_on_the_same_leaf`
+      (which reads `assets/animations/`) remains. The PATTERN is still open: 51 tests in
+      `src/shell/ui_tests.rs` read repository source and assert on text.
 
 ### Sweeps (own changes, with the audit's counts as the checklist)
 
-- [ ] **M1 — dead code** left by the removed UI (76 i18n keys, `HexDelegate.slint`,
-      `PickTuneBlock.slint`, `FilterBar.slint`, and the smaller leftovers).
+- [x] **M1 — dead code** left by the removed UI. Closed 2026-10-24 (`434402a`): 68 leaf i18n keys
+      removed from both languages (276 → 278 after restoring the one the check wrongly flagged), the
+      three orphan `.slint` components deleted, the test that only read `FilterBar.slint` deleted, and
+      two stale comments naming `FilterBar` updated. Cross-model verification caught the trap this
+      item hides: `19_stylized2.5D.lua` becomes the key `19_stylized2_5D` through `scan.sh`'s
+      dot-to-underscore sanitising, so a stem-based scan calls it dead — the key was restored.
+      NOT done, deliberately: `SystemSection.settings-title` is a four-file property chain (not an
+      isolated dead property) and `auto-minimize` IS read in nine places; both need visual surgery,
+      not a dead-code sweep.
 - [x] **M2 — dependency chain** (`ksni` → `dbus-codegen` → `clap 2.34` / `bitflags 1.3.2`): the `ksni` 0.2 → 0.3 bump
       removed it (`odd/tasks/ksni-0.3-bump.md`). Measured after the bump: `bitflags 1.3.2` is NOT part of that chain
       — it arrives via `png` ← `tiny-skia` ← `hve`/`resvg`, so it needs a `tiny-skia`/`png` decision, not a ksni one.
-- [ ] **M3 — clippy debt** (the audit's counts) plus a release-time gate.
-- [ ] **M4 — `install.sh`**: five of its six distro branches have never run.
+- [x] **M3 — clippy debt** (the audit's counts) plus a release-time gate. Closed 2026-10-24
+      (`896271f`): 66 warnings → 0, `scripts/clippy-gate.sh` runs
+      `cargo clippy --all-targets -- -D warnings` from any cwd. The 15 `neg_cmp_op_on_partial_ord`
+      sites route through `not_positive_or_nan`, which keeps the NaN-safe negation instead of flipping
+      the operator. Verified cross-model (glm-5.3-flash): behaviour-identical.
+- [ ] **M4 — `install.sh`**: five of its six distro branches have never run. OPEN, and it needs a
+      decision before work starts: the detection reads `/etc/os-release` by absolute path, so proving
+      the other five branches means either real environments or extracting the detection into a
+      sourceable function with an injectable path. The second is a refactor of the installer (Tier 3)
+      and it changes a script whose contract tests read it by string — it is not a last-minute edit.
 
 ## Acceptance criteria
 
@@ -215,6 +240,19 @@ hiding behind green tests.
 - Pending: nothing blocking. `WIKI.md` stays as the historical single-file
   manual; the app no longer opens it.
 
+## Progress and evidence (2026-10-24)
+
+- **P8 closed** — no troubleshooting section anywhere (grep-verified).
+- **H1 closed** (`85ff9e8`) — poison recovery instead of a panic cascade; the forced close itself is
+  still unexplained and keeps its log capture.
+- **M3 closed** (`896271f`) — clippy 66 → 0 plus a gate; cross-model verified behaviour-identical.
+- **M1 closed** (`434402a`) — 68 keys, 3 components, 1 test; the `19_stylized2_5D` false positive was
+  caught by cross-model verification and restored.
+- **H2 partial** (`3e483f8`) — both named cases resolved; the 51-test pattern remains.
+- **P8/H1/M1/M3/H2 commits** are on `hve2-visual-rewrite`; the suite stands at 1845 passed / 3 failed,
+  those 3 being the pre-existing colour-ownership and watcher set.
+
 ## Next step
 
-Nothing blocking for publication.
+M4 needs the keeper's call (real environments vs. extracting the detection). Nothing else in this
+tracker blocks publication.
