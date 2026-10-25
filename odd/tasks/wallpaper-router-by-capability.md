@@ -76,8 +76,14 @@ until the next theme apply.
   `skwd_engine::is_video_path` and `skwd_engine::engine_reachable` exposed.
   Three new tests; suite 1852 passed / 0 failed; clippy 0 warnings.
 - T3 (inline) adapter: the mpvpaper plugin as a painter (local video through its
-  existing manifest `local_path`).
-- T4 (inline) adapter: the skwd engine as a painter (the existing hand-off).
+  existing manifest `local_path`). Done: `mpvpaper::paint_local_video` +
+  `local_video_manifest` (pure), sharing one extracted `apply_records` with
+  `apply_manifest` so every safety gate is common.
+- T4 (inline) adapter: the skwd engine as a painter (the existing hand-off). Done:
+  `skwd_engine::engine_reachable` gates it and `is_video_path` tells the media kind.
+  `REGISTERED_PAINTERS` is preference-ordered and `route_available_painter` picks the
+  first declared-and-reachable painter, so the engine keeps a local file while it is
+  up and the plugin takes it when it is not.
 - T5 (inline) media preparation: HVE resolves a theme's remote video to a local file
   (download + sha256) once, so no painter owns that step.
 - T6 (inline) wire the router into the theme apply: no `clear_all()`, one painter
@@ -140,3 +146,15 @@ L8 (progress): T2 delivered — the routing rule now reads DECLARED CAPABILITIES
 declaration place; behaviour is byte-identical to before (engine owns local video and
 still, the plugin owns the saved manifest), so the full suite stayed green and no
 existing test needed changing. Phase 2 (adapters) is next and needs the keeper's go.
+
+L9 (progress): T3 + T4 delivered in commit `d007f6f` (phase 2). The plugin declares
+`LocalVideo` and paints it through `paint_local_video` → `local_video_manifest` →
+`apply_records` (the same body `apply_manifest` uses, so the confined video directory
+and the disabled-plugin refusal are shared, not duplicated). `route_available_painter`
+stops a request at the first painter that declares the capability AND can be reached,
+in declaration order: the engine stays first for a local file, the plugin takes it
+only when the engine is gone. RED was observed before GREEN: removing the plugin's
+`LocalVideo` declaration made `a_local_video_falls_through_to_the_plugin_when_the_engine_is_absent`
+fail with `None`, and restoring it made it pass. Suite 1857 passed / 0 failed, clippy 0
+warnings. Still pending from the keeper's complaint: `clear_all()` on a theme with no
+video (T6) and the re-attach on switch (T7) — that is phase 4.
