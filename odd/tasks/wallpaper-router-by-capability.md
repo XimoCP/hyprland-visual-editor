@@ -14,12 +14,18 @@ theme's background out and whoever is active and able paints it; nobody is marri
 
 ## Specs
 
-S1 (keeper, verbatim): "tenemos que poder hacer que combiban los dos, pero eso no
-quiere decir que puedan estar activos los dos. Solo que si desconectas uno y
-conectas el otro todo funcione correctamente." HVE never stops or withdraws a
-painter it did not hand the current background to, at most one painter paints the
-theme's background at a time, and switching one off and the other on works in both
-directions.
+S1 (keeper, verbatim): "si yo luego después de eso aplico un tema sin fondo animado
+siempre gana hve hasta que yo decida manualmente que no es así." Applying a theme
+ALWAYS imposes that theme's background: with an animated background it is that video,
+painted by whichever available painter can take it; without one it is the theme's
+static background, and any video covering it is stopped. Switching one painter off
+and the other on keeps working in both directions (the keeper's original
+"si desconectas uno y conectas el otro todo funcione correctamente").
+
+S1b (keeper, verbatim): "si después de aplicar el tema yo quiero cambiar el fondo por
+que me sale de la nariz o de los huevos... que no haya nada que me lo impida." After
+the apply, nothing in HVE impedes or undoes a manual background change; the next theme
+apply wins again.
 
 S2 (keeper, verbatim): "HVE no se casa con nadie... tiene que ser agnostico y asi es
 como tiene que ser su arquitectura." The routing decision reads DECLARED
@@ -85,14 +91,33 @@ until the next theme apply.
   first declared-and-reachable painter, so the engine keeps a local file while it is
   up and the plugin takes it when it is not.
 - T5 (inline) media preparation: HVE resolves a theme's remote video to a local file
-  (download + sha256) once, so no painter owns that step.
-- T6 (inline) wire the router into the theme apply: no `clear_all()`, one painter
-  per background, static fallback.
-- T7 (inline) re-attach on switch: a video painter appearing retires HVE's poster, a
-  video painter going away re-paints it — from the layer events already listened to,
-  no polling.
+  (download + sha256) once, so no painter owns that step. Done in `eb2ddc0`:
+  `background::prepare_remote_video` → `mpvpaper::fetch_remote_video` (https only,
+  sha256 required, 1 GiB cap, confined video directory, url tail as file name), and the
+  apply hands the local path to the router before writing the plugin's manifest, so the
+  engine can paint a downloaded video too. Every refusal keeps today's manifest route.
+- T6 (inline) wire the router into the theme apply so the theme's background ALWAYS
+  wins: a video painter receives the theme's video, and a theme without video stops the
+  running videos and paints its own static background. Done: `mpvpaper::clear_all()`
+  stays on that path, because with no animated background the theme's poster is what
+  must be visible.
+- T7 (dropped): no event re-attach is needed. The theme's static background stays
+  painted underneath whatever the keeper turns on later, so a video covers it and
+  turning the video off reveals it — and a manual change is never fought (S1b).
 - T8 (delegated) independent cross-model verification of the diff (writer and
-  verifier are different models, per AGENTS.md).
+  verifier are different models, per AGENTS.md). DONE (mimo-v2.6-flash, scratch
+  `/tmp/opencode/wallpaper-router-verify-QARpQn`): S1, S1b, S2, S3, S4, S5, S6,
+  S7, S9 PASS; S8 PARTIAL (the plugin arm has no end-to-end test because a successful
+  paint runs a system-wide `pkill -9 -x mpvpaper`). ONE BLOCKER: every apply of a url
+  theme re-downloaded the whole video and downloaded even with no painter available,
+  where the baseline reused the file. Fixed in `6358c44` together with three
+  advisories (a failing painter no longer swallows the turn; the media-kind predicate
+  moved to `theme_media`; the video-backend notice dropped the disproved premise).
+- T9 (inline) painter adapter for gslapper, the GStreamer renderer installed on the
+  keeper's machine. Done: `src/providers/gslapper.rs` registered as a `LocalVideo`
+  painter; the adapter owns the argv (`--fork --auto-pause --ipc-socket`), one socket
+  per output, and answers not-available while Noctalia's own gslapper plugin is
+  enabled, so two supervisors never fight.
 
 ## Log
 
@@ -156,5 +181,42 @@ in declaration order: the engine stays first for a local file, the plugin takes 
 only when the engine is gone. RED was observed before GREEN: removing the plugin's
 `LocalVideo` declaration made `a_local_video_falls_through_to_the_plugin_when_the_engine_is_absent`
 fail with `None`, and restoring it made it pass. Suite 1857 passed / 0 failed, clippy 0
-warnings. Still pending from the keeper's complaint: `clear_all()` on a theme with no
-video (T6) and the re-attach on switch (T7) — that is phase 4.
+warnings.
+
+L11 (keeper, verbatim, the correction that closed the design): "claro lo que tiene
+que ser es que si después de aplicar el tema yo quiero cambiar el fondo por que me sale
+de la nariz o de los huevos... que no haya nada que me lo impida... ahora bien... si yo
+luego después de eso aplico un tema sin fondo animado siempre gana hve hasta que yo
+decida manualmente que no es así."
+
+L13 (progress): T5 delivered in `eb2ddc0`. A theme whose video is a url is now resolved
+by HVE before any painter exists in the flow: `prepare_remote_video` refuses a missing
+sha256, a non-https url and an unsafe file name BEFORE any network call or write, and the
+downloaded file is handed to `hand_off_path` like any other video, so the engine (which
+never speaks urls) can paint it too. The recorded url still lands in the plugin's
+manifest, so a later boot and another machine keep working, and a refusal falls back to
+today's route. Suite 1859 passed / 0 failed, clippy 0 warnings.
+
+L14 (verification, cross-model): T8 returned 10 x PASS and S8 PARTIAL, plus one
+BLOCKER: `fetch_remote_video` downloaded unconditionally, so every apply of a url theme
+re-downloaded up to 1 GiB and did it even when no painter could take the video — a
+regression against the baseline, which reused the file already on disk. Fixed in
+`6358c44`: a matching sha256 short-circuits the download, a mismatching one is replaced,
+and nothing is fetched when no painter declares and reaches the video capability. Same
+commit answers three advisories: a reachable-but-failing painter (a stale engine socket)
+now passes the turn to the next painter instead of swallowing it; `is_video_path` moved
+from a painter's module to `theme_media`; and the url notice no longer claims "the plugin
+plays no bare path". Suite 1860 passed / 0 failed, clippy 0. Two advisories stay open
+and are accepted as known: the plugin arm has no end-to-end test (the system-wide
+`pkill` makes it unsafe to run in a suite), and a url theme's manifest is removed after a
+successful hand-off, so the doc's earlier claim about it was wrong.
+
+L15 (progress): T9 delivered in `03dd0bc`. `gslapper` (installed on this machine,
+1.5.2) is a painter now: it declares `LocalVideo`, the adapter builds
+`gslapper --fork --auto-pause --ipc-socket <XDG_RUNTIME_DIR/hve-gslapper/<output>.sock>
+<output> <path>`, one instance per connected output, and clears its own instances first.
+While Noctalia's `nomadcxx/gslapper` plugin is enabled it answers not-available, because
+that plugin is the supervisor then. Suite 1863 passed / 0 failed, clippy 0. Adapters
+still NOT written, with the evidence why: spiros132's `video-wallpaper` is a v4 QML
+plugin the v5 shell does not list or load (`noctalia msg plugins list` never shows it),
+and `0lucasmatheus/awwwall` needs none — it mirrors the wallpaper Noctalia already has.
