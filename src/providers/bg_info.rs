@@ -412,7 +412,12 @@ pub fn video_backend_notice(facts: VideoBackendFacts, lang: &str) -> Option<Vide
         VideoWant::ExactPath => {
             !(facts.engine_socket || facts.has_manifest && facts.mpvpaper_enabled)
         }
-        VideoWant::Url => !facts.mpvpaper_enabled || !facts.has_manifest,
+        // S5 of the wallpaper router: a remote video is now DOWNLOADED BY HVE
+        // and handed to the router as a local path, so the plugin no longer
+        // needs a manifest to paint it. The notice stays honest by warning only
+        // when no painter can take the url at all: the plugin disabled AND no
+        // engine socket. (The manifest is still read as a fallback route.)
+        VideoWant::Url => !facts.mpvpaper_enabled && !facts.engine_socket,
     };
     if manifest_blocked || want_blocked {
         Some(VideoBackendNotice::for_missing_backend(
@@ -814,11 +819,13 @@ mod tests {
         );
     }
 
-    /// A url is painted by the plugin THROUGH the manifest: a disabled plugin
-    /// blocks it, and so does a manifest that was never written (the engine
-    /// cannot paint a url either).
+    /// A url is resolved by HVE and handed to a painter as a LOCAL path (S5 of
+    /// the wallpaper router), so the old "the engine cannot paint a url" premise
+    /// is gone: the notice fires only when NO painter exists at all — the plugin
+    /// disabled and no engine socket — and stays silent otherwise, manifest or
+    /// not.
     #[test]
-    fn video_backend_notice_fires_for_a_url_that_no_plugin_can_paint() {
+    fn video_backend_notice_fires_for_a_url_that_no_painter_can_take() {
         assert!(
             crate::providers::bg_info::video_backend_notice(
                 crate::providers::bg_info::VideoBackendFacts {
@@ -830,21 +837,24 @@ mod tests {
                 "es",
             )
             .is_some(),
-            "a url with the plugin disabled must notify"
+            "a url with no painter at all must notify"
         );
-        assert!(
-            crate::providers::bg_info::video_backend_notice(
-                crate::providers::bg_info::VideoBackendFacts {
-                    video_want: crate::providers::bg_info::VideoWant::Url,
-                    has_manifest: false,
-                    engine_socket: true,
-                    mpvpaper_enabled: true,
-                },
-                "es",
-            )
-            .is_some(),
-            "the engine cannot paint a url: an enabled plugin with no written manifest must notify"
-        );
+        for (engine_socket, mpvpaper_enabled) in [(false, true), (true, false), (true, true)] {
+            assert!(
+                crate::providers::bg_info::video_backend_notice(
+                    crate::providers::bg_info::VideoBackendFacts {
+                        video_want: crate::providers::bg_info::VideoWant::Url,
+                        has_manifest: false,
+                        engine_socket,
+                        mpvpaper_enabled,
+                    },
+                    "es",
+                )
+                .is_none(),
+                "a reachable painter takes the downloaded url (engine_socket={engine_socket}, \
+                 plugin={mpvpaper_enabled}); no notice belongs here"
+            );
+        }
     }
 
     /// Defect 3 (verifier): a theme with no poster record and no static

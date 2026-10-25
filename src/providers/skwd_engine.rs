@@ -108,7 +108,7 @@ pub(crate) fn delegate_to_skwd_walld(wallpaper_path: &Path) -> bool {
     // The old code always tried `skwd-helm` first under a 500ms cap, so the
     // still-image case logged "timed out after 500ms" and killed the helper
     // mid-work before falling through. The log lied and the path was wasteful.
-    let order: [&str; 2] = if is_video_path(wallpaper_path) {
+    let order: [&str; 2] = if crate::theme_media::is_video_path(wallpaper_path) {
         ["skwd-helm", "skwd-wall-v2"]
     } else {
         ["skwd-wall-v2", "skwd-helm"]
@@ -130,21 +130,6 @@ pub(crate) fn delegate_to_skwd_walld(wallpaper_path: &Path) -> bool {
         path_str
     );
     false
-}
-
-/// Whether the wallpaper is an animated video, which decides the engine order.
-/// Extension-based on purpose: it only selects a PREFERENCE (the other engine
-/// still runs as fallback), so a surprising name costs time, never correctness.
-pub(crate) fn is_video_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| {
-            matches!(
-                e.to_ascii_lowercase().as_str(),
-                "mp4" | "webm" | "mkv" | "mov" | "gif" | "avi"
-            )
-        })
-        .unwrap_or(false)
 }
 
 /// Bounded wait for ONE delegation `apply` call, so a hung daemon helper can

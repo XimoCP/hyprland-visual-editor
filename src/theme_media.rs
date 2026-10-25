@@ -497,6 +497,24 @@ pub enum ThemeVideoSource {
     },
 }
 
+/// Whether a path names an animated video, by extension.
+///
+/// This is a MEDIA-kind predicate, so it lives in the media layer and not in a
+/// painter: the router reads it to pick a capability, and a painter reads it to
+/// pick its own binary. Extension-based on purpose — it only selects a
+/// preference, never correctness, so a surprising name costs time, not truth.
+pub fn is_video_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "mp4" | "webm" | "mkv" | "mov" | "gif" | "avi"
+            )
+        })
+        .unwrap_or(false)
+}
+
 /// Resolve the theme's video for APPLY: the packaged `media/background.mp4`
 /// first, then the existing absolute `video.txt` path, then a recorded url.
 /// `None` when nothing usable exists — the caller keeps its normal chain.

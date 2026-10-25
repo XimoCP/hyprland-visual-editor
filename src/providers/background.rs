@@ -94,11 +94,26 @@ pub fn route_painter(
 /// picks a capability (never a painter), so a surprising name costs a wrong
 /// route, never a broken apply.
 pub fn capability_for_path(path: &Path) -> PainterCapability {
-    if crate::providers::skwd_engine::is_video_path(path) {
+    if crate::theme_media::is_video_path(path) {
         PainterCapability::LocalVideo
     } else {
         PainterCapability::Static
     }
+}
+
+/// The painters that DECLARE `need` AND can be reached, in declaration order.
+/// `hand_off_path` walks them so a reachable-but-failing painter never swallows
+/// the request while the next one could paint it (S3, S8).
+fn available_painters(
+    painters: &[RegisteredPainter],
+    need: PainterCapability,
+) -> impl Iterator<Item = BackgroundBackend> + '_ {
+    painters
+        .iter()
+        .filter(move |painter| {
+            painter.capabilities.contains(&need) && painter_is_available(painter.id)
+        })
+        .map(|painter| painter.id)
 }
 
 /// The first painter that DECLARES `need` AND can be reached right now, in
@@ -109,11 +124,7 @@ pub fn route_available_painter(
     painters: &[RegisteredPainter],
     need: PainterCapability,
 ) -> Option<BackgroundBackend> {
-    painters
-        .iter()
-        .filter(|painter| painter.capabilities.contains(&need) && painter_is_available(painter.id))
-        .map(|painter| painter.id)
-        .next()
+    available_painters(painters, need).next()
 }
 
 /// Resolve a theme's REMOTE video into a local file, once, for the whole
@@ -128,6 +139,16 @@ pub fn prepare_remote_video(
     filename: Option<&str>,
     sha256: Option<&str>,
 ) -> Result<PathBuf, String> {
+    // Nobody able to paint a video means nothing to download: fetching media for
+    // a background no painter can take would burn bandwidth and disk on every
+    // apply. The caller keeps its manifest route, exactly as before.
+    if route_available_painter(&REGISTERED_PAINTERS, PainterCapability::LocalVideo).is_none() {
+        return Err(
+            "no available painter can paint a video; nothing was downloaded (the theme keeps its \
+             poster)"
+                .to_string(),
+        );
+    }
     crate::providers::mpvpaper::fetch_remote_video(url, filename, sha256)
 }
 
@@ -212,40 +233,48 @@ pub struct ApplyBackgroundOutcome {
 /// really painted it, so the caller keeps its fallback routes.
 pub fn hand_off_path(path: &Path) -> bool {
     let need = capability_for_path(path);
-    match route_available_painter(&REGISTERED_PAINTERS, need) {
-        Some(BackgroundBackend::SkwdEngine) => {
-            crate::providers::skwd_engine::delegate_to_skwd_walld(path)
-        }
-        Some(BackgroundBackend::MpvpaperPlugin) => {
-            match crate::providers::mpvpaper::paint_local_video(path) {
-                Ok(()) => {
-                    tracing::info!(
-                        "[background] local background handed to the plugin: {}",
-                        path.display()
-                    );
-                    true
+    // Every reachable painter that declares the capability gets a turn, in
+    // declaration order: a painter that is reachable but fails (a stale engine
+    // socket is the measured case) must not swallow the request while the next
+    // one could still paint it (S3, S8).
+    let mut last_refusal: Option<String> = None;
+    for painter in available_painters(&REGISTERED_PAINTERS, need) {
+        match painter {
+            BackgroundBackend::SkwdEngine => {
+                if crate::providers::skwd_engine::delegate_to_skwd_walld(path) {
+                    return true;
                 }
-                Err(reason) => {
-                    tracing::warn!(
-                        "[background] the plugin refused {}: {}",
-                        path.display(),
-                        reason
-                    );
-                    false
+                last_refusal = Some("the engine did not paint it".to_string());
+            }
+            BackgroundBackend::MpvpaperPlugin => {
+                match crate::providers::mpvpaper::paint_local_video(path) {
+                    Ok(()) => {
+                        tracing::info!(
+                            "[background] local background handed to the plugin: {}",
+                            path.display()
+                        );
+                        return true;
+                    }
+                    Err(reason) => last_refusal = Some(reason),
                 }
             }
         }
-        // Nobody can take the capability right now: the caller keeps its
-        // fallbacks instead of being told the background was painted.
-        None => {
-            tracing::warn!(
-                "[background] no available painter declares {:?} for {}",
-                need,
-                path.display()
-            );
-            false
-        }
     }
+    match last_refusal {
+        Some(reason) => tracing::warn!(
+            "[background] no painter painted {}: {}",
+            path.display(),
+            reason
+        ),
+        // Nobody declares it or can be reached right now: the caller keeps its
+        // fallbacks instead of being told the background was painted.
+        None => tracing::warn!(
+            "[background] no available painter declares {:?} for {}",
+            need,
+            path.display()
+        ),
+    }
+    false
 }
 
 /// Hand the request's saved static wallpaper to the backend declared for

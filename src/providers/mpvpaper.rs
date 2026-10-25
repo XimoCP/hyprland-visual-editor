@@ -450,7 +450,32 @@ pub(crate) fn fetch_remote_video(
     let video_dir = video_directory_from_settings();
     let home = std::env::var("HOME").unwrap_or_default();
     let video_dir = confine_video_dir(&video_dir, &home)?;
-    download_video(url, &video_dir.join(&name), sha)
+    let dest = video_dir.join(&name);
+    // The baseline's `resolve_video` reused an existing file instead of fetching
+    // it again; re-downloading a whole theme video on every apply (up to 1 GiB)
+    // was a regression. Reuse it ONLY when it still matches the recorded hash,
+    // so a corrupted or swapped file is replaced instead of trusted.
+    if existing_matches_sha(&dest, sha) {
+        tracing::info!(
+            "[mpvpaper] theme video already on disk and verified; not downloading again: {}",
+            dest.display()
+        );
+        return Ok(dest);
+    }
+    download_video(url, &dest, sha)
+}
+
+/// Whether the file at `path` exists and its sha256 equals `expected`
+/// (case-insensitive). Any read or hash failure answers `false`: an unverifiable
+/// file is re-downloaded, never trusted.
+fn existing_matches_sha(path: &Path, expected: &str) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    match sha256_of(path) {
+        Ok(actual) => actual.eq_ignore_ascii_case(expected),
+        Err(_) => false,
+    }
 }
 
 /// The file name a url ends with, sanitised to a safe component; a url with
@@ -1140,6 +1165,36 @@ video_directory = "~/Videos"
             "clip.mp4"
         );
         assert_eq!(file_name_from_url("https://x.dev/"), "theme-video.mp4");
+    }
+
+    /// The blocker the independent verifier found: a file already on disk and
+    /// still matching the recorded hash is REUSED, never downloaded again (the
+    /// baseline reused it too). A file whose hash does not match is not trusted.
+    #[test]
+    fn an_already_downloaded_video_is_reused_only_while_its_hash_matches() {
+        let dir = std::env::temp_dir().join("mpvpaper-reuse-hash");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let video = dir.join("clip.mp4");
+        std::fs::write(&video, b"not really a video").unwrap();
+        let real = sha256_of(&video).expect("sha256sum must answer");
+        assert!(
+            existing_matches_sha(&video, &real),
+            "the file that is already there matches its recorded hash"
+        );
+        assert!(
+            existing_matches_sha(&video, &real.to_ascii_uppercase()),
+            "the comparison is case-insensitive"
+        );
+        assert!(
+            !existing_matches_sha(&video, &"b".repeat(64)),
+            "a different hash must re-download, not trust the file"
+        );
+        assert!(
+            !existing_matches_sha(&dir.join("missing.mp4"), &real),
+            "an absent file is never reused"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
