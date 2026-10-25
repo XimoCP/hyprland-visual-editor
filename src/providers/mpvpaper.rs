@@ -684,6 +684,7 @@ pub fn clear_all() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     fn sample_settings() -> String {
         r#"# noctalia settings
@@ -1094,12 +1095,13 @@ video_directory = "~/Videos"
         let err2 = resolve_video(&video2, &dir).unwrap_err();
         assert!(err2.contains("sha256"), "unexpected error: {err2}");
 
-        // With a hash present the error moves past the sha gate (curl not run
-        // here — this merely proves the hash requirement is what fires).
+        // With a hash present the error moves past the sha gate. The url points
+        // at a closed LOCAL port on purpose: the point is that the sha gate no
+        // longer fires, and a test must never reach the internet to prove it.
         let video3 = MpvpaperVideo {
             filename: "movie.mp4".into(),
             local_path: None,
-            url: Some("https://example.com/movie.mp4".into()),
+            url: Some("https://127.0.0.1:9/movie.mp4".into()),
             sha256: Some("a".repeat(64)),
         };
         let err3 = resolve_video(&video3, &dir).unwrap_err();
@@ -1171,7 +1173,12 @@ video_directory = "~/Videos"
     /// still matching the recorded hash is REUSED, never downloaded again (the
     /// baseline reused it too). A file whose hash does not match is not trusted.
     #[test]
+    #[serial]
     fn an_already_downloaded_video_is_reused_only_while_its_hash_matches() {
+        // Serialised with every other PATH-mutating test: `sha256_of` runs
+        // `sha256sum` through PATH, so a neighbour stubbing PATH would make this
+        // test fail for a reason that has nothing to do with the reuse rule.
+        let _env = crate::test_utils::TempEnv::new();
         let dir = std::env::temp_dir().join("mpvpaper-reuse-hash");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
