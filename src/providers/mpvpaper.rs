@@ -423,6 +423,48 @@ fn download_video(url: &str, dest: &Path, expected_sha: &str) -> Result<PathBuf,
     Ok(dest.to_path_buf())
 }
 
+/// Resolve a REMOTE theme video into a local file for the whole program: the
+/// media-preparation step HVE owns (S5 of
+/// `odd/tasks/wallpaper-router-by-capability.md`), so no painter downloads.
+///
+/// Shares every guard with the manifest route: https only, sha256 REQUIRED,
+/// the 1 GiB cap, and the confined video directory. The result is a plain local
+/// path any painter can be handed.
+pub(crate) fn fetch_remote_video(
+    url: &str,
+    filename: Option<&str>,
+    sha256: Option<&str>,
+) -> Result<PathBuf, String> {
+    let sha = sha256
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            format!("video url {url}: no sha256 recorded; refusing to download unverified media")
+        })?;
+    let name = filename
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| file_name_from_url(url));
+    validate_filename(&name)?;
+    let video_dir = video_directory_from_settings();
+    let home = std::env::var("HOME").unwrap_or_default();
+    let video_dir = confine_video_dir(&video_dir, &home)?;
+    download_video(url, &video_dir.join(&name), sha)
+}
+
+/// The file name a url ends with, sanitised to a safe component; a url with
+/// nothing usable becomes `theme-video.mp4`.
+fn file_name_from_url(url: &str) -> String {
+    url.rsplit('/')
+        .next()
+        .map(|tail| tail.split(['?', '#']).next().unwrap_or(""))
+        .map(|name| name.trim())
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| "theme-video.mp4".to_string())
+}
+
 /// Compute the lowercase hex sha256 of a file via `sha256sum`.
 fn sha256_of(path: &Path) -> Result<String, String> {
     let out = std::process::Command::new("sha256sum")
@@ -1066,6 +1108,38 @@ video_directory = "~/Videos"
     fn local_video_manifest_refuses_a_path_without_a_file_name() {
         assert!(local_video_manifest(Path::new("/")).is_err());
         assert!(local_video_manifest(Path::new("/themes/.hidden.mp4")).is_err());
+    }
+
+    /// S5: the media-preparation step refuses what it cannot verify BEFORE any
+    /// network call or write — no sha256, not https, or an unsafe file name.
+    #[test]
+    fn fetch_remote_video_refuses_unverified_or_unsafe_media() {
+        let sha = "a".repeat(64);
+        let missing_sha =
+            fetch_remote_video("https://example.com/a.mp4", Some("a.mp4"), None).unwrap_err();
+        assert!(missing_sha.contains("sha256"), "got {missing_sha}");
+        let not_https =
+            fetch_remote_video("http://example.com/a.mp4", Some("a.mp4"), Some(&sha)).unwrap_err();
+        assert!(not_https.contains("https"), "got {not_https}");
+        let unsafe_name = fetch_remote_video(
+            "https://example.com/a.mp4",
+            Some("../escape.mp4"),
+            Some(&sha),
+        )
+        .unwrap_err();
+        assert!(unsafe_name.contains("filename"), "got {unsafe_name}");
+    }
+
+    /// The file name comes from the url's own tail, never from the whole url, so
+    /// a query string or a fragment can never reach the video directory.
+    #[test]
+    fn file_name_from_url_keeps_a_safe_tail() {
+        assert_eq!(file_name_from_url("https://x.dev/a/b/clip.mp4"), "clip.mp4");
+        assert_eq!(
+            file_name_from_url("https://x.dev/clip.mp4?token=1#t"),
+            "clip.mp4"
+        );
+        assert_eq!(file_name_from_url("https://x.dev/"), "theme-video.mp4");
     }
 
     #[test]

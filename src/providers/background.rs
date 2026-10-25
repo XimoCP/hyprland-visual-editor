@@ -116,6 +116,21 @@ pub fn route_available_painter(
         .next()
 }
 
+/// Resolve a theme's REMOTE video into a local file, once, for the whole
+/// program — the media-preparation step HVE owns, so no painter ever downloads
+/// anything (S5).
+///
+/// It reuses the ONE download path the plugin adapter already ships (https
+/// only, sha256 required, 1 GiB cap, confined video directory), so a painter
+/// receives a plain local path and the theme format stays exactly as it is.
+pub fn prepare_remote_video(
+    url: &str,
+    filename: Option<&str>,
+    sha256: Option<&str>,
+) -> Result<PathBuf, String> {
+    crate::providers::mpvpaper::fetch_remote_video(url, filename, sha256)
+}
+
 /// Whether a painter can be reached RIGHT NOW. The routing decision stays
 /// pure; the caller applies this only where it has a fallback to keep.
 pub fn painter_is_available(id: BackgroundBackend) -> bool {

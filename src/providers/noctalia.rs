@@ -2604,9 +2604,39 @@ impl ThemeProvider for NoctaliaV5Provider {
             sha256,
         }) = theme_video.as_ref()
         {
-            // T3: an over-bound video was never copied. Hand its recorded url
-            // to the mpvpaper backend through the SAME manifest the plugin
-            // already plays. Best-effort: a failure only warns.
+            // S5: HVE resolves the remote media ITSELF, once (https, sha256,
+            // bounded download, confined directory), so whichever painter is
+            // available receives a local path — the engine included, which
+            // never speaks a url.
+            let downloaded =
+                background::prepare_remote_video(url, filename.as_deref(), sha256.as_deref());
+            match downloaded {
+                Ok(local) => {
+                    if background::hand_off_path(&local) {
+                        animated_applied = true;
+                        applied_video = Some(local.clone());
+                        tracing::info!(
+                            "[noctalia-v5] Downloaded and restored the theme video through the \
+                             router: {}",
+                            local.display()
+                        );
+                    } else {
+                        tracing::warn!(
+                            "[noctalia-v5] Downloaded {} but no painter took it; keeping the \
+                             manifest route",
+                            local.display()
+                        );
+                    }
+                }
+                Err(e) => tracing::warn!(
+                    "[noctalia-v5] Cannot resolve the theme video url ({}); keeping the manifest \
+                     route",
+                    e
+                ),
+            }
+            // T3: the recorded url still goes into the manifest the plugin
+            // plays, so a later boot and another machine keep working.
+            // Best-effort: a failure only warns.
             match crate::providers::bg_info::ensure_url_manifest(
                 &provider_dir,
                 filename.as_deref(),
