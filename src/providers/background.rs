@@ -28,8 +28,12 @@ pub enum BackgroundBackend {
     /// The skwd-wall-v2 / skwd-helm engine pair: paints one exact path on
     /// request (`apply <path>`).
     SkwdEngine,
-    /// The Noctalia mpvpaper plugin: plays the theme's saved manifest.
+    /// The Noctalia mpvpaper plugin: plays the theme's saved manifest and, like
+    /// every painter, accepts a local video path.
     MpvpaperPlugin,
+    /// The GStreamer renderer (`gslapper`), driven directly while Noctalia's own
+    /// gslapper plugin does not supervise it.
+    Gslapper,
 }
 
 /// WHAT a painter can paint. It names the MEDIA, never the painter, so the
@@ -63,7 +67,7 @@ pub struct RegisteredPainter {
 /// engine goes first for a local file because it is the fastest at it on this
 /// machine; the plugin is the fallback that makes the same file paint with the
 /// engine absent (S3, S8).
-pub const REGISTERED_PAINTERS: [RegisteredPainter; 2] = [
+pub const REGISTERED_PAINTERS: [RegisteredPainter; 3] = [
     RegisteredPainter {
         id: BackgroundBackend::SkwdEngine,
         capabilities: &[PainterCapability::LocalVideo, PainterCapability::Static],
@@ -74,6 +78,10 @@ pub const REGISTERED_PAINTERS: [RegisteredPainter; 2] = [
             PainterCapability::LocalVideo,
             PainterCapability::SavedManifest,
         ],
+    },
+    RegisteredPainter {
+        id: BackgroundBackend::Gslapper,
+        capabilities: &[PainterCapability::LocalVideo],
     },
 ];
 
@@ -158,6 +166,7 @@ pub fn painter_is_available(id: BackgroundBackend) -> bool {
     match id {
         BackgroundBackend::SkwdEngine => crate::providers::skwd_engine::engine_reachable(),
         BackgroundBackend::MpvpaperPlugin => crate::providers::mpvpaper::mpvpaper_enabled(),
+        BackgroundBackend::Gslapper => crate::providers::gslapper::available(),
     }
 }
 
@@ -251,6 +260,18 @@ pub fn hand_off_path(path: &Path) -> bool {
                     Ok(()) => {
                         tracing::info!(
                             "[background] local background handed to the plugin: {}",
+                            path.display()
+                        );
+                        return true;
+                    }
+                    Err(reason) => last_refusal = Some(reason),
+                }
+            }
+            BackgroundBackend::Gslapper => {
+                match crate::providers::gslapper::paint_local_video(path) {
+                    Ok(()) => {
+                        tracing::info!(
+                            "[background] local background handed to gslapper: {}",
                             path.display()
                         );
                         return true;

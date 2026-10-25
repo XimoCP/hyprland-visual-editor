@@ -1,5 +1,6 @@
 pub mod background;
 pub mod bg_info;
+pub mod gslapper;
 pub mod hve_presets;
 pub mod mpvpaper;
 pub mod noctalia;
