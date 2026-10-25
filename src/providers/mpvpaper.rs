@@ -461,6 +461,48 @@ pub fn apply_manifest(theme_dir: &Path) -> Result<(), String> {
     let manifest: MpvpaperManifest =
         serde_json::from_str(&raw).map_err(|e| format!("Cannot parse manifest: {}", e))?;
 
+    apply_records(&manifest)
+}
+
+/// Paint ONE local video file through the plugin — the painter adapter, with
+/// no theme package involved.
+///
+/// The plugin's own live-assignment machinery is reused unchanged: a local
+/// file needs no new format, because `MpvpaperVideo` already carries
+/// `local_path` (`bg_info.rs`). HVE resolves the media (a remote video is
+/// downloaded and verified by HVE, not here) and hands the painter a path.
+pub fn paint_local_video(path: &Path) -> Result<(), String> {
+    let manifest = local_video_manifest(path)?;
+    apply_records(&manifest)
+}
+
+/// The record one local video file becomes, pure and testable without any
+/// write or spawn: the plugin's manifest shape, one `*` assignment.
+pub(crate) fn local_video_manifest(path: &Path) -> Result<MpvpaperManifest, String> {
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| format!("video {} has no usable file name", path.display()))?;
+    validate_filename(filename)?;
+    Ok(MpvpaperManifest {
+        version: 1,
+        assignments: HashMap::from([(
+            "*".to_string(),
+            MpvpaperVideo {
+                filename: filename.to_string(),
+                local_path: Some(path.to_string_lossy().to_string()),
+                url: None,
+                sha256: None,
+            },
+        )]),
+    })
+}
+
+/// Resolve, persist and launch one already-parsed manifest. Every safety gate
+/// (confined video directory, disabled plugin refused before any write) lives
+/// here so BOTH entry points inherit it unchanged.
+fn apply_records(manifest: &MpvpaperManifest) -> Result<(), String> {
     // settings.toml was already restored → video_directory reflects the theme.
     // SECURITY (W4): that value is UNTRUSTED theme input — confine it to the
     // user's media roots BEFORE anything resolves or downloads into it. On
@@ -997,6 +1039,33 @@ video_directory = "~/Videos"
         assert!(!err3.contains("sha256"), "unexpected error: {err3}");
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The adapter's pure half: one local file becomes the plugin's own
+    /// manifest shape, with `local_path` set and no url/sha256 — so the
+    /// plugin can play a file HVE already resolved, with the format it
+    /// already reads (S5, S6).
+    #[test]
+    fn local_video_manifest_hands_the_plugin_a_local_path() {
+        let manifest =
+            local_video_manifest(Path::new("/themes/fantasy/media/background.mp4")).unwrap();
+        assert_eq!(manifest.version, 1);
+        let video = &manifest.assignments["*"];
+        assert_eq!(video.filename, "background.mp4");
+        assert_eq!(
+            video.local_path.as_deref(),
+            Some("/themes/fantasy/media/background.mp4")
+        );
+        assert!(video.url.is_none(), "a local file needs no remote source");
+        assert!(video.sha256.is_none(), "a local file has nothing to verify");
+    }
+
+    /// A path with no usable file name never becomes a manifest: the adapter
+    /// refuses instead of writing a half-usable assignment.
+    #[test]
+    fn local_video_manifest_refuses_a_path_without_a_file_name() {
+        assert!(local_video_manifest(Path::new("/")).is_err());
+        assert!(local_video_manifest(Path::new("/themes/.hidden.mp4")).is_err());
     }
 
     #[test]

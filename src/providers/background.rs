@@ -58,10 +58,11 @@ pub struct RegisteredPainter {
     pub capabilities: &'static [PainterCapability],
 }
 
-/// The painters HVE knows about, declared once. Today the engine owns every
-/// local file (video and still) while the plugin only speaks its own saved
-/// manifest; later phases add the plugin's local-file capabilities without
-/// touching the routing rule.
+/// The painters HVE knows about, declared once and IN PREFERENCE ORDER: the
+/// first painter that declares a capability and can be reached takes it. The
+/// engine goes first for a local file because it is the fastest at it on this
+/// machine; the plugin is the fallback that makes the same file paint with the
+/// engine absent (S3, S8).
 pub const REGISTERED_PAINTERS: [RegisteredPainter; 2] = [
     RegisteredPainter {
         id: BackgroundBackend::SkwdEngine,
@@ -69,7 +70,10 @@ pub const REGISTERED_PAINTERS: [RegisteredPainter; 2] = [
     },
     RegisteredPainter {
         id: BackgroundBackend::MpvpaperPlugin,
-        capabilities: &[PainterCapability::SavedManifest],
+        capabilities: &[
+            PainterCapability::LocalVideo,
+            PainterCapability::SavedManifest,
+        ],
     },
 ];
 
@@ -95,6 +99,21 @@ pub fn capability_for_path(path: &Path) -> PainterCapability {
     } else {
         PainterCapability::Static
     }
+}
+
+/// The first painter that DECLARES `need` AND can be reached right now, in
+/// declaration order. This is the one the hand-offs use: a painter that cannot
+/// be reached never receives the background, and the next one that can takes
+/// it (S3, S7).
+pub fn route_available_painter(
+    painters: &[RegisteredPainter],
+    need: PainterCapability,
+) -> Option<BackgroundBackend> {
+    painters
+        .iter()
+        .filter(|painter| painter.capabilities.contains(&need) && painter_is_available(painter.id))
+        .map(|painter| painter.id)
+        .next()
 }
 
 /// Whether a painter can be reached RIGHT NOW. The routing decision stays
@@ -178,22 +197,30 @@ pub struct ApplyBackgroundOutcome {
 /// really painted it, so the caller keeps its fallback routes.
 pub fn hand_off_path(path: &Path) -> bool {
     let need = capability_for_path(path);
-    let routed = route_painter(&REGISTERED_PAINTERS, need).filter(|id| painter_is_available(*id));
-    match routed {
+    match route_available_painter(&REGISTERED_PAINTERS, need) {
         Some(BackgroundBackend::SkwdEngine) => {
             crate::providers::skwd_engine::delegate_to_skwd_walld(path)
         }
-        // Unreachable while the engine declares every local-file capability
-        // (pinned by `route_painter_picks_the_painter_that_declares_the_capability`);
-        // still a refusal, never a panic or a silent claim of success.
-        Some(other) => {
-            tracing::warn!(
-                "[background] path hand-off routed to {:?}, which paints no bare path",
-                other
-            );
-            false
+        Some(BackgroundBackend::MpvpaperPlugin) => {
+            match crate::providers::mpvpaper::paint_local_video(path) {
+                Ok(()) => {
+                    tracing::info!(
+                        "[background] local background handed to the plugin: {}",
+                        path.display()
+                    );
+                    true
+                }
+                Err(reason) => {
+                    tracing::warn!(
+                        "[background] the plugin refused {}: {}",
+                        path.display(),
+                        reason
+                    );
+                    false
+                }
+            }
         }
-        // Nobody can reach the capability right now: the caller keeps its
+        // Nobody can take the capability right now: the caller keeps its
         // fallbacks instead of being told the background was painted.
         None => {
             tracing::warn!(
@@ -1142,6 +1169,53 @@ mod tests {
             PainterCapability::LocalVideo,
             "the extension match is case-insensitive"
         );
+    }
+
+    /// S3/S8: with the engine unreachable, the SAME local video is offered to
+    /// the next painter that declares it — the plugin — instead of being
+    /// dropped on the floor.
+    #[test]
+    #[serial]
+    fn a_local_video_falls_through_to_the_plugin_when_the_engine_is_absent() {
+        let sandbox = ProbeSandbox::new(true);
+        assert_eq!(
+            route_available_painter(&REGISTERED_PAINTERS, PainterCapability::LocalVideo),
+            Some(BackgroundBackend::MpvpaperPlugin),
+            "the plugin declares local video, so the video must not be lost with the engine gone"
+        );
+        drop(sandbox);
+    }
+
+    /// With the engine reachable the engine still takes the local video: it is
+    /// the fastest painter for it, so phase 2 changes no existing behaviour.
+    #[test]
+    #[serial]
+    fn a_local_video_stays_with_the_engine_when_it_is_reachable() {
+        let sandbox = ProbeSandbox::new(true);
+        let sock_dir = TempDir::new().unwrap();
+        let sock = sock_dir.path().join("wall.sock");
+        std::fs::write(&sock, b"x").unwrap();
+        std::env::set_var("SKWD_WALL_V2_SOCK", &sock);
+        assert_eq!(
+            route_available_painter(&REGISTERED_PAINTERS, PainterCapability::LocalVideo),
+            Some(BackgroundBackend::SkwdEngine)
+        );
+        std::env::remove_var("SKWD_WALL_V2_SOCK");
+        drop(sandbox);
+    }
+
+    /// A still image is declared by the engine alone: with the engine gone
+    /// nobody takes it, so the caller keeps its fallbacks and is never told a
+    /// painter painted it (S7).
+    #[test]
+    #[serial]
+    fn a_still_image_routes_nowhere_without_the_engine() {
+        let sandbox = ProbeSandbox::new(true);
+        assert_eq!(
+            route_available_painter(&REGISTERED_PAINTERS, PainterCapability::Static),
+            None
+        );
+        drop(sandbox);
     }
 
     /// Hermetic probe sandbox: a stub `noctalia` on PATH (the plugin probe
