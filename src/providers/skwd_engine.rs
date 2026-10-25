@@ -51,6 +51,15 @@ pub(crate) fn socket_available() -> bool {
         .unwrap_or(false)
 }
 
+/// The gate the delegation itself uses (`Path::exists`, symlinks followed):
+/// with it closed `delegate_to_skwd_walld` never spawns, so a route to this
+/// painter would be a route to nothing. Kept separate from
+/// [`socket_available`] on purpose — that one answers "is a live socket
+/// there?" for the video-backend notice, this one mirrors the delegation.
+pub(crate) fn engine_reachable() -> bool {
+    skwd_wall_socket_path().exists()
+}
+
 pub(crate) fn delegate_to_skwd_walld(wallpaper_path: &Path) -> bool {
     let socket = skwd_wall_socket_path();
     if !socket.exists() {
@@ -126,7 +135,7 @@ pub(crate) fn delegate_to_skwd_walld(wallpaper_path: &Path) -> bool {
 /// Whether the wallpaper is an animated video, which decides the engine order.
 /// Extension-based on purpose: it only selects a PREFERENCE (the other engine
 /// still runs as fallback), so a surprising name costs time, never correctness.
-fn is_video_path(path: &Path) -> bool {
+pub(crate) fn is_video_path(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .map(|e| {

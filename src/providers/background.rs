@@ -32,27 +32,77 @@ pub enum BackgroundBackend {
     MpvpaperPlugin,
 }
 
-/// WHAT one hand-off wants painted — the declared choice the selector
-/// reads. The selector never guesses from side effects.
+/// WHAT a painter can paint. It names the MEDIA, never the painter, so the
+/// routing rule stays a pure capability match: the core says what it wants
+/// and a painter declares whether it can paint it.
+///
+/// `odd/tasks/wallpaper-router-by-capability.md` (S2, S6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BackgroundSource {
-    /// One exact path on disk (a painter video or a static wallpaper).
-    ExactPath,
-    /// The theme's saved animated manifest (its absence means "stop
-    /// whatever is running", never "paint").
+pub enum PainterCapability {
+    /// One local video file.
+    LocalVideo,
+    /// One local still image.
+    Static,
+    /// The theme's saved animated manifest (the plugin's own on-disk format).
     SavedManifest,
 }
 
-/// Pure selection over the declared backends: no I/O, no probing, no
-/// policy — the declared choice alone decides who paints, so the routing
-/// rule is testable on its own.
-pub fn select_backend(source: BackgroundSource) -> BackgroundBackend {
-    match source {
-        // A bare path is what the engine speaks natively (`apply <path>`);
-        // the manifest backend plays saved assignments, never a path.
-        BackgroundSource::ExactPath => BackgroundBackend::SkwdEngine,
-        // Only the plugin understands the theme's saved manifest format.
-        BackgroundSource::SavedManifest => BackgroundBackend::MpvpaperPlugin,
+/// One painter as the router sees it: an identity the caller can log, plus
+/// the capabilities it DECLARES. Nothing else — no policy, no probing, no
+/// preference order baked into the painter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegisteredPainter {
+    /// The painter this declaration belongs to.
+    pub id: BackgroundBackend,
+    /// What it declares it can paint.
+    pub capabilities: &'static [PainterCapability],
+}
+
+/// The painters HVE knows about, declared once. Today the engine owns every
+/// local file (video and still) while the plugin only speaks its own saved
+/// manifest; later phases add the plugin's local-file capabilities without
+/// touching the routing rule.
+pub const REGISTERED_PAINTERS: [RegisteredPainter; 2] = [
+    RegisteredPainter {
+        id: BackgroundBackend::SkwdEngine,
+        capabilities: &[PainterCapability::LocalVideo, PainterCapability::Static],
+    },
+    RegisteredPainter {
+        id: BackgroundBackend::MpvpaperPlugin,
+        capabilities: &[PainterCapability::SavedManifest],
+    },
+];
+
+/// Pure capability routing: the painter that DECLARES `need`. No I/O, no
+/// probing, no policy — so the rule is testable on its own, and adding a
+/// painter never edits the decision.
+pub fn route_painter(
+    painters: &[RegisteredPainter],
+    need: PainterCapability,
+) -> Option<BackgroundBackend> {
+    painters
+        .iter()
+        .find(|painter| painter.capabilities.contains(&need))
+        .map(|painter| painter.id)
+}
+
+/// The capability a bare local path needs, read from the file's kind. It only
+/// picks a capability (never a painter), so a surprising name costs a wrong
+/// route, never a broken apply.
+pub fn capability_for_path(path: &Path) -> PainterCapability {
+    if crate::providers::skwd_engine::is_video_path(path) {
+        PainterCapability::LocalVideo
+    } else {
+        PainterCapability::Static
+    }
+}
+
+/// Whether a painter can be reached RIGHT NOW. The routing decision stays
+/// pure; the caller applies this only where it has a fallback to keep.
+pub fn painter_is_available(id: BackgroundBackend) -> bool {
+    match id {
+        BackgroundBackend::SkwdEngine => crate::providers::skwd_engine::engine_reachable(),
+        BackgroundBackend::MpvpaperPlugin => crate::providers::mpvpaper::mpvpaper_enabled(),
     }
 }
 
@@ -127,18 +177,29 @@ pub struct ApplyBackgroundOutcome {
 /// backend declared for a path. Best-effort: `false` unless the backend
 /// really painted it, so the caller keeps its fallback routes.
 pub fn hand_off_path(path: &Path) -> bool {
-    match select_backend(BackgroundSource::ExactPath) {
-        BackgroundBackend::SkwdEngine => {
+    let need = capability_for_path(path);
+    let routed = route_painter(&REGISTERED_PAINTERS, need).filter(|id| painter_is_available(*id));
+    match routed {
+        Some(BackgroundBackend::SkwdEngine) => {
             crate::providers::skwd_engine::delegate_to_skwd_walld(path)
         }
-        // Unreachable while the selector declares a path hand-off to the
-        // engine (pinned by `select_backend_routes_by_declared_choice`);
-        // still a refusal, never a panic or a silent claim of success —
-        // the manifest backend paints no bare path.
-        other => {
+        // Unreachable while the engine declares every local-file capability
+        // (pinned by `route_painter_picks_the_painter_that_declares_the_capability`);
+        // still a refusal, never a panic or a silent claim of success.
+        Some(other) => {
             tracing::warn!(
                 "[background] path hand-off routed to {:?}, which paints no bare path",
                 other
+            );
+            false
+        }
+        // Nobody can reach the capability right now: the caller keeps its
+        // fallbacks instead of being told the background was painted.
+        None => {
+            tracing::warn!(
+                "[background] no available painter declares {:?} for {}",
+                need,
+                path.display()
             );
             false
         }
@@ -170,11 +231,10 @@ pub fn apply_animated(req: &ApplyBackgroundRequest) -> ApplyBackgroundOutcome {
             leg: RoutedLeg::AlreadyApplied,
         };
     }
-    match select_backend(BackgroundSource::SavedManifest) {
-        BackgroundBackend::MpvpaperPlugin => mpvpaper_manifest_leg(req),
-        // Unreachable while the selector declares the saved manifest to
-        // the plugin backend; a refusal the caller can still log, never a
-        // panic in the theme apply.
+    match route_painter(&REGISTERED_PAINTERS, PainterCapability::SavedManifest) {
+        Some(BackgroundBackend::MpvpaperPlugin) => mpvpaper_manifest_leg(req),
+        // Unreachable while the plugin declares the saved-manifest capability;
+        // a refusal the caller can still log, never a panic in the theme apply.
         other => {
             tracing::warn!(
                 "[background] manifest leg routed to {:?}, which plays no saved manifest",
@@ -1026,21 +1086,61 @@ mod tests {
     }
     use tempfile::TempDir;
 
-    /// The routing rule itself, pure: a declared exact path goes to the
-    /// engine backend; the theme's saved manifest goes to the plugin
-    /// backend. No I/O, no probing — this is the seam a future backend
-    /// declaration plugs into.
+    /// The routing rule itself, pure: the decision reads the capability the
+    /// media needs and the capabilities each painter DECLARES — never the
+    /// painter's identity. No I/O, no probing.
+    ///
+    /// Phase 1 of `odd/tasks/wallpaper-router-by-capability.md` (S2).
     #[test]
-    fn select_backend_routes_by_declared_choice() {
+    fn route_painter_picks_the_painter_that_declares_the_capability() {
         assert_eq!(
-            select_backend(BackgroundSource::ExactPath),
-            BackgroundBackend::SkwdEngine,
-            "a bare path is what the engine speaks natively"
+            route_painter(&REGISTERED_PAINTERS, PainterCapability::LocalVideo),
+            Some(BackgroundBackend::SkwdEngine),
+            "a local video is what the engine speaks natively today"
         );
         assert_eq!(
-            select_backend(BackgroundSource::SavedManifest),
-            BackgroundBackend::MpvpaperPlugin,
-            "only the plugin understands the saved manifest format"
+            route_painter(&REGISTERED_PAINTERS, PainterCapability::Static),
+            Some(BackgroundBackend::SkwdEngine),
+            "a still image is painted by the same engine today"
+        );
+        assert_eq!(
+            route_painter(&REGISTERED_PAINTERS, PainterCapability::SavedManifest),
+            Some(BackgroundBackend::MpvpaperPlugin),
+            "only the plugin declares the theme's saved manifest format"
+        );
+    }
+
+    /// A capability nobody declares routes nowhere: the caller keeps its
+    /// fallbacks instead of a painter pretending to paint it (S7).
+    #[test]
+    fn route_painter_routes_nothing_when_no_painter_declares_the_capability() {
+        const STILL_ONLY: [RegisteredPainter; 1] = [RegisteredPainter {
+            id: BackgroundBackend::SkwdEngine,
+            capabilities: &[PainterCapability::Static],
+        }];
+        assert_eq!(
+            route_painter(&STILL_ONLY, PainterCapability::LocalVideo),
+            None
+        );
+        assert_eq!(route_painter(&[], PainterCapability::Static), None);
+    }
+
+    /// Which capability a bare path needs is read from the file's kind, so
+    /// a video is never offered to a still-only painter (S3).
+    #[test]
+    fn capability_for_path_reads_the_media_kind() {
+        assert_eq!(
+            capability_for_path(Path::new("/themes/fantasy/media/background.mp4")),
+            PainterCapability::LocalVideo
+        );
+        assert_eq!(
+            capability_for_path(Path::new("/themes/fantasy/media/poster.jpg")),
+            PainterCapability::Static
+        );
+        assert_eq!(
+            capability_for_path(Path::new("/themes/x/media/clip.WEBM")),
+            PainterCapability::LocalVideo,
+            "the extension match is case-insensitive"
         );
     }
 
