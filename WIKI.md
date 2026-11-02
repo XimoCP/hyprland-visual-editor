@@ -86,15 +86,22 @@ cd hve
 | Ruta | Contenido | Tipo |
 |------|-----------|------|
 | `~/.local/bin/hve` | Binario principal (Rust compilado) | Obligatorio |
-| `~/.local/bin/assets/scripts/` | 15 scripts bash de soporte | Obligatorio |
-| `~/.local/bin/assets/animations/` | 18 animaciones (formato dual .conf + .lua) | Obligatorio |
-| `~/.local/bin/assets/borders/` | 14 bordes (formato dual .conf + .lua) | Obligatorio |
-| `~/.local/bin/assets/shaders/` | 9 shaders GLSL (.frag) | Obligatorio |
+| `~/.local/bin/assets/scripts/` | 16 scripts bash de soporte | Obligatorio |
+| `~/.local/bin/assets/animations/` | 19 animaciones (`.lua`) | Obligatorio |
+| `~/.local/bin/assets/borders/` | 14 bordes (`.lua`) | Obligatorio |
+| `~/.local/bin/assets/shaders/` | 9 shaders GLSL (`.frag`) | Obligatorio |
 | `~/.local/bin/assets/fragments/` | Fragmentos dinámicos (runtime) | Obligatorio |
 | `~/.local/share/applications/hve.desktop` | Acceso directo para lanzadores | Obligatorio |
+| `~/.local/share/icons/hicolor/*/apps/hve.png` | Icono del lanzador (48, 64, 128, 256 px) | Obligatorio |
+| `~/.config/hve/themes/<Nombre>/` | Temas de referencia que viajan con HVE (no sobrescriben los tuyos) | Obligatorio |
 | `~/.local/bin/hve-ipc` | Script cliente IPC en Python | Opcional |
 | `/usr/local/bin/hve-ipc` | Symlink del script IPC (requiere sudo) | Opcional |
-| `~/.config/hve/config.json` (`auto_start: true`) | Inicio automático con el sistema via `exec-once` en hve-settings | Opcional |
+| `~/.config/hve/config.json` (`auto_start: true`) | Inicio automático con el sistema via `hl.on("hyprland.start", …)` en hve-settings | Opcional |
+
+Además, la primera vez que activas HVE desde la interfaz, el bloque gestionado
+(`-- >>> HYPRLAND VISUAL EDITOR START/END <<<`) se inyecta en
+`~/.config/hypr/hyprland.lua`. Fuera de ese bloque HVE no escribe nada en tu
+configuración de Hyprland.
 
 ### Dependencias del sistema
 
@@ -141,24 +148,43 @@ El instalador detecta tu distribución y las instala automáticamente:
 | Elemento | Ruta | Notas |
 |----------|------|-------|
 | Binario | `~/.local/bin/hve` | — |
-| Assets completos | `~/.local/bin/assets/` | Scripts, animaciones, bordes, shaders |
+| Assets completos | `~/.local/bin/assets/` | Scripts, animaciones, bordes, shaders, fragmentos |
 | Acceso directo | `~/.local/share/applications/hve.desktop` | — |
+| Iconos del lanzador | `~/.local/share/icons/hicolor/*/apps/hve.png` | Todos los tamaños |
+| Bloque de HVE en Hyprland | `~/.config/hypr/hyprland.lua` | Solo el bloque entre marcadores; tus líneas no se tocan |
+| Entrada de autostart | `~/.cache/hve/hve-settings.lua` | Solo el bloque de autostart; tus teclas se quedan |
+| Mute del motor | `~/.config/skwd-wall-v2/config.json` | Devuelve `theme.policy` al valor anterior si HVE lo había puesto en `off` |
 | Autostart (legacy XDG) | `~/.config/autostart/hve.desktop` | Solo si existe de instalaciones anteriores |
 | Script IPC | `~/.local/bin/hve-ipc` | Si se instaló |
-| Symlink del sistema | `/usr/local/bin/hve-ipc` | Requiere sudo, solo si existe |
+| Symlink del sistema | `/usr/local/bin/hve-ipc` | Solo si existe; pide sudo únicamente si no es escribible por ti |
 
 **Pregunta antes de eliminar:**
 
 | Elemento | Ruta | Por qué pregunta |
 |----------|------|------------------|
-| Cache de runtime | `~/.cache/hve/` | Datos temporales (logs, overlays, backups). Se recrean si vuelves a ejecutar HVE. |
-| Configuración de usuario | `~/.config/hve/` | **Tus ajustes**: tema elegido, animación activa, bordes, presets, keybinds. |
+| Cache de runtime | `~/.cache/hve/` | Datos temporales (logs, overlay, miniaturas). Se recrean si vuelves a ejecutar HVE. |
+| Configuración de usuario | `~/.config/hve/` | **Tus ajustes y tus temas**: si dices que no, se conservan tal cual; si dices que sí, se van también los temas que importaste. |
+
+**Nunca se toca:** tus vídeos descargados (en la carpeta del plugin de mpvpaper,
+por defecto `~/Videos`), la paleta que HVE escribió en
+`~/.config/noctalia/palettes/`, y cualquier otra aplicación de
+`~/.local/share/applications/` o `~/.local/share/icons/`.
+
+Hay dos formas de desinstalar y las dos limpian lo mismo:
+
+- `./uninstall.sh` — quita todo lo de la tabla de arriba y pregunta por caché y
+  configuración.
+- Borrar el binario a mano — el vigilante (`hve_watchdog.sh`, que vive en la
+  caché) se ejecuta al iniciar Hyprland, detecta que HVE ya no está, quita su
+  bloque de `hyprland.lua` y borra `~/.cache/hve/`. Si además borras la caché a
+  mano, el bloque de Hyprland se queda: en ese caso usa `./uninstall.sh`.
+
 
 ### Tranquilidad con la desinstalación
 
 HVE está diseñado para **no dejar rastro**. Esto es posible porque:
 
-1. **Tu configuración de Hyprland nunca se modifica directamente.** HVE solo añade dos líneas entre marcadores `# HVE START` / `# HVE END` (o `-- HVE START` / `-- HVE END` en Lua) en tu `hyprland.conf` o `hyprland.lua`. Si HVE no está, esas líneas no existen.
+1. **Tu configuración de Hyprland nunca se modifica fuera de su bloque.** HVE solo añade un bloque entre marcadores `-- >>> HYPRLAND VISUAL EDITOR START <<<` y `-- >>> HYPRLAND VISUAL EDITOR END <<<` en tu `hyprland.lua`. Si HVE no está, ese bloque no existe.
 
 2. **El watchdog (`hve_watchdog.sh`) se asegura de esto.** Si el directorio de HVE deja de existir (desinstalación manual, borrado accidental), el watchdog —que se ejecuta en cada inicio de Hyprland— detecta la ausencia, remueve los marcadores de los archivos de configuración y limpia `~/.cache/hve/`.
 
@@ -176,48 +202,46 @@ En resumen: **puedes instalar y desinstalar HVE cuantas veces quieras sin riesgo
 
 ### Sistema de Fragmentos y Ensamblado
 
-El núcleo de HVE es `assemble.sh` (152 líneas), que:
+El núcleo de HVE es `assemble.sh`, que:
 
 1. **Obtiene los colores activos** (via `colors.sh`)
 2. **Escribe un overlay temporal** con:
    - Cabecera (generación, fecha)
    - Variables de color (`$HVE_PRIMARY`, `$HVE_SECONDARY`, etc.)
    - Curvas bezier de animación
-   - Fragmentos activos: `animation.{ext}`, `border.{ext}`, `geometry.{ext}`, `shader.{ext}`
-3. **Valida la sintaxis** según el formato (Lua vs Conf)
+   - Fragmentos activos: `animation.lua`, `border.lua`, `geometry.lua`, `shader.lua`
+3. **Valida la sintaxis** (tiene que ser Lua; el sintaxis clásica `.conf` aborta el cambio)
 4. **Mueve atómicamente** el temporal al destino (`mv`)
-5. **Recarga Hyprland** (`hyprctl reload`)
-6. **Crea/actualiza un symlink** `overlay.current` apuntando al overlay activo
+5. **Recarga Hyprland** agrupando las recargas de una misma ráfaga
 
 ```
 assemble.sh
   ├── colors.sh        → variables de color
   ├── fragments/
-  │   ├── animation.{ext}   ← write by apply_animation.sh
-  │   ├── border.{ext}      ← write by border.sh
-  │   ├── geometry.{ext}    ← write by geometry.sh
-  │   └── shader.{ext}      ← write by shader.sh
-  └── overlay.current  → symlink al overlay activo
+  │   ├── animation.lua     ← escribe apply_animation.sh
+  │   ├── border.lua        ← escribe border.sh
+  │   ├── geometry.lua      ← escribe geometry.sh
+  │   └── shader.lua        ← escribe shader.sh
+  └── overlay.lua      → lo carga hyprland.lua con dofile
 ```
 
-### Formato: Lua vs Conf
+### Formato: solo Lua
 
-Hyprland 0.55+ introdujo un sistema de configuración Lua con funciones como `hl.` y `require()`. HVE detecta automáticamente qué formato usa tu instalación mediante `detect_format.sh`:
+Hyprland 0.55+ usa configuración Lua (`hl.`, `require()`). HVE solo gestiona
+ese formato: si tu sistema sigue en `hyprland.conf` clásico, el instalador
+avisa y HVE no activa nada (`src/config_guard.rs`, espejo en `init.sh`).
 
-- Busca `hyprland.lua` con patrones Lua (`hl.`, `require(`)
-- Si lo encuentra, usa formato **Lua** en todos los fragmentos y overlays
-- Si no, usa el formato **Conf** clásico
-- El resultado se guarda en `~/.cache/hve/hve_format` para no detectar cada vez
-
-Cada preset de animación y borde existe en **ambos formatos** (`.conf` + `.lua`), y HVE elige automáticamente el que corresponde.
+Los marcadores de estilo `.conf` (`# >>> HYPRLAND VISUAL EDITOR START <<<`)
+solo se conservan para poder limpiar un bloque inyectado por versiones
+antiguas; HVE no escribe en `hyprland.conf`.
 
 ### Sistema de configuración
 
-`~/.config/hve/config.json` — versión actual: **7**
+`~/.config/hve/config.json` — versión actual: **8**
 
 ```json
 {
-  "config_version": 7,
+  "config_version": 8,
   "is_system_active": true,
   "border_size": 2,
   "border_radius": 32,
@@ -429,7 +453,7 @@ hve/
 ├── Cargo.toml              ← Dependencias Rust
 ├── build.rs                ← Compilación Slint UI
 ├── install.sh              ← Instalador (458 líneas, bilingüe)
-├── uninstall.sh            ← Desinstalador (207 líneas, bilingüe)
+├── uninstall.sh            ← Desinstalador (bilingüe)
 ├── hve.desktop             ← Acceso directo (base)
 ├── i18n/
 │   ├── en.json             ← Traducciones inglés
@@ -466,15 +490,14 @@ hve/
 │   ├── hve_logo.svg        ← Icono vectorial
 │   ├── icons/hicolor/      ← Iconos del lanzador, 48/64/128/256 (regenerar: scripts/gen-icon.sh)
 │   ├── scripts/            ← 15 scripts bash (ver abajo)
-│   ├── animations/         ← 18 presets × 2 formatos = 36 archivos
-│   ├── borders/            ← 14 presets × 2 formatos = 28 archivos
+│   ├── animations/         ← 19 presets (.lua)
+│   ├── borders/            ← 14 presets (.lua)
 │   ├── shaders/            ← 9 shaders GLSL (.frag)
 │   ├── fragments/          ← Fragmentos dinámicos (runtime)
 │   └── owl_neon.png        ← Imagen decorativa
 └── assets/scripts/
     ├── utils.sh            ← Funciones compartidas, paths
     ├── colors.sh           ← Detector/exportador de colores
-    ├── detect_format.sh    ← Detecta Lua vs Conf
     ├── assemble.sh         ← Ensamblador de overlays
     ├── init.sh             ← Activar/desactivar HVE
     ├── apply_animation.sh  ← Aplicar preset de animación
@@ -483,10 +506,13 @@ hve/
     ├── geometry.sh         ← Aplicar geometría (border_size)
     ├── get_colors.sh       ← Obtener colores en JSON
     ├── color_watcher.sh    ← Vigilante de cambios en colores
+    ├── color_sources.d/    ← Fuentes de color (noctalia, pywal, matugen, manual)
+    ├── reload_coalescer.sh ← Agrupa las recargas de Hyprland
+    ├── install_themes.sh   ← Copia los temas de referencia sin pisar los tuyos
     ├── scan.sh             ← Escanear y describir presets
     ├── hve-ipc             ← Cliente IPC en Python
-    ├── hve_watchdog.sh     ← Watchdog de seguridad
-    └── format_test.sh      ← Tests de formato (no producción)
+    ├── hve-sentinel.py     ← Centinela de Hyprland
+    └── hve_watchdog.sh     ← Watchdog de seguridad
 ```
 
 ### Código fuente (src/)
@@ -518,40 +544,42 @@ hve/
 
 | Script | Líneas | Función |
 |--------|--------|---------|
-| `utils.sh` | 96 | Rutas compartidas: `HVE_ASSETS_DIR`, `HVE_SCRIPTS_DIR`, `HVE_FRAGMENTS_DIR`, `HVE_SAFE_DIR`, `HVE_HYPR_DIR`; funciones `hve_resolve_preset()`, `hve_trim()`, `hve_unquote()` |
-| `assemble.sh` | 152 | **Corazón del sistema**: ensambla colores + fragmentos → overlay atómico, valida sintaxis, recarga Hyprland |
-| `init.sh` | 195 | Activar/desactivar HVE: inyecta o remueve marcadores en `hyprland.conf`/`hyprland.lua`, crea `hve-settings` con defaults |
-| `colors.sh` | 407 | Detector inteligente de colores: Noctalia → pywal → matugen → manual, exporta 6 variables de color |
-| `color_watcher.sh` | 217 | Vigilante `inotifywait` con hash-based detection, timeout 30s, refresh automático |
-| `scan.sh` | 122 | Escáner de presets con parseo de metadatos (@Title, @Desc, @Tag, @Icon, @Color), output JSON |
-| `shader.sh` | 99 | Aplica shader `.frag`, genera wrapper con `decoration.screen_shader`, "none" limpia via hyprctl |
-| `geometry.sh` | 126 | Escribe fragmento de `general.border_size` |
-| `apply_animation.sh` | 61 | Aplica preset de animación, copia a `fragments/animation.{ext}` |
-| `border.sh` | 58 | Aplica preset de borde, copia a `fragments/border.{ext}` |
-| `detect_format.sh` | 62 | Detecta Lua vs Conf, cachea resultado |
-| `get_colors.sh` | 11 | Envuelve `colors.sh`, output JSON |
-| `hve_watchdog.sh` | 28 | Seguridad: si HVE no existe, limpia marcadores y cache |
-| `hve-ipc` | 26 | Cliente Python para el socket Unix |
-| `format_test.sh` | 79 | Suite de tests de formato (no usada en producción) |
+| `utils.sh` | Rutas compartidas: `HVE_ASSETS_DIR`, `HVE_SCRIPTS_DIR`, `HVE_FRAGMENTS_DIR`, `HVE_SAFE_DIR`, `HVE_HYPR_DIR`; helpers de preset |
+| `assemble.sh` | **Corazón del sistema**: ensambla colores + fragmentos → overlay atómico, valida que sea Lua y pide la recarga agrupada |
+| `init.sh` | Activar/desactivar HVE: inyecta o remueve el bloque en `hyprland.lua`, crea `hve-settings` con defaults |
+| `colors.sh` | Detector inteligente de colores: Noctalia → pywal → matugen → manual, exporta las variables de color |
+| `color_watcher.sh` | Vigilante `inotifywait` con detección por hash y timeout de 30 s |
+| `color_sources.d/` | Una fuente de color por archivo (noctalia, pywal, matugen, manual) |
+| `reload_coalescer.sh` | Agrupa las recargas de Hyprland: una sola por ráfaga de cambios |
+| `install_themes.sh` | Copia los temas de referencia sin pisar un tema tuyo con el mismo nombre |
+| `scan.sh` | Escáner de presets con metadatos (@Title, @Desc, @Tag, @Icon, @Color), salida JSON |
+| `shader.sh` | Aplica shader `.frag`, genera el wrapper de `decoration.screen_shader`; "none" lo limpia |
+| `geometry.sh` | Escribe el fragmento de `general.border_size` |
+| `apply_animation.sh` | Aplica preset de animación, copia a `fragments/animation.lua` |
+| `border.sh` | Aplica preset de borde, copia a `fragments/border.lua` |
+| `get_colors.sh` | Envuelve `colors.sh`, salida JSON |
+| `hve-sentinel.py` | Centinela de Hyprland (registro en `sentinel.log`) |
+| `hve_watchdog.sh` | Seguridad: si HVE ya no está, limpia su bloque de Hyprland y la caché |
+| `hve-ipc` | Cliente Python para el socket Unix |
 
 ### Presets de animación (assets/animations/)
 
-18 animaciones, cada una con archivos `.conf` y `.lua`:
+19 animaciones, cada una en `.lua`:
 
 01_relampago, 02_inercia_elastica, 03_seda_minimalista, 04_minimalismo_snappy,
 05_material_moderno, 06_impacto_clasico, 07_lineal, 08_cristal, 09_seda_silk,
 10_retro_arcade, 11_futurista, 12_rebote, 13_organico, 14_elastico,
-15_desvanecido, 16_dinamico, 17_sutil, 18_energico
+15_desvanecido, 16_dinamico, 17_sutil, 18_energico, 19_stylized2.5D
 
 ### Presets de bordes (assets/borders/)
 
-14 bordes, cada uno con archivos `.conf` y `.lua`:
+14 bordes, cada uno en `.lua`:
 
 01_cascade hasta 14_looper
 
 ### Shaders (assets/shaders/)
 
-9 shaders GLSL (`.frag`) — no tienen dualidad de formato porque Hyprland usa el mismo archivo independientemente del formato de configuración:
+9 shaders GLSL (`.frag`):
 
 01_night, 02_mono, 03_vibrant, 04_sharp, 05_ink, 06_invert, 07_oled, 08_vision, 09_hybrid
 
@@ -568,17 +596,48 @@ Son **sobrescritos** cada vez que cambias un preset.
 
 ### Archivos de runtime
 
-| Ruta | Propósito |
-|------|-----------|
-| `~/.config/hve/config.json` | Configuración persistente del usuario |
-| `~/.cache/hve/hve.lock` | Lock exclusivo (previene múltiples instancias) |
-| `~/.cache/hve/hve_format` | Cache del formato detectado ("lua" o "conf") |
-| `~/.cache/hve/hve-settings.{lua,conf}` | Fragmento gestionado con reglas de ventana, keybinds y autostart |
-| `~/.cache/hve/overlay.{lua,conf}` | Overlay activo (ensamblado por assemble.sh) |
-| `~/.cache/hve/overlay.current` | Symlink al overlay activo |
-| `~/.cache/hve/colors.json` | Señal de colores (escrito por color_watcher) |
-| `~/.cache/hve/color_watcher.log` | Logs del vigilante de colores |
-| `~/.cache/hve/fragments/` | Fragmentos activos copiados por assemble.sh |
+Todo lo que HVE escribe vive en dos carpetas: `~/.config/hve/` (lo tuyo) y
+`~/.cache/hve/` (lo regenerable). Nada más se toca en tu `$HOME`, salvo lo que
+se detalla al final.
+
+| Ruta | Propósito | ¿Se regenera? |
+|------|-----------|----------------|
+| `~/.config/hve/config.json` | Tus ajustes: tema, animación, borde, geometría, teclas | No — es tu configuración |
+| `~/.config/hve/themes/<Nombre>/` | Tus temas: paleta, fondos, vídeos y manifiestos por proveedor | No — son tus datos |
+| `~/.config/hve/presets/<categoría>/` | Presets propios guardados desde la app | No — son tus datos |
+| `~/.cache/hve/hve-settings.lua` | Reglas de ventana, teclas y autostart que Hyprland carga con `dofile` | Sí, respetando lo editado a mano |
+| `~/.cache/hve/overlay.lua` | Overlay ensamblado (colores + animación + borde + geometría + shader) que Hyprland carga con `dofile` | Sí |
+| `~/.cache/hve/hve_watchdog.sh` | Vigilante: si el binario desaparece, quita el bloque de Hyprland y la caché | Sí |
+| `~/.cache/hve/thumbs/` | Miniaturas de la galería | Sí |
+| `~/.cache/hve/hve.lock` | Cerrojo de instancia única | Sí |
+| `~/.cache/hve/hve.log` | Registro de la aplicación (con rotación a `.1`) | Sí |
+| `~/.cache/hve/color_watcher.log` / `color_watcher.lock` | Registro y cerrojo del vigilante de colores | Sí |
+| `~/.cache/hve/sentinel.log` | Registro del centinela de Hyprland | Sí |
+| `~/.cache/hve/color-authority.log` | Registro de decisiones de autoridad de color (con rotación) | Sí |
+| `~/.cache/hve/color-authority.json` | Descriptor de quién manda en la paleta ahora mismo | Sí |
+| `~/.cache/hve/keeper-palette.json` | Marca de que la paleta la cambió el usuario a mano | Sí |
+| `~/.cache/hve/color-write.last` | Marca de la última escritura de paleta hecha por HVE | Sí |
+| `~/.cache/hve/assert-color-authority.last` | Enfriamiento entre reafirmaciones de paleta | Sí |
+| `~/.cache/hve/skwd-policy-yield.json` | Valor al que devolver el motor de skwd-wall si HVE se cierra a medias | Sí |
+| `~/.cache/hve/picker-voice.json` | Ventana de gracia mientras eliges tema | Sí |
+| `~/.cache/hve/theme-trust.toml` | Temas que ya aceptaste importar (te vuelve a preguntar si se borra) | No |
+| `~/.cache/hve/reload.request.lock` / `reload.drain.lock` | Handshake de recargas agrupadas de Hyprland | Sí |
+| `~/.cache/hve/hve-settings.conf` | Resto del formato antiguo: ya no se lee ni se escribe | — (se puede borrar) |
+
+Fuera de esas dos carpetas HVE escribe, y solo por necesidad del escritorio:
+
+- `~/.config/hypr/hyprland.lua` — únicamente su bloque entre marcadores
+  `-- >>> HYPRLAND VISUAL EDITOR START <<<` y `… END <<<`.
+- `~/.config/noctalia/palettes/skwd-wall.json` — la paleta que aplica y que
+  Noctalia lee.
+- `~/.config/skwd-wall-v2/config.json` — `theme.policy`, que pone en `off`
+  mientras HVE manda para que el motor no le pise el tema. Al desinstalar se
+  devuelve a su valor anterior.
+- La carpeta de vídeos configurada en el plugin de mpvpaper de Noctalia (por
+  defecto `~/Videos`) — solo si un tema trae un vídeo por URL y hay que
+  descargarlo.
+- Sockets temporales de gslapper en `$XDG_RUNTIME_DIR/hve-gslapper/`, que
+  desaparecen al cerrar la sesión.
 
 ---
 
