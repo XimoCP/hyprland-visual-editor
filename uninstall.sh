@@ -181,7 +181,9 @@ remove_dir() {
 remove_autostart_block() {
     local path="$HVE_CACHE/hve-settings.lua"
     local label="Autostart entry (hve-settings.lua)"
-    if [ ! -f "$path" ] || ! grep -qF -- '-- >>> HVE AUTOSTART <<<' "$path"; then
+    if [ ! -f "$path" ] \
+        || ! grep -qF -- '-- >>> HVE AUTOSTART <<<' "$path" \
+        || ! grep -qF -- '-- >>> HVE AUTOSTART END <<<' "$path"; then
         warn "$label → $MSG_NOT_FOUND"
         NOT_FOUND+=("$label")
         return

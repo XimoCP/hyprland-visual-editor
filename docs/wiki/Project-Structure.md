@@ -160,7 +160,7 @@ They have no second format because Hyprland uses the same file regardless of how
 
 ## 🧩 Dynamic fragments (assets/fragments/)
 
-This folder lives in `~/.local/bin/assets/fragments/` (next to the installed assets) and holds the fragments currently in use. It is created at runtime and git-ignored, because every preset change rewrites it:
+This folder lives in `~/.local/opt/hve/assets/fragments/` (next to the installed assets) and holds the fragments currently in use. It is created at runtime and git-ignored, because every preset change rewrites it:
 
 - `animation.lua` — the active animation
 - `border.lua` — the active border

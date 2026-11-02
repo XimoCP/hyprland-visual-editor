@@ -12,8 +12,9 @@ The uninstaller is bilingual (Spanish/English), prints a summary of what it remo
 
 | Item | Path | Notes |
 |------|------|-------|
-| Program | `~/.local/bin/hve` | — |
-| Support files | `~/.local/bin/assets/` | Scripts, animations, borders, shaders and the pieces of the current look |
+| App dir | `~/.local/opt/hve/` | The binary and every asset |
+| Binary symlink | `~/.local/bin/hve` | — |
+| Assets of earlier installs | `~/.local/bin/assets/` | Only if an old version left them |
 | Launcher entry | `~/.local/share/applications/hve.desktop` | — |
 | Autostart entry | The `-- >>> HVE AUTOSTART <<<` block inside `~/.cache/hve/hve-settings.lua` | Removed even if you keep the temporary files, so no `hve --tray` entry outlives the program |
 | Shortcut helper | `~/.local/bin/hve-ipc` | Only if you installed it |

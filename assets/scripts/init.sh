@@ -60,7 +60,7 @@ clean_hyprland_conf() {
     if [ ! -f "$HYPR_CONF" ]; then return; fi
     # Both markers or nothing: a lone START would make this delete every line
     # to the end of the keeper's configuration file.
-    if grep -qF "$MARKER_START_CONF" "$HYPR_CONF" && grep -qF "$MARKER_END_CONF" "$HYPR_CONF"; then
+    if grep -qF -- "$MARKER_START_CONF" "$HYPR_CONF" && grep -qF -- "$MARKER_END_CONF" "$HYPR_CONF"; then
         sed -i "/$MARKER_START_CONF/,/$MARKER_END_CONF/d" "$HYPR_CONF"
     fi
     sed -i "\|source = .*hve/overlay|d" "$HYPR_CONF"
@@ -70,7 +70,10 @@ clean_hyprland_conf() {
 
 clean_hyprland_lua() {
     if [ ! -f "$HYPR_LUA" ]; then return; fi
-    if grep -qF "$MARKER_START_LUA" "$HYPR_LUA" && grep -qF "$MARKER_END_LUA" "$HYPR_LUA"; then
+    # `--` is mandatory: the Lua marker begins with `--` and grep would
+    # otherwise parse the pattern as an option, exit 2, and this guard would
+    # silently never fire.
+    if grep -qF -- "$MARKER_START_LUA" "$HYPR_LUA" && grep -qF -- "$MARKER_END_LUA" "$HYPR_LUA"; then
         sed -i "/$MARKER_START_LUA/,/$MARKER_END_LUA/d" "$HYPR_LUA"
     fi
     sed -i "\|require.*hve|d" "$HYPR_LUA"
@@ -78,7 +81,6 @@ clean_hyprland_lua() {
     sed -i "\|source.*hve/overlay|d" "$HYPR_LUA"
     sed -i "\|source.*HVE/overlay|d" "$HYPR_LUA"
     sed -i "\|hl\.exec_cmd.*hve_watchdog|d" "$HYPR_LUA"
-    sed -i '/hl\.on.*hyprland\.start.*function.*HVE/,/end)/d' "$HYPR_LUA"
     sed -i '${/^$/d;}' "$HYPR_LUA"
 }
 

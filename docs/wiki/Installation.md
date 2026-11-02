@@ -58,12 +58,13 @@ Your settings live in `~/.config/hve/config.json`.
 
 | Path | Contents | Type |
 |------|----------|------|
-| `~/.local/bin/hve` | Main binary (compiled Rust) | Required |
-| `~/.local/bin/assets/scripts/` | 16 support scripts (including `hve-ipc`, listed below) plus the `color_sources.d/` colour-source modules | Required |
-| `~/.local/bin/assets/animations/` | 19 animation presets (`.lua`) | Required |
-| `~/.local/bin/assets/borders/` | 14 border presets (`.lua`) | Required |
-| `~/.local/bin/assets/shaders/` | 9 GLSL shaders (`.frag`) | Required |
-| `~/.local/bin/assets/fragments/` | Dynamic fragments, rewritten at runtime | Required |
+| `~/.local/opt/hve/hve` | Main binary (compiled Rust) | Required |
+| `~/.local/bin/hve` | Symlink to that binary: HVE's only entry in `~/.local/bin` | Required |
+| `~/.local/opt/hve/assets/scripts/` | 16 support files (including `hve-ipc`, listed below) plus the `color_sources.d/` colour-source modules | Required |
+| `~/.local/opt/hve/assets/animations/` | 19 animation presets (`.lua`) | Required |
+| `~/.local/opt/hve/assets/borders/` | 14 border presets (`.lua`) | Required |
+| `~/.local/opt/hve/assets/shaders/` | 9 GLSL shaders (`.frag`) | Required |
+| `~/.local/opt/hve/assets/fragments/` | Dynamic fragments, rewritten at runtime | Required |
 | `~/.config/hve/themes/` | Reference themes shipped with HVE, copied without overwriting a theme you already have | Required |
 | `~/.local/share/applications/hve.desktop` | Desktop entry for application launchers; its `Exec=` line is rewritten to the absolute binary path | Required |
 | `~/.local/bin/hve-ipc` | IPC client script (Python); required for the keyboard shortcuts | Optional |
@@ -93,7 +94,7 @@ A distribution outside that list stops the installer with an "unsupported" messa
 4. **Verifies Rust** — installs it through `rustup` when it is missing.
 5. **Checks that Hyprland uses Lua** — HVE manages `hyprland.lua` only. A legacy `hyprland.conf` is reported, and the configuration must be migrated before HVE can be enabled.
 6. **Builds** (`cargo build --release`).
-7. **Copies the binary** to `~/.local/bin/hve`.
+7. **Copies the binary** to `~/.local/opt/hve/hve` and links `~/.local/bin/hve` to it.
 8. **Copies the assets** (scripts, animations, borders, shaders, fragments).
 9. **Installs the desktop entry**, rewriting `Exec=` to the absolute binary path so the launcher does not depend on `PATH`.
 10. **Detects your colour tool** (Noctalia, pywal, matugen or a manual source) — informational only; runtime detection belongs to `color_watcher.sh`.

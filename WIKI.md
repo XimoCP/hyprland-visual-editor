@@ -399,7 +399,7 @@ Cuando pierdes el foco de la ventana de HVE (detectado via `activewindow` de Hyp
 
 `hve_watchdog.sh` se ejecuta al inicio de Hyprland (vía `exec-once` / `hl.exec_cmd`). Su función:
 
-1. Verifica que el directorio de HVE existe (`~/.local/opt/hve/assets/scripts/`)
+1. Comprueba que el binario que instala el instalador sigue existiendo (`~/.local/bin/hve`)
 2. Si **no existe** (desinstalación manual, borrado):
    - Elimina los marcadores `HVE START/END` de `hyprland.conf` y `hyprland.lua`
    - Borra `~/.cache/hve/` completo

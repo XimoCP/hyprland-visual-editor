@@ -2632,3 +2632,140 @@ fn uninstaller_leaves_an_unterminated_block_untouched() {
         "an unterminated block must be left byte-identical"
     );
 }
+
+// ── init.sh: the marker guard must actually FIRE ─────────────────────────
+//
+// Text-asserting that a guard exists proves nothing: the Lua marker starts
+// with `--`, and `grep -qF "$MARKER"` parsed it as an OPTION (exit 2), so the
+// guard was silently false and `init.sh disable` stopped removing the block.
+// These tests RUN the script.
+
+/// Sandbox shaped like a real install: the scripts next to a home with an
+/// injected HVE block, the cache the block points at, and the keeper's own
+/// lines around it.
+fn init_sandbox() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let scripts = root.join("app/assets/scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    for entry in std::fs::read_dir(scripts_dir()).unwrap().flatten() {
+        let dest = scripts.join(entry.file_name());
+        let src = entry.path();
+        if src.is_dir() {
+            copy_dir(&src, &dest);
+        } else {
+            std::fs::copy(&src, &dest).unwrap();
+        }
+    }
+
+    let home = root.join("home");
+    let cache = home.join(".cache/hve");
+    std::fs::create_dir_all(&cache).unwrap();
+    std::fs::create_dir_all(home.join(".config/hypr")).unwrap();
+    std::fs::write(
+        home.join(".config/hypr/hyprland.lua"),
+        format!(
+            "hl.env(\"XCURSOR_SIZE\", \"24\")\n\
+             -- >>> HYPRLAND VISUAL EDITOR START <<<\n\
+             dofile(\"{}/overlay.lua\")\n\
+             dofile(\"{}/hve-settings.lua\")\n\
+             hl.on(\"hyprland.start\", function()\n\
+             \x20   hl.exec_cmd(\"{}/hve_watchdog.sh\")\n\
+             end)\n\
+             -- >>> HYPRLAND VISUAL EDITOR END <<<\n\
+             hl.bind(\"SUPER + Q\", hl.dsp.window.close())\n",
+            cache.display(),
+            cache.display(),
+            cache.display()
+        ),
+    )
+    .unwrap();
+    std::fs::write(cache.join("overlay.lua"), "-- overlay\n").unwrap();
+    std::fs::write(cache.join("hve-settings.lua"), "-- >>> HVE KEYBINDS <<<\n").unwrap();
+    std::fs::write(cache.join("hve.log"), "log\n").unwrap();
+
+    (tmp, home, scripts)
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap().flatten() {
+        let dest = to.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_dir(&entry.path(), &dest);
+        } else {
+            std::fs::copy(entry.path(), &dest).unwrap();
+        }
+    }
+}
+
+fn run_init(scripts: &Path, home: &Path, action: &str) -> Output {
+    let cache = home.join(".cache").join("hve");
+    run_bash(
+        &format!("\"{}\" {action}", scripts.join("init.sh").display()),
+        &[],
+        &[
+            ("HOME", home.to_str().unwrap()),
+            ("HVE_CACHE_DIR", cache.to_str().unwrap()),
+        ],
+        home,
+    )
+}
+
+/// `disable` must remove the injected block and the cache it pointed at,
+/// keeping the keeper's own lines and their keybinds.
+#[test]
+fn init_disable_removes_the_hve_block() {
+    let (_tmp, home, scripts) = init_sandbox();
+    let lua = home.join(".config/hypr/hyprland.lua");
+
+    let out = run_init(&scripts, &home, "disable");
+    assert!(out.status.success(), "init.sh disable failed: {out:?}");
+
+    let after = std::fs::read_to_string(&lua).unwrap();
+    assert!(
+        !after.contains("HYPRLAND VISUAL EDITOR"),
+        "the block must be gone after disable:\n{after}"
+    );
+    assert!(
+        after.contains("XCURSOR_SIZE") && after.contains("SUPER + Q"),
+        "the keeper's own lines must survive:\n{after}"
+    );
+    assert!(
+        !home.join(".cache/hve/overlay.lua").exists(),
+        "disable removes the assembled overlay"
+    );
+    assert!(
+        home.join(".cache/hve/hve-settings.lua").exists(),
+        "disable keeps hve-settings across disable/enable"
+    );
+}
+
+/// `enable` twice must not stack two blocks: the guard has to clear the old one
+/// before appending the new one.
+#[test]
+fn init_enable_twice_keeps_a_single_block() {
+    let (_tmp, home, scripts) = init_sandbox();
+    let lua = home.join(".config/hypr/hyprland.lua");
+
+    for attempt in ["enable", "enable"] {
+        let out = run_init(&scripts, &home, attempt);
+        assert!(out.status.success(), "init.sh {attempt} failed: {out:?}");
+    }
+
+    let after = std::fs::read_to_string(&lua).unwrap();
+    assert_eq!(
+        after.matches("HYPRLAND VISUAL EDITOR START").count(),
+        1,
+        "a second enable must replace the block, never stack it:\n{after}"
+    );
+    assert_eq!(
+        after.matches("dofile(").count(),
+        2,
+        "exactly the two HVE dofiles, got:\n{after}"
+    );
+    assert!(
+        after.contains("XCURSOR_SIZE") && after.contains("SUPER + Q"),
+        "the keeper's own lines must survive enable:\n{after}"
+    );
+}
