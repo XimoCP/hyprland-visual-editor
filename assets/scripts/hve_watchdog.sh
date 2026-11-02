@@ -28,13 +28,18 @@ HVE_SAFE_DIR="${HVE_CACHE_DIR:-$(_hve_xdg_dir "${XDG_CACHE_HOME:-}" "$HOME/.cach
 # Check if HVE is still installed (its binary is present)
 if [ ! -e "$HVE_BIN" ]; then
 
-    # Remove markers from hyprland.conf (# style)
-    if [ -f "$HYPR_CONF" ]; then
+    # Remove markers from hyprland.conf (# style). BOTH markers must be there:
+    # with a lone START this range would delete everything to end of file.
+    if [ -f "$HYPR_CONF" ] \
+        && grep -qF '# >>> HYPRLAND VISUAL EDITOR START <<<' "$HYPR_CONF" \
+        && grep -qF '# >>> HYPRLAND VISUAL EDITOR END <<<' "$HYPR_CONF"; then
         sed -i '/# >>> HYPRLAND VISUAL EDITOR START <<</,/# >>> HYPRLAND VISUAL EDITOR END <<</d' "$HYPR_CONF"
     fi
 
     # Remove markers from hyprland.lua (-- style)
-    if [ -f "$HYPR_LUA" ]; then
+    if [ -f "$HYPR_LUA" ] \
+        && grep -qF -- '-- >>> HYPRLAND VISUAL EDITOR START <<<' "$HYPR_LUA" \
+        && grep -qF -- '-- >>> HYPRLAND VISUAL EDITOR END <<<' "$HYPR_LUA"; then
         sed -i '/-- >>> HYPRLAND VISUAL EDITOR START <<</,/-- >>> HYPRLAND VISUAL EDITOR END <<</d' "$HYPR_LUA"
     fi
 
