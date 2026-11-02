@@ -291,7 +291,7 @@ HVE obtiene colores de tu herramienta de theming actual y los aplica tanto a su 
 1. **Noctalia** → `~/.config/hypr/noctalia/noctalia-colors.{conf,lua}`
 2. **pywal** → `~/.cache/wal/colors.json`
 3. **matugen** → `~/.config/matugen/config.toml` + archivo de salida
-4. **Manual** → escanea `~/.config/hypr/*.{lua,conf}` buscando variables de color
+4. **Manual** → escanea `~/.config/hypr/**/*.lua` buscando variables de color
 
 **Variables exportadas** por `colors.sh`:
 - `$HVE_PRIMARY`
