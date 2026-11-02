@@ -72,3 +72,38 @@ and that directory already contains `assets/scripts`. `utils.sh` derives every
 asset path from `BASH_SOURCE`, so the scripts follow for free. The one real
 code change is the sentinel path, which today assumes the legacy
 `~/.local/bin/assets`.
+
+L7 (progress): T2-T6 delivered in `9b6409d`, marker guard in `0e13bde`. Suite
+1872 passed / 0 failed. Advisory fixes from the previous verification are in the
+same commits: the wiki no longer claims a dual `.conf`/`.lua` format or an XDG
+autostart file nothing creates, the script count matches, and the uninstaller,
+`init.sh` and the watchdog require BOTH markers before a `sed` range runs (a
+lone START used to delete to end of file).
+
+L8 (T7, live migration): moved the keeper's install by hand, exactly as the
+installer now does — `~/.local/opt/hve/{hve,assets}`, `~/.local/bin/hve` as a
+symlink, binary md5 identical to `target/release/hve`
+(`022a04ef30726c7de5617df7ed2dd5f5`). Verified: `readlink -f` resolves to the
+real binary, `hve --version` answers through the symlink, and
+`assets/scripts/utils.sh` derives `HVE_ASSETS_DIR=~/.local/opt/hve/assets`.
+
+L9 (cleanup, authorized by the keeper: "todo lo que sea basura que se ha quedado
+en el sistema si esta verificado que es borrable .. se borra"). Verified before
+each deletion, then deleted:
+
+- 26 stale binaries in `~/.local/bin` (`hve.backup-*`, `hve.bak-*`,
+  `hve.pre-*`, `hve-first-toggle`) — all ELF builds of older HVE versions, no
+  config or script referenced any of them, and the running process uses the new
+  path.
+- 3 stale asset trees in `~/.local/bin` (`assets.old-hve`, two dated backups) —
+  `~/.local/opt/hve/assets` holds the same 66 files.
+- `~/.cache/noctalia/HVE/` — the old plugin's cache (an `hve_format` file).
+- `~/.config/noctalia/{plugins/,}hyprland-visual-editor/` — two vendored copies
+  of an older HVE as a Noctalia QML plugin; `settings.json` lists no such plugin,
+  so nothing loaded them.
+- `~/.config/noctalia/user-templates/test-hve.lua` (4-line test template) and
+  `~/.config/OpenRGB/__pycache__/hve-palette-render.cpython-314.pyc` (bytecode
+  with no source and no reference).
+
+Measured: `~/.local/bin` went from 978 MB of HVE leftovers to none; total
+`~/.local/bin` is now 611 MB, all of it other tools.
