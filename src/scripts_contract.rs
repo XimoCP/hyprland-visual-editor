@@ -2540,3 +2540,95 @@ fn uninstaller_never_rewrites_a_policy_it_did_not_set() {
         assert_eq!(after, body, "an unproven mute must be left byte-identical ({case})");
     }
 }
+
+// ── App-dir layout: one basket for everything HVE installs ────────────────
+
+/// The installer must put the binary and its assets in ONE folder
+/// (`~/.local/opt/hve/`) and leave `~/.local/bin` with a single `hve` symlink,
+/// migrating away the legacy loose `assets/`. Proven on the source because
+/// running the installer would need a full release build.
+#[test]
+fn installer_uses_one_app_dir_and_a_single_bin_symlink() {
+    let src = std::fs::read_to_string(repo_root().join("install.sh")).unwrap();
+    for needle in [
+        "HVE_APP_DIR=\"$HOME/.local/opt/hve\"",
+        "HVE_APP_BIN=\"$HVE_APP_DIR/hve\"",
+        "HVE_ASSETS=\"$HVE_APP_DIR/assets\"",
+        "ln -s \"$HVE_APP_BIN\" \"$HVE_BIN\"",
+    ] {
+        assert!(src.contains(needle), "install.sh must declare/rely on {needle}");
+    }
+    assert!(
+        src.contains("rm -rf \"$HVE_LEGACY_ASSETS\""),
+        "an upgrade must remove the legacy loose assets dir, never leave two copies"
+    );
+    assert!(
+        !src.contains("mkdir -p \"$HOME/.local/bin/assets\""),
+        "assets must never be created loose in ~/.local/bin again"
+    );
+}
+
+/// The uninstaller must remove the app dir, the bin symlink and — for installs
+/// that never ran the new installer — the legacy loose `assets/`, while leaving
+/// every other file in `~/.local/bin` alone.
+#[test]
+fn uninstaller_removes_the_app_dir_symlink_and_legacy_assets() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    let write = |rel: &str, body: &str| {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, body).unwrap();
+    };
+    write(".local/opt/hve/hve", "#!/bin/bash\nexit 0\n");
+    write(".local/opt/hve/assets/scripts/assemble.sh", "#!/bin/bash\n");
+    write(".local/bin/assets/scripts/assemble.sh", "#!/bin/bash\n");
+    write(".local/bin/hve-ipc", "#!/usr/bin/env python3\n");
+    write(".local/bin/other-tool", "#!/bin/bash\n");
+    std::os::unix::fs::symlink(
+        root.join(".local/opt/hve/hve"),
+        root.join(".local/bin/hve"),
+    )
+    .unwrap();
+
+    let out = run_uninstaller(root, "nn");
+    assert!(out.status.success(), "uninstall.sh must exit 0: {out:?}");
+
+    for gone in [
+        ".local/opt/hve",
+        ".local/bin/hve",
+        ".local/bin/assets",
+        ".local/bin/hve-ipc",
+    ] {
+        assert!(!root.join(gone).exists(), "must be removed: {gone}");
+    }
+    assert!(
+        root.join(".local/bin/other-tool").exists(),
+        "another program's binary in ~/.local/bin must survive"
+    );
+    assert!(root.join(".local/bin").exists(), "the bin dir itself is shared, never removed");
+}
+
+/// A block with a START marker and NO END marker is not something HVE writes,
+/// but a `sed` range would delete everything to the end of the file — the
+/// keeper's own configuration with it. Both markers or nothing.
+#[test]
+fn uninstaller_leaves_an_unterminated_block_untouched() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    let lua = root.join(".config/hypr/hyprland.lua");
+    std::fs::create_dir_all(lua.parent().unwrap()).unwrap();
+    let body = "hl.env(\"XCURSOR_SIZE\", \"24\")\n\
+                -- >>> HYPRLAND VISUAL EDITOR START <<<\n\
+                dofile(\"/nonexistent/overlay.lua\")\n\
+                hl.bind(\"SUPER + Q\", hl.dsp.window.close())\n";
+    std::fs::write(&lua, body).unwrap();
+
+    let out = run_uninstaller(root, "nn");
+    assert!(out.status.success(), "uninstall.sh must exit 0: {out:?}");
+    assert_eq!(
+        std::fs::read_to_string(&lua).unwrap(),
+        body,
+        "an unterminated block must be left byte-identical"
+    );
+}

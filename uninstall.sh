@@ -40,6 +40,7 @@ if [ "$LANG_CODE" = "es" ]; then
     MSG_HYPR_STEP="Quitando el bloque de HVE de la configuración de Hyprland"
     MSG_HYPR_OK="Bloque de HVE quitado de %s"
     MSG_HYPR_NONE="Sin bloque de HVE en la configuración de Hyprland — ignorado"
+    MSG_HYPR_UNTERMINATED="Bloque de HVE sin cierre en %s — no se toca (revisa el archivo a mano)"
     MSG_MUTE_STEP="Devolviendo el mando al motor de skwd-wall"
     MSG_MUTE_OK="Motor de skwd-wall devuelto a '%s'"
     MSG_MUTE_NONE="Sin mute pendiente del motor — ignorado"
@@ -68,6 +69,7 @@ else
     MSG_HYPR_STEP="Removing HVE's block from the Hyprland configuration"
     MSG_HYPR_OK="HVE block removed from %s"
     MSG_HYPR_NONE="No HVE block in the Hyprland configuration — skipped"
+    MSG_HYPR_UNTERMINATED="HVE block in %s has no closing marker — left untouched (check it by hand)"
     MSG_MUTE_STEP="Handing the engine back to skwd-wall"
     MSG_MUTE_OK="skwd-wall engine handed back to '%s'"
     MSG_MUTE_NONE="No pending engine mute — skipped"
@@ -119,7 +121,11 @@ prompt_yes_no() {
 
 # ── Paths ───────────────────────────────────────────────────────────────────
 HVE_BIN="$HOME/.local/bin/hve"
-HVE_ASSETS="$HOME/.local/bin/assets"
+# The app dir holds the real binary and its assets. `HVE_LEGACY_ASSETS` is the
+# loose `assets/` an older installer left in ~/.local/bin; it is still removed
+# so an install that never ran the new installer is cleaned completely too.
+HVE_APP_DIR="$HOME/.local/opt/hve"
+HVE_LEGACY_ASSETS="$HOME/.local/bin/assets"
 HVE_DESKTOP="$HOME/.local/share/applications/hve.desktop"
 HVE_ICON_DIR="$HOME/.local/share/icons/hicolor"
 HVE_IPC="$HOME/.local/bin/hve-ipc"
@@ -199,6 +205,13 @@ remove_hyprland_block() {
     for file in "$HVE_HYPR_LUA" "$HVE_HYPR_CONF"; do
         [ -f "$file" ] || continue
         grep -qF '>>> HYPRLAND VISUAL EDITOR START <<<' "$file" || continue
+        # BOTH markers or nothing: `sed '/START/,/END/d'` with a missing END
+        # deletes everything to the end of the file, which would take the
+        # keeper's own configuration with it.
+        if ! grep -qF '>>> HYPRLAND VISUAL EDITOR END <<<' "$file"; then
+            warn "$(msg_fmt "$MSG_HYPR_UNTERMINATED" "$file")"
+            continue
+        fi
         sed -i '/>>> HYPRLAND VISUAL EDITOR START <<</,/>>> HYPRLAND VISUAL EDITOR END <<</d' "$file"
         ok "$(msg_fmt "$MSG_HYPR_OK" "$file")"
         removed=1
@@ -298,8 +311,9 @@ echo ""
 info "$MSG_REMOVING: binario y assets"
 remove_file "$HVE_BIN" "Binario (~/.local/bin/hve)"
 
-# ── 2. Assets (scripts, borders, shaders, etc.) ────────────────────────────
-remove_dir "$HVE_ASSETS" "Assets (~/.local/bin/assets/)"
+# ── 2. App dir + assets ────────────────────────────────────────────────────
+remove_dir "$HVE_APP_DIR" "App (~/.local/opt/hve/)"
+remove_dir "$HVE_LEGACY_ASSETS" "Assets antiguos (~/.local/bin/assets/)"
 
 # ── 3. Desktop entry + launcher icon ───────────────────────────────────────
 remove_file "$HVE_DESKTOP" "Acceso directo (.local/share/applications/hve.desktop)"

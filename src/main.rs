@@ -91,6 +91,29 @@ pub(crate) fn project_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+/// Whether the asset scripts are where the engine expects them.
+///
+/// A layout mistake — or a binary moved without the `assets/` folder that now
+/// lives beside it in `~/.local/opt/hve/` — makes every apply fail silently:
+/// the window opens and nothing the keeper clicks has any effect.
+pub(crate) fn assets_are_installed(assets_dir: &std::path::Path) -> bool {
+    assets_dir.join("scripts").join("assemble.sh").is_file()
+}
+
+/// Say it out loud instead of failing quietly: a missing `assets/` is a broken
+/// install, not a user mistake.
+fn warn_when_assets_are_missing(engine: &Engine) {
+    let assets = engine.assets_dir();
+    if assets_are_installed(&assets) {
+        return;
+    }
+    eprintln!(
+        "[hve] Warning: asset scripts not found in '{}'. Themes, borders, animations and shaders will not apply. Re-run ./install.sh.",
+        assets.display()
+    );
+    tracing::warn!("[assets] missing scripts under {}", assets.display());
+}
+
 /// Intercept the hidden maintenance flags BEFORE any GUI setup.
 ///
 /// Returns `Some(exit_code)` when a maintenance command ran (or a
@@ -3553,6 +3576,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let proj = project_dir();
     let engine = Arc::new(Engine::new(&proj));
+    warn_when_assets_are_missing(&engine);
     let mut cfg = Config::load();
     // Capture System active for startup re-apply (must survive move into AppState)
     let startup_system_active = cfg.is_system_active;
@@ -6831,6 +6855,26 @@ fn main() -> Result<(), slint::PlatformError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A missing `assets/` must be detectable, not silent: with the app-dir
+    /// layout the scripts live beside the binary, and a binary moved without
+    /// them would open a window in which nothing applies.
+    #[test]
+    fn a_missing_assets_folder_is_detected() {
+        let root = tempfile::tempdir().unwrap();
+        let assets = root.path().join("assets");
+        assert!(!assets_are_installed(&assets), "empty dir is not an install");
+
+        let scripts = assets.join("scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        assert!(
+            !assets_are_installed(&assets),
+            "a scripts dir without assemble.sh is not an install"
+        );
+
+        std::fs::write(scripts.join("assemble.sh"), b"#!/bin/bash\n").unwrap();
+        assert!(assets_are_installed(&assets), "assets/scripts/assemble.sh is one");
+    }
 
     /// W2c-d: the theme budget must be counted in the currency the STORE
     /// writes. Counting only the code let a theme with thousands of long file

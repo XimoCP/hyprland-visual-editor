@@ -57,11 +57,11 @@ tus archivos hyprland  ←  inmutables, HVE nunca los modifica
       ┃
       ┃ (source / dofile)
       ┃
-  ~/.cache/hve/overlay.{lua,conf}  ←  archivo único generado por HVE
+  ~/.cache/hve/overlay.lua          ←  archivo único generado por HVE
       ┃
       ┃ (ensambla)
       ┃
-  assets/fragments/*.{lua,conf}    ←  fragmentos individuales (animación, borde, shader, geometría)
+  assets/fragments/*.lua           ←  fragmentos individuales (animación, borde, shader, geometría)
   + colores detectados automáticamente
 ```
 
@@ -85,12 +85,13 @@ cd hve
 
 | Ruta | Contenido | Tipo |
 |------|-----------|------|
-| `~/.local/bin/hve` | Binario principal (Rust compilado) | Obligatorio |
-| `~/.local/bin/assets/scripts/` | 16 scripts bash de soporte | Obligatorio |
-| `~/.local/bin/assets/animations/` | 19 animaciones (`.lua`) | Obligatorio |
-| `~/.local/bin/assets/borders/` | 14 bordes (`.lua`) | Obligatorio |
-| `~/.local/bin/assets/shaders/` | 9 shaders GLSL (`.frag`) | Obligatorio |
-| `~/.local/bin/assets/fragments/` | Fragmentos dinámicos (runtime) | Obligatorio |
+| `~/.local/opt/hve/hve` | Binario principal (Rust compilado) | Obligatorio |
+| `~/.local/bin/hve` | Enlace (symlink) a ese binario: la única entrada de HVE en `~/.local/bin` | Obligatorio |
+| `~/.local/opt/hve/assets/scripts/` | 16 archivos: 14 scripts bash + 2 utilidades Python | Obligatorio |
+| `~/.local/opt/hve/assets/animations/` | 19 animaciones (`.lua`) | Obligatorio |
+| `~/.local/opt/hve/assets/borders/` | 14 bordes (`.lua`) | Obligatorio |
+| `~/.local/opt/hve/assets/shaders/` | 9 shaders GLSL (`.frag`) | Obligatorio |
+| `~/.local/opt/hve/assets/fragments/` | Fragmentos dinámicos (runtime) | Obligatorio |
 | `~/.local/share/applications/hve.desktop` | Acceso directo para lanzadores | Obligatorio |
 | `~/.local/share/icons/hicolor/*/apps/hve.png` | Icono del lanzador (48, 64, 128, 256 px) | Obligatorio |
 | `~/.config/hve/themes/<Nombre>/` | Temas de referencia que viajan con HVE (no sobrescriben los tuyos) | Obligatorio |
@@ -102,6 +103,11 @@ Además, la primera vez que activas HVE desde la interfaz, el bloque gestionado
 (`-- >>> HYPRLAND VISUAL EDITOR START/END <<<`) se inyecta en
 `~/.config/hypr/hyprland.lua`. Fuera de ese bloque HVE no escribe nada en tu
 configuración de Hyprland.
+
+Todo lo de HVE vive junto en `~/.local/opt/hve/` (binario + `assets/`), y
+`~/.local/bin` solo guarda el enlace `hve`. Al arrancar, el binario resuelve el
+enlace y busca `assets/` a su lado. Si esa carpeta falta, HVE lo avisa al
+arrancar en lugar de fallar en silencio.
 
 ### Dependencias del sistema
 
@@ -123,7 +129,7 @@ El instalador detecta tu distribución y las instala automáticamente:
 3. **Instala dependencias** — intenta instalación por lote; si falla, prueba una por una.
 4. **Verifica Rust** — si no está, lo instala via `rustup`.
 5. **Compila** (`cargo build --release`) — genera el binario.
-6. **Copia el binario** a `~/.local/bin/hve`.
+6. **Copia el binario** a `~/.local/opt/hve/hve` y deja un enlace en `~/.local/bin/hve`.
 7. **Copia los assets** (scripts, animaciones, bordes, shaders, fragmentos).
 8. **Instala el acceso directo** — con la ruta absoluta al binario.
 9. **Pregunta opcionales**:
@@ -147,14 +153,14 @@ El instalador detecta tu distribución y las instala automáticamente:
 
 | Elemento | Ruta | Notas |
 |----------|------|-------|
-| Binario | `~/.local/bin/hve` | — |
-| Assets completos | `~/.local/bin/assets/` | Scripts, animaciones, bordes, shaders, fragmentos |
+| Carpeta de la app | `~/.local/opt/hve/` | El binario y todos sus assets |
+| Enlace del binario | `~/.local/bin/hve` | — |
+| Assets de instalaciones anteriores | `~/.local/bin/assets/` | Solo si quedan de una versión vieja |
 | Acceso directo | `~/.local/share/applications/hve.desktop` | — |
 | Iconos del lanzador | `~/.local/share/icons/hicolor/*/apps/hve.png` | Todos los tamaños |
 | Bloque de HVE en Hyprland | `~/.config/hypr/hyprland.lua` | Solo el bloque entre marcadores; tus líneas no se tocan |
 | Entrada de autostart | `~/.cache/hve/hve-settings.lua` | Solo el bloque de autostart; tus teclas se quedan |
 | Mute del motor | `~/.config/skwd-wall-v2/config.json` | Devuelve `theme.policy` al valor anterior si HVE lo había puesto en `off` |
-| Autostart (legacy XDG) | `~/.config/autostart/hve.desktop` | Solo si existe de instalaciones anteriores |
 | Script IPC | `~/.local/bin/hve-ipc` | Si se instaló |
 | Symlink del sistema | `/usr/local/bin/hve-ipc` | Solo si existe; pide sudo únicamente si no es escribible por ti |
 
@@ -393,7 +399,7 @@ Cuando pierdes el foco de la ventana de HVE (detectado via `activewindow` de Hyp
 
 `hve_watchdog.sh` se ejecuta al inicio de Hyprland (vía `exec-once` / `hl.exec_cmd`). Su función:
 
-1. Verifica que el directorio de HVE existe (`~/.local/bin/assets/scripts/`)
+1. Verifica que el directorio de HVE existe (`~/.local/opt/hve/assets/scripts/`)
 2. Si **no existe** (desinstalación manual, borrado):
    - Elimina los marcadores `HVE START/END` de `hyprland.conf` y `hyprland.lua`
    - Borra `~/.cache/hve/` completo
@@ -489,7 +495,7 @@ hve/
 ├── assets/
 │   ├── hve_logo.svg        ← Icono vectorial
 │   ├── icons/hicolor/      ← Iconos del lanzador, 48/64/128/256 (regenerar: scripts/gen-icon.sh)
-│   ├── scripts/            ← 15 scripts bash (ver abajo)
+│   ├── scripts/            ← 16 archivos: 14 scripts bash + 2 utilidades Python (ver abajo)
 │   ├── animations/         ← 19 presets (.lua)
 │   ├── borders/            ← 14 presets (.lua)
 │   ├── shaders/            ← 9 shaders GLSL (.frag)
@@ -585,12 +591,12 @@ hve/
 
 ### Fragmentos dinámicos (assets/fragments/)
 
-Esta carpeta se crea en **runtime** dentro de `~/.local/bin/assets/fragments/` (o donde estén los assets). Contiene los fragmentos activos actuales:
+Esta carpeta se crea en **runtime** dentro de `~/.local/opt/hve/assets/fragments/` (o donde estén los assets). Contiene los fragmentos activos actuales:
 
-- `animation.{lua,conf}` — animación activa
-- `border.{lua,conf}` — borde activo
-- `geometry.{lua,conf}` — tamaño de borde activo
-- `shader.{lua,conf}` — shader activo (wrapper)
+- `animation.lua` — animación activa
+- `border.lua` — borde activo
+- `geometry.lua` — tamaño de borde activo
+- `shader.lua` — shader activo (wrapper)
 
 Son **sobrescritos** cada vez que cambias un preset.
 

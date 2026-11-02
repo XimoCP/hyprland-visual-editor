@@ -51,7 +51,8 @@ if [ "$LANG_CODE" = "es" ]; then
     MSG_BUILD_DONE="Compilación completada"
     MSG_INSTALLING="Instalando HVE..."
     MSG_BINARY_TO="Binario → %s"
-    MSG_ASSETS_TO="Assets → ~/.local/bin/assets/"
+    MSG_ASSETS_TO="Assets → ~/.local/opt/hve/assets/"
+    MSG_LEGACY_ASSETS="Carpeta antigua ~/.local/bin/assets/ retirada (ahora todo vive en ~/.local/opt/hve/)"
     MSG_THEMES_TO="Temas de referencia → %s"
     MSG_THEME_KEPT="Tema existente conservado: %s"
     MSG_DESKTOP_TO="Acceso directo → %s (%s)"
@@ -102,7 +103,8 @@ else
     MSG_BUILD_DONE="Build complete"
     MSG_INSTALLING="Installing HVE..."
     MSG_BINARY_TO="Binary → %s"
-    MSG_ASSETS_TO="Assets → ~/.local/bin/assets/"
+    MSG_ASSETS_TO="Assets → ~/.local/opt/hve/assets/"
+    MSG_LEGACY_ASSETS="Legacy ~/.local/bin/assets/ removed (everything lives in ~/.local/opt/hve/ now)"
     MSG_THEMES_TO="Reference themes → %s"
     MSG_THEME_KEPT="kept existing theme: %s"
     MSG_DESKTOP_TO="Desktop entry → %s (%s)"
@@ -161,8 +163,20 @@ xdg_dir() {
 
 # ── Paths ──────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# One basket: the real binary and its assets live together in an app dir, and
+# `~/.local/bin` keeps a single entry — the `hve` symlink — so the executable
+# directory stays an executable directory and the generic `assets` name never
+# lands in a shared folder. The app resolves `assets/` next to its REAL
+# executable (`current_exe` follows the symlink), and every script derives its
+# paths from `BASH_SOURCE`, so both follow the move.
+HVE_APP_DIR="$HOME/.local/opt/hve"
+HVE_APP_BIN="$HVE_APP_DIR/hve"
+HVE_ASSETS="$HVE_APP_DIR/assets"
 HVE_BIN="$HOME/.local/bin/hve"
-HVE_SCRIPTS="$HOME/.local/bin/assets/scripts"
+# Layouts written by earlier versions: a regular binary plus `assets/` loose in
+# `~/.local/bin`. Migrated below, never left behind.
+HVE_LEGACY_ASSETS="$HOME/.local/bin/assets"
+HVE_SCRIPTS="$HVE_ASSETS/scripts"
 HVE_DESKTOP="$HOME/.local/share/applications/hve.desktop"
 # `Icon=hve` in the desktop entry is a bare name resolved through the icon
 # theme, which keeps the entry portable. This is where that name resolves.
@@ -378,21 +392,37 @@ ok "$MSG_BUILD_DONE"
 echo ""
 info "$MSG_INSTALLING"
 
-# Binary
-mkdir -p "$HOME/.local/bin"
-cp "$SCRIPT_DIR/target/release/hve" "$HVE_BIN"
-chmod +x "$HVE_BIN"
+# App dir: the real binary and its assets together, so one folder holds
+# everything HVE installs.
+mkdir -p "$HVE_APP_DIR" "$HOME/.local/bin"
+cp "$SCRIPT_DIR/target/release/hve" "$HVE_APP_BIN"
+chmod +x "$HVE_APP_BIN"
+
+# `~/.local/bin` keeps exactly one entry: a symlink to that binary. `rm -f`
+# first, so a legacy regular binary (or a stale symlink) is replaced instead of
+# making `ln -s` nest a link inside it.
+rm -f "$HVE_BIN"
+ln -s "$HVE_APP_BIN" "$HVE_BIN"
 ok "$(msg_fmt "$MSG_BINARY_TO" "$HVE_BIN")"
 
-# Assets
+# Assets inside the app dir, replaced wholesale so a renamed or dropped asset
+# never survives an upgrade.
 if [ -d "$SCRIPT_DIR/assets" ]; then
-    mkdir -p "$HOME/.local/bin/assets"
+    rm -rf "$HVE_ASSETS"
+    mkdir -p "$HVE_ASSETS"
     for dir in scripts borders shaders fragments animations; do
         if [ -d "$SCRIPT_DIR/assets/$dir" ]; then
-            cp -r "$SCRIPT_DIR/assets/$dir" "$HOME/.local/bin/assets/"
+            cp -r "$SCRIPT_DIR/assets/$dir" "$HVE_ASSETS/"
         fi
     done
     ok "$MSG_ASSETS_TO"
+fi
+
+# Migration: earlier versions left `assets/` loose in ~/.local/bin. Two copies
+# would mean the wrong one could win, so the old folder goes now.
+if [ -d "$HVE_LEGACY_ASSETS" ]; then
+    rm -rf "$HVE_LEGACY_ASSETS"
+    ok "$MSG_LEGACY_ASSETS"
 fi
 
 # Reference themes (theme-packages T5): the keeper's themes ship under

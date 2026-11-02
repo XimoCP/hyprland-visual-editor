@@ -412,19 +412,39 @@ fn sentinel_autostart_line() -> String {
     format!("\n    hl.exec_cmd(\"python3 {}\")", script.display())
 }
 
-/// Where the sentinel script is expected: next to the installed assets, so it
-/// survives `cargo clean` and dev-tree moves exactly like the binary does.
-fn sentinel_script_path() -> PathBuf {
-    if let Some(installed) = installed_bin_path() {
-        if let Some(dir) = installed.parent() {
-            return dir.join("assets").join("scripts").join("hve-sentinel.py");
+/// Where the sentinel script may live, in resolution order: next to the REAL
+/// executable (the app-dir layout `~/.local/opt/hve/{hve,assets}` — the
+/// `~/.local/bin/hve` symlink is resolved for us), then the legacy
+/// `~/.local/bin/assets` layout, then the source tree used by dev builds.
+fn sentinel_candidates() -> Vec<PathBuf> {
+    const SCRIPT: &str = "hve-sentinel.py";
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
+        if let Some(dir) = exe.parent() {
+            roots.push(dir.to_path_buf());
         }
     }
-    // Dev fallback: the tracked asset next to the source tree.
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("assets")
-        .join("scripts")
-        .join("hve-sentinel.py")
+    if let Some(installed) = installed_bin_path() {
+        if let Some(dir) = installed.parent() {
+            roots.push(dir.to_path_buf());
+        }
+    }
+    roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+    roots
+        .into_iter()
+        .map(|dir| dir.join("assets").join("scripts").join(SCRIPT))
+        .collect()
+}
+
+fn sentinel_script_path() -> PathBuf {
+    let candidates = sentinel_candidates();
+    candidates
+        .iter()
+        .find(|path| path.exists())
+        .or_else(|| candidates.last())
+        .cloned()
+        .expect("the candidate chain always ends with the source tree")
 }
 
 /// Toggle HVE autostart in `hve-settings.lua`.
@@ -900,6 +920,30 @@ mod tests {
         assert!(
             !content.contains("exec-once ="),
             "must never emit conf syntax"
+        );
+    }
+
+    /// The sentinel chain must follow the layout: beside the REAL executable
+    /// (the app dir `~/.local/opt/hve/{hve,assets}`) first, the legacy
+    /// `~/.local/bin/assets` second, the source tree last. A chain that only
+    /// knew the legacy layout would silently drop the sentinel after the move.
+    #[test]
+    fn sentinel_candidates_prefer_the_app_dir_then_legacy_then_the_source_tree() {
+        let chain = sentinel_candidates();
+        let exe = std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
+        let exe_dir = exe.parent().unwrap();
+        assert_eq!(
+            chain.first().unwrap(),
+            &exe_dir.join("assets").join("scripts").join("hve-sentinel.py"),
+            "the real executable's directory must come first"
+        );
+        assert_eq!(
+            chain.last().unwrap(),
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("assets")
+                .join("scripts")
+                .join("hve-sentinel.py"),
+            "the source tree is the last resort"
         );
     }
 
