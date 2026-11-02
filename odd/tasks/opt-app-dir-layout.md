@@ -107,3 +107,20 @@ each deletion, then deleted:
 
 Measured: `~/.local/bin` went from 978 MB of HVE leftovers to none; total
 `~/.local/bin` is now 611 MB, all of it other tools.
+
+L10 (verification, cross-model, mimo-v2.6-flash): first round PASSED S1, S3, S4
+and the Rust side of S5, and found one BLOCKER created by `0e13bde`: the new
+Lua marker guard read `grep -qF "$MARKER_START_LUA"`, and because the marker
+starts with `--` grep parsed it as an option (exit 2), so `init.sh disable`
+never removed the block and a second `enable` stacked another one. Fixed in
+`15535cb` with `grep -qF --`, the same class of guard for the autostart block in
+the uninstaller, and the removal of the dead `hl.on(... HVE ...)` range. Two
+behavioural tests now RUN `init.sh` (disable clears the block and keeps the
+keeper's lines; enable twice keeps one block); both observed RED against
+`HEAD~1` and GREEN after. The recheck returned PASS on every item with no
+remaining blocker, and one advisory (the wiki's manual colour source still
+claimed a `.conf` scan) fixed in `ffbd47b`.
+
+Evidence that the layout assumption holds: the verifier compiled a throwaway
+program and confirmed `current_exe()` through a `~/.local/bin/hve` symlink
+resolves to `~/.local/opt/hve/hve`, with `assets/scripts` found beside it.
