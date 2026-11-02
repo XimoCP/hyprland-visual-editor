@@ -37,6 +37,13 @@ if [ "$LANG_CODE" = "es" ]; then
     MSG_SUDO_CLEAN="Limpiando symlink del sistema..."
     MSG_SUDO_DONE="Symlink del sistema eliminado"
     MSG_SUDO_SKIP="Symlink del sistema no encontrado"
+    MSG_HYPR_STEP="Quitando el bloque de HVE de la configuración de Hyprland"
+    MSG_HYPR_OK="Bloque de HVE quitado de %s"
+    MSG_HYPR_NONE="Sin bloque de HVE en la configuración de Hyprland — ignorado"
+    MSG_MUTE_STEP="Devolviendo el mando al motor de skwd-wall"
+    MSG_MUTE_OK="Motor de skwd-wall devuelto a '%s'"
+    MSG_MUTE_NONE="Sin mute pendiente del motor — ignorado"
+    MSG_MUTE_WARN="No se pudo devolver el mando del motor; ajusta 'theme.policy' a mano en %s"
     MSG_SUMMARY="Resumen de desinstalación"
     MSG_ITEMS_REMOVED="Elementos eliminados"
     MSG_NOT_REMOVED="No se encontraron"
@@ -58,6 +65,13 @@ else
     MSG_SUDO_CLEAN="Cleaning system symlink..."
     MSG_SUDO_DONE="System symlink removed"
     MSG_SUDO_SKIP="System symlink not found"
+    MSG_HYPR_STEP="Removing HVE's block from the Hyprland configuration"
+    MSG_HYPR_OK="HVE block removed from %s"
+    MSG_HYPR_NONE="No HVE block in the Hyprland configuration — skipped"
+    MSG_MUTE_STEP="Handing the engine back to skwd-wall"
+    MSG_MUTE_OK="skwd-wall engine handed back to '%s'"
+    MSG_MUTE_NONE="No pending engine mute — skipped"
+    MSG_MUTE_WARN="Could not hand the engine back; set 'theme.policy' by hand in %s"
     MSG_SUMMARY="Uninstall summary"
     MSG_ITEMS_REMOVED="Items removed"
     MSG_NOT_REMOVED="Not found"
@@ -110,13 +124,20 @@ HVE_DESKTOP="$HOME/.local/share/applications/hve.desktop"
 HVE_ICON_DIR="$HOME/.local/share/icons/hicolor"
 HVE_IPC="$HOME/.local/bin/hve-ipc"
 # HVE_FIRST_TOGGLE removed — priming is now internal via winit/xdg-shell
-HVE_IPC_SYMLINK="/usr/local/bin/hve-ipc"
+# `/usr/local/bin` normally needs root, so removal falls back to sudo. The path
+# is overridable so the uninstaller test can plant a throwaway symlink instead
+# of touching the machine's own.
+HVE_IPC_SYMLINK="${HVE_IPC_SYMLINK_PATH:-/usr/local/bin/hve-ipc}"
 # Mirror the app's `dirs::cache_dir()` / `dirs::config_dir()` resolution
 # (src/config.rs): honour XDG_*_HOME only when it is an absolute path, else
 # fall back to $HOME/.cache|.config. A relative XDG value is ignored exactly
 # as `dirs` ignores it, so we never act on a stray directory.
 HVE_CACHE="$(xdg_dir "${XDG_CACHE_HOME:-}" "$HOME/.cache")/hve"
 HVE_CONFIG="$(xdg_dir "${XDG_CONFIG_HOME:-}" "$HOME/.config")/hve"
+# Hyprland's own config dir, resolved the same way (it follows XDG too).
+HVE_LOCAL_CONFIG="$(xdg_dir "${XDG_CONFIG_HOME:-}" "$HOME/.config")"
+HVE_HYPR_LUA="$HVE_LOCAL_CONFIG/hypr/hyprland.lua"
+HVE_HYPR_CONF="$HVE_LOCAL_CONFIG/hypr/hyprland.conf"
 
 REMOVED=()
 NOT_FOUND=()
@@ -166,6 +187,104 @@ remove_autostart_block() {
     REMOVED+=("$label")
 }
 
+# Remove HVE's injected block from the Hyprland configuration. The uninstaller
+# used to leave this to the watchdog, but the watchdog lives in the cache — and
+# the cache is deleted right here when the keeper accepts it. The block then
+# survived with two `dofile`s pointing at files that no longer exist, and
+# Hyprland failed on the next start. Only the delimited block is removed, so the
+# keeper's own lines around it are never touched.
+remove_hyprland_block() {
+    local file removed=0
+    info "$MSG_HYPR_STEP"
+    for file in "$HVE_HYPR_LUA" "$HVE_HYPR_CONF"; do
+        [ -f "$file" ] || continue
+        grep -qF '>>> HYPRLAND VISUAL EDITOR START <<<' "$file" || continue
+        sed -i '/>>> HYPRLAND VISUAL EDITOR START <<</,/>>> HYPRLAND VISUAL EDITOR END <<</d' "$file"
+        ok "$(msg_fmt "$MSG_HYPR_OK" "$file")"
+        removed=1
+    done
+    if [ "$removed" -eq 1 ]; then
+        REMOVED+=("$MSG_HYPR_STEP")
+    else
+        warn "$MSG_HYPR_NONE"
+        NOT_FOUND+=("$MSG_HYPR_STEP")
+    fi
+}
+
+# Hand the skwd-wall engine back before it is forgotten. Applying a theme mutes
+# the engine (`theme.policy` -> "off") and the app restores it on its next
+# start — a start that never happens once HVE is gone, which would leave the
+# keeper's wallpaper engine muted forever. The pending value lives in the yield
+# marker. Only HVE's own mute is undone: if the keeper changed the policy by
+# hand, or the file holds more than one bare `policy` key, nothing is written.
+release_engine_mute() {
+    local marker="$HVE_CACHE/skwd-policy-yield.json"
+    local restored="" status=0
+    info "$MSG_MUTE_STEP"
+    if [ ! -f "$marker" ]; then
+        warn "$MSG_MUTE_NONE"
+        NOT_FOUND+=("$MSG_MUTE_STEP")
+        return
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        warn "$(msg_fmt "$MSG_MUTE_WARN" "$marker")"
+        NOT_FOUND+=("$MSG_MUTE_STEP")
+        return
+    fi
+    restored="$(python3 - "$marker" <<'PY'
+import json
+import re
+import sys
+
+marker = sys.argv[1]
+try:
+    with open(marker, encoding="utf-8") as fh:
+        record = json.load(fh)
+    config_path = record["config_path"]
+    previous = record["previous_value"]
+except Exception:
+    sys.exit(2)
+
+try:
+    with open(config_path, encoding="utf-8") as fh:
+        text = fh.read()
+except Exception:
+    sys.exit(3)
+
+# The bare `policy` key, never the dotted `theme.policy` entries: the pattern
+# anchors on the opening quote, which the dotted key does not have there.
+policy = re.compile(r'"policy"(\s*:\s*)"([^"]*)"')
+found = policy.findall(text)
+if len(found) != 1 or found[0][1] != "off":
+    # Not our mute, or an ambiguous file: leave it exactly as it is.
+    sys.exit(4)
+
+written = policy.sub(lambda m: '"policy"%s"%s"' % (m.group(1), previous), text, count=1)
+try:
+    with open(config_path, "w", encoding="utf-8") as fh:
+        fh.write(written)
+except Exception:
+    sys.exit(5)
+print(previous)
+PY
+)" || status=$?
+    case "${status:-0}" in
+        0)
+            ok "$(msg_fmt "$MSG_MUTE_OK" "$restored")"
+            rm -f "$marker"
+            REMOVED+=("$MSG_MUTE_STEP")
+            ;;
+        4)
+            info "$MSG_MUTE_NONE"
+            NOT_FOUND+=("$MSG_MUTE_STEP")
+            ;;
+        *)
+            warn "$(msg_fmt "$MSG_MUTE_WARN" "$marker")"
+            NOT_FOUND+=("$MSG_MUTE_STEP")
+            ;;
+    esac
+}
+
 # ============================================================================
 # MAIN
 # ============================================================================
@@ -210,6 +329,18 @@ fi
 # that block, even if the cache is kept below.
 remove_autostart_block
 
+# ── 4b. Hyprland block ─────────────────────────────────────────────────────
+# Must run before the cache prompt: with the cache kept, the watchdog would
+# clean the block at the next login, but with the cache deleted nothing else
+# ever removes it.
+echo ""
+remove_hyprland_block
+
+# ── 4c. skwd-wall engine mute ──────────────────────────────────────────────
+# The yield marker lives in the cache, so this runs before that prompt too.
+echo ""
+release_engine_mute
+
 # ── 5. IPC script ──────────────────────────────────────────────────────────
 remove_file "$HVE_IPC" "IPC script (~/.local/bin/hve-ipc)"
 
@@ -219,7 +350,9 @@ remove_file "$HVE_IPC" "IPC script (~/.local/bin/hve-ipc)"
 echo ""
 info "$MSG_SUDO_CLEAN"
 if [ -L "$HVE_IPC_SYMLINK" ] || [ -f "$HVE_IPC_SYMLINK" ]; then
-    if sudo rm -f "$HVE_IPC_SYMLINK" 2>/dev/null; then
+    # A user-writable destination (a sandbox, or a /usr/local owned by the
+    # user) needs no password; only a root-owned one falls back to sudo.
+    if rm -f "$HVE_IPC_SYMLINK" 2>/dev/null || sudo rm -f "$HVE_IPC_SYMLINK" 2>/dev/null; then
         ok "$MSG_SUDO_DONE"
         REMOVED+=("Symlink del sistema (/usr/local/bin/hve-ipc)")
     else

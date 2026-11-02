@@ -99,13 +99,11 @@ fi
 # --- MASTER MOVE - Atomic Replacement ---
 mv "$TEMP_FILE" "$FINAL_FILE"
 
-# ============================================
-# 🔗 UNIVERSAL SYMLINK FOR NOCTALIA MANIFESTO
-# ============================================
-UNIVERSAL_OVERLAY="$HVE_SAFE_DIR/overlay.current"
-
-rm -f "$UNIVERSAL_OVERLAY"
-ln -s "$FINAL_FILE" "$UNIVERSAL_OVERLAY"
+# The universal overlay symlink that used to be created here is gone. It
+# existed because Hyprland could be configured in Lua OR classic `.conf`, and
+# the Noctalia plugin needed one fixed name whose target changed with the
+# format. HVE is Lua-only now and `hyprland.lua` `dofile`s `overlay.lua`
+# directly, so nothing consumed the extra name.
 
 # --- APPLICATION ---
 # One reload per change-burst, never lost: hve_reload_queue coalesces via
@@ -114,4 +112,4 @@ if pgrep -x "Hyprland" > /dev/null; then
     hve_reload_queue
 fi
 
-echo "✅ [HVE SUCCESS] Overlay verified. Universal 'overlay.current' symlink updated."
+echo "✅ [HVE SUCCESS] Overlay verified."

@@ -19,8 +19,6 @@ source "$SCRIPT_DIR/colors.sh"
 HVE_HYPR_DIR="$HOME/.config/hypr"
 ASSEMBLE_SCRIPT="$HVE_SCRIPTS_DIR/assemble.sh"
 LOG_FILE="$HVE_SAFE_DIR/color_watcher.log"
-COLOR_SIGNAL="$HVE_SAFE_DIR/colors.json"
-GET_COLORS_SCRIPT="$HVE_SCRIPTS_DIR/get_colors.sh"
 
 _log() {
     echo "[HVE Watcher] $(date '+%H:%M:%S') $*" >> "$LOG_FILE"
@@ -118,13 +116,6 @@ while IFS= read -r file; do
         LAST_HASHES["$file"]=$(md5sum "$file" 2>/dev/null | cut -d' ' -f1)
     fi
 done <<< "$WATCH_FILES"
-
-# Helper: write current colors for HVE UI signal file
-_write_color_signal() {
-    if [ -f "$GET_COLORS_SCRIPT" ]; then
-        bash "$GET_COLORS_SCRIPT" 9>&- > "$COLOR_SIGNAL" 2>/dev/null
-    fi
-}
 
 # Notify the running HVE app to refresh its in-memory theme
 _notify_hve() {
@@ -228,9 +219,8 @@ _reassert_theme_authority force
 _log "Initial overlay refresh..."
 if bash "$ASSEMBLE_SCRIPT" 9>&- >> "$LOG_FILE" 2>&1; then
     _log "Initial overlay refresh OK"
-    _write_color_signal
     _notify_hve
-    _log "Color signal written"
+    _log "App notified"
 else
     _log "WARN: initial overlay refresh had issues (see log above)"
 fi
@@ -279,9 +269,8 @@ while true; do
         # Run assemble.sh — stderr goes to log so we can see if it fails
         if bash "$ASSEMBLE_SCRIPT" 9>&- >> "$LOG_FILE" 2>&1; then
             _log "Overlay regenerated OK"
-            _write_color_signal
             _notify_hve
-            _log "Color signal written, IPC sent"
+            _log "Overlay regenerated, IPC sent"
         else
             _log "ERROR: assemble.sh failed (see log above)"
         fi

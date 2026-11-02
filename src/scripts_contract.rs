@@ -2269,3 +2269,274 @@ fn watchdog_leaves_everything_when_hve_is_still_installed() {
         "an installed HVE must keep its cache"
     );
 }
+
+// ── uninstall.sh: removes everything it installed, nothing else ─────────
+
+/// Build a sandbox shaped like a real install: every path the installer writes,
+/// the HVE block in `hyprland.lua`, the autostart block in `hve-settings.lua`,
+/// a pending skwd-wall mute, and — deliberately — files that belong to the
+/// keeper (their own theme, a video, a note, another app's entry and icon).
+fn uninstall_sandbox() -> tempfile::TempDir {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+
+    let write = |rel: &str, body: &str| {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, body).unwrap();
+    };
+
+    // What the installer leaves behind.
+    write(".local/bin/hve", "#!/bin/bash\nexit 0\n");
+    write(".local/bin/hve-ipc", "#!/usr/bin/env python3\n");
+    write(".local/bin/assets/scripts/assemble.sh", "#!/bin/bash\n");
+    write(".local/share/applications/hve.desktop", "[Desktop Entry]\nName=HVE\n");
+    write(".local/share/icons/hicolor/48x48/apps/hve.png", "48");
+    write(".local/share/icons/hicolor/128x128/apps/hve.png", "128");
+    // A pre-existing copy of an OLD format install (no producer at HEAD).
+    write(".cache/hve/hve-settings.conf", "# >>> HVE WINDOW RULES <<<\n");
+
+    // Hyprland: the keeper's own lines around HVE's injected block.
+    write(
+        ".config/hypr/hyprland.lua",
+        "require(\"configs/keybinds\")\n\
+         -- >>> HYPRLAND VISUAL EDITOR START <<<\n\
+         dofile(\"/nonexistent/overlay.lua\")\n\
+         dofile(\"/nonexistent/hve-settings.lua\")\n\
+         -- >>> HYPRLAND VISUAL EDITOR END <<<\n\
+         hl.env(\"XCURSOR_SIZE\", \"24\")\n",
+    );
+
+    // hve-settings.lua: an autostart block plus the keeper's own keybinds.
+    write(
+        ".cache/hve/hve-settings.lua",
+        "-- >>> HVE KEYBINDS <<<\n\
+         hl.bind(\"SUPER + H\", hl.dsp.window.close())\n\
+         -- >>> HVE KEYBINDS END <<<\n\
+         -- >>> HVE AUTOSTART <<<\n\
+         hl.on(\"hyprland.start\", function() hl.exec_cmd(\"/nonexistent/hve --tray\") end)\n\
+         -- >>> HVE AUTOSTART END <<<\n",
+    );
+    write(".cache/hve/hve.log", "log\n");
+
+    // A pending engine mute: HVE set `theme.policy` to "off" and recorded the
+    // value to put back. The dotted `"theme.policy"` workspace keys must be
+    // left alone.
+    write(
+        ".config/skwd-wall-v2/config.json",
+        "{\n  \"theme\": {\n    \"policy\": \"off\",\n    \"mode\": \"dark\"\n  },\n  \
+         \"workspaces\": [\n    { \"theme.policy\": \"wallpaper\" }\n  ]\n}\n",
+    );
+    write(
+        ".cache/hve/skwd-policy-yield.json",
+        &format!(
+            "{{\"previous_value\":\"wallpaper\",\"config_path\":\"{}\"}}",
+            root.join(".config/skwd-wall-v2/config.json").display()
+        ),
+    );
+
+    // The keeper's own state and files.
+    write(".config/hve/config.json", "{\"config_version\":8}\n");
+    write(".config/hve/themes/Mine/palette.json", "{\"name\":\"Mine\"}\n");
+    write(".local/share/applications/other.desktop", "[Desktop Entry]\nName=Other\n");
+    write(".local/share/icons/hicolor/48x48/apps/other.png", "other");
+    write("Videos/clip.mp4", "a video the keeper downloaded");
+    write("Documents/notes.txt", "the keeper's notes");
+
+    // The system symlink, redirected into the sandbox so the real
+    // /usr/local/bin is never involved.
+    let symlink = root.join("usr-local-bin/hve-ipc");
+    std::fs::create_dir_all(symlink.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(root.join(".local/bin/hve-ipc"), &symlink).unwrap();
+
+    home
+}
+
+/// Run the real `uninstall.sh` in the sandbox. `answers` is fed to its prompts
+/// in order ("y"/"n" each), so a run can choose to keep or delete cache and
+/// configuration exactly as the keeper would.
+fn run_uninstaller(home: &Path, answers: &str) -> Output {
+    use std::io::Write as _;
+    let mut command = std::process::Command::new("bash");
+    command
+        .arg(repo_root().join("uninstall.sh"))
+        .env("HOME", home)
+        .env(
+            "HVE_IPC_SYMLINK_PATH",
+            home.join("usr-local-bin").join("hve-ipc"),
+        )
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .current_dir(home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    sandbox_xdg_roots(&[("HOME", home.to_str().unwrap())], &mut command);
+
+    let mut child = command.spawn().expect("bash must be available");
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(answers.as_bytes())
+        .unwrap();
+    child.wait_with_output().expect("uninstall.sh must run")
+}
+
+/// Every path the installer creates must be gone, HVE's injected block with it,
+/// the pending engine mute released — and nothing of the keeper's touched.
+#[test]
+fn uninstaller_removes_everything_it_installed_and_nothing_else() {
+    let home = uninstall_sandbox();
+    let root = home.path();
+    let out = run_uninstaller(root, "nn");
+    assert!(
+        out.status.success(),
+        "uninstall.sh must exit 0: {}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    for gone in [
+        ".local/bin/hve",
+        ".local/bin/hve-ipc",
+        ".local/bin/assets",
+        ".local/share/applications/hve.desktop",
+        ".local/share/icons/hicolor/48x48/apps/hve.png",
+        ".local/share/icons/hicolor/128x128/apps/hve.png",
+        "usr-local-bin/hve-ipc",
+    ] {
+        assert!(!root.join(gone).exists(), "must be removed: {gone}");
+    }
+
+    // The block goes, the keeper's own lines stay.
+    let lua = std::fs::read_to_string(root.join(".config/hypr/hyprland.lua")).unwrap();
+    assert!(
+        !lua.contains("HYPRLAND VISUAL EDITOR"),
+        "HVE's Hyprland block must be removed even when the cache is kept:\n{lua}"
+    );
+    assert!(
+        lua.contains("require(\"configs/keybinds\")") && lua.contains("XCURSOR_SIZE"),
+        "the keeper's own Hyprland lines must survive:\n{lua}"
+    );
+
+    // Autostart block gone, keybinds kept.
+    let settings = std::fs::read_to_string(root.join(".cache/hve/hve-settings.lua")).unwrap();
+    assert!(
+        !settings.contains("HVE AUTOSTART") && !settings.contains("hve --tray"),
+        "the autostart entry must never survive the binary it launches:\n{settings}"
+    );
+    assert!(
+        settings.contains("SUPER + H"),
+        "the keeper's keybinds must survive:\n{settings}"
+    );
+
+    // The engine is handed back to the value it had before HVE muted it.
+    let skwd = std::fs::read_to_string(root.join(".config/skwd-wall-v2/config.json")).unwrap();
+    assert!(
+        skwd.contains("\"policy\": \"wallpaper\""),
+        "the pending engine mute must be released:\n{skwd}"
+    );
+    assert!(
+        skwd.contains("\"theme.policy\": \"wallpaper\""),
+        "dotted workspace keys must never be rewritten:\n{skwd}"
+    );
+    assert!(
+        !root.join(".cache/hve/skwd-policy-yield.json").exists(),
+        "the yield marker must not outlive the mute it describes"
+    );
+
+    // Answers "nn": cache and configuration are KEPT, with the keeper's data.
+    for kept in [
+        ".cache/hve",
+        ".cache/hve/hve-settings.lua",
+        ".config/hve/config.json",
+        ".config/hve/themes/Mine/palette.json",
+    ] {
+        assert!(root.join(kept).exists(), "must be kept (answered no): {kept}");
+    }
+
+    // Never touched: files that belong to the keeper or to another app.
+    for untouched in [
+        ".local/share/applications/other.desktop",
+        ".local/share/icons/hicolor/48x48/apps/other.png",
+        "Videos/clip.mp4",
+        "Documents/notes.txt",
+    ] {
+        assert!(root.join(untouched).exists(), "must never be removed: {untouched}");
+    }
+}
+
+/// Accepting both prompts deletes the cache and the configuration, and still
+/// removes neither the keeper's media nor another application's files.
+#[test]
+fn uninstaller_deletes_cache_and_config_only_when_asked() {
+    let home = uninstall_sandbox();
+    let root = home.path();
+    let out = run_uninstaller(root, "yy");
+    assert!(
+        out.status.success(),
+        "uninstall.sh must exit 0: {}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    for gone in [".cache/hve", ".config/hve"] {
+        assert!(!root.join(gone).exists(), "must be removed (answered yes): {gone}");
+    }
+    for untouched in ["Videos/clip.mp4", "Documents/notes.txt", ".config/hypr/hyprland.lua"] {
+        assert!(root.join(untouched).exists(), "must survive: {untouched}");
+    }
+    let lua = std::fs::read_to_string(root.join(".config/hypr/hyprland.lua")).unwrap();
+    assert!(
+        !lua.contains("HYPRLAND VISUAL EDITOR"),
+        "the Hyprland block must go even when the cache (and its watchdog) is deleted:\n{lua}"
+    );
+}
+
+/// Two cache artifacts had a live producer and no consumer: `overlay.current`
+/// (a symlink for a Noctalia plugin generation that no longer exists) and
+/// `colors.json` (the last Rust reader went with the v4 backend). They were
+/// retired; this keeps them from coming back by accident.
+#[test]
+fn scripts_do_not_resurrect_retired_cache_artifacts() {
+    let assemble = std::fs::read_to_string(scripts_dir().join("assemble.sh")).unwrap();
+    assert!(
+        !assemble.contains("overlay.current"),
+        "assemble.sh must not recreate the consumerless overlay.current symlink"
+    );
+    let watcher = std::fs::read_to_string(scripts_dir().join("color_watcher.sh")).unwrap();
+    assert!(
+        !watcher.contains("COLOR_SIGNAL") && !watcher.contains("colors.json"),
+        "the color watcher must not write the consumerless colors.json signal"
+    );
+}
+
+/// The mute is released only when it is provably HVE's: one bare `policy` key
+/// and its value still `off`. A file with two candidate keys, or a policy the
+/// keeper changed by hand, must come out byte-identical.
+#[test]
+fn uninstaller_never_rewrites_a_policy_it_did_not_set() {
+    for (case, body) in [
+        // Two bare `policy` keys: cannot tell which one HVE flipped.
+        (
+            "ambiguous",
+            "{\n  \"theme\": { \"policy\": \"off\" },\n  \"extra\": { \"policy\": \"off\" }\n}\n",
+        ),
+        // The keeper already changed it: not ours any more.
+        (
+            "keeper_changed",
+            "{\n  \"theme\": { \"policy\": \"wallpaper\" }\n}\n",
+        ),
+    ] {
+        let home = uninstall_sandbox();
+        let root = home.path();
+        let config = root.join(".config/skwd-wall-v2/config.json");
+        std::fs::write(&config, body).unwrap();
+
+        let out = run_uninstaller(root, "nn");
+        assert!(out.status.success(), "uninstall.sh must exit 0 ({case}): {out:?}");
+
+        let after = std::fs::read_to_string(&config).unwrap();
+        assert_eq!(after, body, "an unproven mute must be left byte-identical ({case})");
+    }
+}
