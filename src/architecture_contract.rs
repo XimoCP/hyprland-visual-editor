@@ -82,6 +82,11 @@ const SCANNED_FILES: &[&str] = &[
     "src/providers/background.rs",
     "src/providers/bg_info.rs",
     "src/providers/hve_presets.rs",
+    // 2026-11-07: the optional OpenRGB provider joins the scan. It is a
+    // provider module, so integrating is its job — but nothing about it may
+    // reach another backend, and the measured pins below hold every
+    // cross-backend token at 0.
+    "src/providers/openrgb.rs",
     // T5 (2026-10-06): the maintenance packaging module. It joins so its
     // cross-backend tokens cannot hide. It LEGITIMATELY names `noctalia` —
     // its whole job is to re-package the records that provider writes, the

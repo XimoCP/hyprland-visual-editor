@@ -330,6 +330,16 @@ HVE integra fondos de pantalla animados (video) para temas de **Noctalia v5** a 
 - **Aplicar/limpiar**: como el plugin solo lee `assignments.json` al arrancar, HVE escribe el archivo y "rebota" el plugin (`noctalia msg plugins disable/enable noctalia/mpvpaper`). Los temas **sin** manifiesto envían `clear-all` primero, de modo que un video previo no pueda secuestrar la pantalla.
 - **Disponibilidad**: es una capacidad del provider activo (Noctalia v5). Los presets de HVE no usan video.
 
+### Iluminación RGB (OpenRGB, opcional)
+
+HVE puede guardar la iluminación de los ventiladores y tiras junto con cada tema, a través de un provider **opcional** llamado `openrgb`.
+
+- **Detección**: se registra solo si el binario `openrgb` responde a `--version` **y** su servidor SDK acepta una conexión en el puerto que el propio OpenRGB declara (`Server.default_port` en `~/.config/OpenRGB/OpenRGB.json`, 6742 si falta). En una máquina sin OpenRGB el provider no existe: ningún tema lo menciona, no aparece ninguna opción nueva y el resto de la aplicación se comporta igual.
+- **Al guardar**: se captura el estado vivo con `openrgb --save-profile hve-capture` y esos bytes se mueven a `{theme_dir}/providers/openrgb/profile.json`. Volver a guardar el tema re-captura el estado del momento. El perfil temporal se borra siempre, para no dejar restos en tu lista de perfiles.
+- **Al aplicar**: `openrgb --profile <ruta absoluta>`, nunca por nombre: el tema lleva sus propios bytes y no puede chocar con un perfil tuyo que se llame igual. Un tema guardado sin iluminación aplica exactamente como antes.
+- **Nunca cuesta el tema**: cualquier fallo con OpenRGB (servidor caído, error de salida, perfil ilegible) se anota en el log y el guardado/aplicación del tema continúa. Cada invocación tiene un límite de 5 s y se termina al vencer, para que un servidor colgado no congele la interfaz.
+- **Panel de información**: muestra la cantidad de dispositivos capturados y hasta seis colores del perfil como muestras.
+
 ### IPC (Comunicación entre procesos)
 
 HVE expone un **servidor Unix socket** en `$XDG_RUNTIME_DIR/hve.sock`, usado solo mientras ese directorio sea un directorio real de este usuario con modo `0700`; en cualquier otro caso la ruta es `$HOME/.local/share/hve/run/hve.sock`. Nunca `/tmp`: es escribible por cualquiera.
@@ -491,6 +501,7 @@ hve/
 │       ├── noctalia.rs     ← Provider Noctalia v5 (colores, wallpapers, plantillas)
 │       ├── shell.rs        ← Detección de shell activo + rutas por versión
 │       ├── mpvpaper.rs     ← Fondos animados (video) para temas Noctalia v5
+│       ├── openrgb.rs      ← Iluminación RGB por tema (opcional, auto-detectada)
 │       └── hve_presets.rs  ← Provider de presets HVE (anim/border/shader/geometría)
 ├── assets/
 │   ├── hve_logo.svg        ← Icono vectorial
@@ -545,6 +556,7 @@ hve/
 | `providers/shell.rs` | 574 | Detección de shell activo y rutas por versión (`ShellProvider`, `ShellDetector`) |
 | `providers/mpvpaper.rs` | 758 | Fondos animados (video) para temas Noctalia v5 |
 | `providers/hve_presets.rs` | 149 | Provider de presets HVE (animación, borde, shader, geometría) |
+| `providers/openrgb.rs` | 809 | Provider OpenRGB opcional: iluminación RGB por tema (captura y aplicación) |
 
 ### Scripts (assets/scripts/)
 

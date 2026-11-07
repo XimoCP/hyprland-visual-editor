@@ -6,6 +6,7 @@ pub mod mpvpaper;
 pub mod noctalia;
 pub mod noctalia_paths;
 pub mod noctalia_runtime;
+pub mod openrgb;
 pub mod shell_capabilities;
 pub mod skwd_engine;
 pub mod skwd_policy;
@@ -167,6 +168,35 @@ pub fn register_default_providers(tm: &mut ThemeManager, engine: &Engine) {
             engine.clone(),
         )));
     }
+
+    // OpenRGB is OPTIONAL: it exists on this machine only when the binary and
+    // its SDK server answer, and nowhere else does it exist at all. `cfg!(test)`
+    // keeps the live probe (a process spawn plus a TCP connection) out of the
+    // test suite, where registration is asserted against an exact id list and
+    // must not depend on what happens to run on the box — the same rule that
+    // makes every external command a stub in tests elsewhere. The POLICY is
+    // pure and tested directly ([`registers_openrgb`]).
+    let openrgb_detected = !cfg!(test) && openrgb::detected();
+    if registers_openrgb(openrgb_detected, &disabled) {
+        tm.register_provider(Box::new(openrgb::OpenRgbProvider::new()));
+        tracing::info!("[providers] registered provider 'openrgb'");
+    } else if disabled.iter().any(|d| d == openrgb::PROVIDER_ID) {
+        tracing::info!(
+            "[providers] provider 'openrgb' disabled in config — skipping registration"
+        );
+    } else {
+        tracing::info!(
+            "[providers] OpenRGB not available (binary or SDK server missing) — \
+             'openrgb' not registered"
+        );
+    }
+}
+
+/// The registration POLICY for the optional OpenRGB provider: register when
+/// the machine can drive it and the keeper has not turned it off. Pure over
+/// its inputs so the decision is testable without spawning anything.
+fn registers_openrgb(detected: bool, disabled: &[String]) -> bool {
+    detected && !disabled.iter().any(|d| d == openrgb::PROVIDER_ID)
 }
 
 /// The capability adapter for the shell that is running. Today the only
@@ -329,6 +359,20 @@ mod tests {
         let engine = Engine::new(Path::new("/nonexistent-hve-project"));
         register_default_providers(&mut tm, &engine);
         tm.provider_ids()
+    }
+
+    /// The optional OpenRGB provider registers on exactly one condition pair:
+    /// the machine can drive it, and the keeper has not disabled it. Either
+    /// half alone registers nothing.
+    #[test]
+    fn openrgb_registers_only_when_detected_and_not_disabled() {
+        assert!(registers_openrgb(true, &[]));
+        assert!(!registers_openrgb(false, &[]));
+        assert!(!registers_openrgb(true, &["openrgb".to_string()]));
+        assert!(
+            registers_openrgb(true, &["hve-presets".to_string()]),
+            "disabling another provider must not touch this one"
+        );
     }
 
     /// `disabled_providers` must gate registration at the seam: with the
