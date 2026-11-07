@@ -21,6 +21,24 @@ Each folder is a self-contained theme package:
 Because the background travels inside the folder, copying a theme to another
 machine moves the whole look with it — no external file needed.
 
+## This set is FROZEN (keeper's instruction, 2026-11-08)
+
+**Do not repackage these themes, and do not regenerate them from the keeper's
+own `~/.config/hve/themes/`.** Code changes ship; the theme packages already
+here do not change.
+
+The reason is concrete: since the OpenRGB provider landed, a theme saved on a
+machine that drives OpenRGB records the `openrgb` provider in its `meta.json`
+and carries `providers/openrgb/profile.json`. The gallery only lists a theme
+whose recorded providers are ALL registered, so a sample generated from the
+keeper's folder would disappear for every user who does not run OpenRGB.
+
+If a NEW sample is ever added on purpose, it must be stripped first: remove
+`providers/openrgb/` and the `openrgb` entry from `meta.json`. The guard test
+`providers::openrgb::tests::the_shipped_themes_carry_no_lighting` fails when
+this folder holds a lighting record, so an accidental repackage is caught
+before it is pushed.
+
 **A package carries no path from the machine that saved it.** Every value that
 names a file or a folder outside the theme is dropped when the theme is saved
 and when it is packaged (`hve --package-themes`), so the machine that applies it

@@ -773,6 +773,67 @@ mod tests {
         assert!(argv.contains(PROFILE_FILE));
     }
 
+    /// The shipped reference set is FROZEN: a sample must never carry a
+    /// lighting record. The gallery hides a theme whose recorded providers are
+    /// not all registered, so a sample repackaged from the keeper's folder
+    /// would vanish for every user who does not run OpenRGB.
+    #[test]
+    fn the_shipped_themes_carry_no_lighting() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets")
+            .join("themes");
+        let offenders = lighting_records_under(&root);
+        assert!(
+            offenders.is_empty(),
+            "the shipped themes must stay without a lighting record (see \
+             assets/themes/README.md); offenders: {offenders:?}"
+        );
+    }
+
+    /// The guard above must actually bite: a fixture that DOES hold the record
+    /// is reported, so a silent pass cannot come from a scanner that reads
+    /// nothing.
+    #[test]
+    fn the_shipped_theme_guard_detects_a_lighting_record() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let clean = tmp.path().join("Clean");
+        fs::create_dir_all(clean.join("providers").join("hve-presets")).expect("clean theme");
+        fs::write(
+            clean.join("meta.json"),
+            r#"{"providers":["noctalia-v5","hve-presets"]}"#,
+        )
+        .expect("clean meta");
+
+        let dirty = tmp.path().join("Dirty");
+        fs::create_dir_all(dirty.join("providers").join(PROVIDER_ID)).expect("dirty theme");
+        fs::write(
+            dirty.join("meta.json"),
+            format!(r#"{{"providers":["noctalia-v5","{PROVIDER_ID}"]}}"#),
+        )
+        .expect("dirty meta");
+
+        assert_eq!(lighting_records_under(tmp.path()), vec!["Dirty".to_string()]);
+    }
+
+    /// Theme folders under `root` that carry a lighting record, by name.
+    fn lighting_records_under(root: &Path) -> Vec<String> {
+        let Ok(entries) = fs::read_dir(root) else {
+            return Vec::new();
+        };
+        let mut offenders: Vec<String> = entries
+            .flatten()
+            .filter(|entry| entry.path().is_dir())
+            .filter(|entry| {
+                let dir = entry.path();
+                let meta = fs::read_to_string(dir.join("meta.json")).unwrap_or_default();
+                meta.contains(PROVIDER_ID) || dir.join("providers").join(PROVIDER_ID).exists()
+            })
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect();
+        offenders.sort();
+        offenders
+    }
+
     /// Manual, machine-only check — NEVER part of the suite (`--ignored`).
     /// It drives the real running OpenRGB instance: capture the live lighting
     /// into a temporary theme and load it straight back. Both directions are

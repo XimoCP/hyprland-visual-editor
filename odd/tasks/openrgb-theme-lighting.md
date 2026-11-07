@@ -71,6 +71,13 @@ uses for `noctalia`.
   no??" — answered: publishing removes rebase friction; what makes it invisible is auto-detection
   (it only registers where OpenRGB answers), not secrecy.
 - **L3 (2026-11-07)**: approval to build it with auto-registration only when OpenRGB responds.
+- **L4 (2026-11-08, verbatim)**: "deja marcado que los temas actuales no se reempaqueten... que
+  solo se guarde o publiquen los cambios de código, pero no se alteren los temas ya empaquetado y
+  luego haces commit y push". Honoured as a FREEZE of `assets/themes/`: the policy is stated in
+  `assets/themes/README.md` and enforced by
+  `providers::openrgb::tests::the_shipped_themes_carry_no_lighting` (plus a fixture test proving
+  the guard bites). No shipped theme was modified.
+
 
 ### Measured evidence (2026-11-07, this machine)
 
