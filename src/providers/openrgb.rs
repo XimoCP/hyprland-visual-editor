@@ -186,6 +186,7 @@ impl OpenRgbProvider {
     /// The provider with injected endpoints. Tests use it to reach a stub
     /// binary and a temporary profiles directory, so no test touches the
     /// keeper's real lighting.
+    #[cfg(test)]
     pub(crate) fn with_paths(bin: &str, profiles_dir: PathBuf, deadline: Duration) -> Self {
         Self {
             bin: bin.to_string(),
