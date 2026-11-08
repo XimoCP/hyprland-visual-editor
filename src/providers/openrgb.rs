@@ -40,6 +40,11 @@ pub const DEFAULT_SERVER_PORT: u16 = 6742;
 /// instance's profile list per save.
 const CAPTURE_PROFILE: &str = "hve-capture";
 
+/// The fixed profile name an apply stages the theme's bytes under. OpenRGB
+/// resolves a profile NAME, and an absolute path is a silent no-op (measured
+/// 2026-11-08), so the bytes are staged here and loaded by this name.
+const APPLY_PROFILE: &str = "hve-theme";
+
 /// How long one `openrgb` invocation may run before it is killed.
 const COMMAND_DEADLINE: Duration = Duration::from_secs(5);
 
@@ -254,6 +259,37 @@ impl OpenRgbProvider {
         }
         Ok(())
     }
+
+    /// Copy the theme's record into `staged` and load it by its fixed name.
+    /// Never returns `Err`: every failure is logged and the theme proceeds.
+    fn stage_and_load(&self, profile: &Path, staged: &Path) -> Result<(), String> {
+        let raw = match crate::theme_media::read_theme_record(profile) {
+            Ok(raw) => raw,
+            Err(e) => {
+                tracing::warn!("[themes] openrgb: lighting apply skipped — {e}");
+                return Ok(());
+            }
+        };
+        if let Err(e) = fs::write(staged, raw.as_bytes()) {
+            tracing::warn!("[themes] openrgb: lighting apply skipped — cannot stage profile: {e}");
+            return Ok(());
+        }
+
+        match self.run(&["--profile", APPLY_PROFILE]) {
+            Some(status) if status.success() => {
+                tracing::info!("[themes] openrgb: lighting applied from the theme");
+            }
+            Some(status) => tracing::warn!(
+                "[themes] openrgb: lighting apply exited with {:?}",
+                status.code()
+            ),
+            None => tracing::warn!(
+                "[themes] openrgb: lighting apply skipped — no answer within {}s",
+                self.deadline.as_secs_f32()
+            ),
+        }
+        Ok(())
+    }
 }
 
 impl Default for OpenRgbProvider {
@@ -306,34 +342,30 @@ impl ThemeProvider for OpenRgbProvider {
 
     /// Load the theme's own profile into the running instance.
     ///
-    /// Absolute path, never a profile name: the theme carries its bytes, so a
-    /// keeper profile with the same name can never be overwritten or confused.
-    /// A theme without a record applies exactly as before (S4).
+    /// By NAME, after staging the theme's bytes into OpenRGB's own profiles
+    /// directory: `openrgb --profile <absolute path>` prints "loaded
+    /// successfully" and changes NOTHING (measured 2026-11-08), while a name
+    /// is what the running instance actually resolves. The staging file uses a
+    /// fixed name and is removed after the attempt, so the keeper's own
+    /// profile list is never confused with HVE's scratch and no per-theme file
+    /// accumulates. A theme without a record applies exactly as before (S4).
     fn apply(&self, theme_dir: &Path) -> Result<(), String> {
         let profile = Self::provider_dir(theme_dir).join(PROFILE_FILE);
         if !profile.is_file() {
             tracing::debug!("[themes] openrgb: theme holds no lighting record; nothing to apply");
             return Ok(());
         }
-        let Some(path) = profile.to_str() else {
-            tracing::warn!("[themes] openrgb: profile path is not valid UTF-8; skipped");
+        let Some(profiles_dir) = self.profiles_dir.clone() else {
+            tracing::warn!(
+                "[themes] openrgb: lighting apply skipped — this session declares no config home"
+            );
             return Ok(());
         };
 
-        match self.run(&["--profile", path]) {
-            Some(status) if status.success() => {
-                tracing::info!("[themes] openrgb: lighting applied from the theme");
-            }
-            Some(status) => tracing::warn!(
-                "[themes] openrgb: lighting apply exited with {:?}",
-                status.code()
-            ),
-            None => tracing::warn!(
-                "[themes] openrgb: lighting apply skipped — no answer within {}s",
-                self.deadline.as_secs_f32()
-            ),
-        }
-        Ok(())
+        let staged = profiles_dir.join(format!("{APPLY_PROFILE}.json"));
+        let outcome = self.stage_and_load(&profile, &staged);
+        let _ = fs::remove_file(&staged);
+        outcome
     }
 
     /// What the info panel shows for a theme that captured lighting: how many
@@ -583,30 +615,49 @@ mod tests {
     // ── apply ────────────────────────────────────────────────────────
 
     #[test]
-    fn apply_loads_the_stored_profile_by_absolute_path() {
+    fn apply_stages_the_record_and_loads_it_by_name() {
         let tmp = tempfile::tempdir().expect("tempdir");
+        let profiles = tmp.path().join("profiles");
+        fs::create_dir_all(&profiles).expect("profiles");
         let log = tmp.path().join("argv.log");
+        let seen = tmp.path().join("staged.json");
+        // Records the arguments AND the bytes OpenRGB was asked to load, so the
+        // test proves the theme's own record reached the staged name.
         let bin = stub(
             tmp.path(),
-            &format!("printf '%s\\n' \"$@\" > {}", log.display()),
+            &format!(
+                "printf '%s\\n' \"$@\" > {}\ncp \"{}/{}.json\" {} 2>/dev/null\nexit 0",
+                log.display(),
+                profiles.display(),
+                APPLY_PROFILE,
+                seen.display()
+            ),
         );
         let theme = theme_dir(tmp.path());
         let provider_dir = theme.join("providers").join(PROVIDER_ID);
         fs::create_dir_all(&provider_dir).expect("provider dir");
         fs::write(provider_dir.join(PROFILE_FILE), PROFILE_ONE_DEVICE).expect("profile");
-        let p = OpenRgbProvider::with_paths(&bin, tmp.path().join("profiles"), COMMAND_DEADLINE);
+        let p = OpenRgbProvider::with_paths(&bin, profiles.clone(), COMMAND_DEADLINE);
 
         p.apply(&theme).expect("apply");
 
         let argv = fs::read_to_string(&log).expect("argv log");
         let mut lines = argv.lines();
         assert_eq!(lines.next(), Some("--profile"));
-        let arg = lines.next().expect("a profile path");
-        assert!(
-            Path::new(arg).is_absolute(),
-            "the profile must be loaded by absolute path, got {arg}"
+        assert_eq!(
+            lines.next(),
+            Some(APPLY_PROFILE),
+            "OpenRGB resolves a NAME; an absolute path is a silent no-op"
         );
-        assert_eq!(Path::new(arg), provider_dir.join(PROFILE_FILE));
+        assert_eq!(
+            fs::read_to_string(&seen).expect("staged bytes"),
+            PROFILE_ONE_DEVICE,
+            "the staged profile must be the theme's own record"
+        );
+        assert!(
+            !profiles.join(format!("{APPLY_PROFILE}.json")).exists(),
+            "the staging file must not survive the apply"
+        );
     }
 
     #[test]
@@ -771,7 +822,10 @@ mod tests {
 
         let argv = fs::read_to_string(&log).expect("apply reached openrgb");
         assert!(argv.contains("--profile"), "apply must load the profile: {argv}");
-        assert!(argv.contains(PROFILE_FILE));
+        assert!(
+            argv.contains(APPLY_PROFILE),
+            "apply must load by NAME, never by absolute path: {argv}"
+        );
     }
 
     /// The shipped reference set is FROZEN: a sample must never carry a
@@ -842,23 +896,28 @@ mod tests {
     /// proof only means anything on a machine that actually owns the devices:
     ///
     /// `cargo test -- --ignored live_openrgb_round_trip`
+    ///
+    /// The barrier that matters: applying a captured theme must CHANGE the
+    /// lighting. The earlier version of this test applied the state that was
+    /// already live, so a no-op passed as a success — and that is exactly how
+    /// `--profile <absolute path>` (a silent no-op in OpenRGB 1.1) went
+    /// unnoticed. This version changes the lights first, restores them through
+    /// the theme, and compares the result.
     #[test]
     #[ignore = "needs a running OpenRGB SDK server and real devices"]
     fn live_openrgb_round_trip() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let theme = theme_dir(tmp.path());
         let provider = OpenRgbProvider::new();
-
         assert!(detected(), "a running OpenRGB SDK server must be detected");
 
-        provider.save(&theme).expect("capture");
-        let provider_dir = theme.join("providers").join(PROVIDER_ID);
-        assert!(
-            provider_dir.join(PROFILE_FILE).is_file(),
-            "the theme must hold the captured profile"
-        );
+        // 1. Capture the keeper's current lighting.
+        let saved = theme_dir(tmp.path());
+        provider.save(&saved).expect("capture");
+        let saved_profile = saved.join("providers").join(PROVIDER_ID).join(PROFILE_FILE);
+        assert!(saved_profile.is_file(), "the theme must hold the captured profile");
+        let original = colours_of(&saved_profile);
 
-        let facts = provider.theme_facts(&provider_dir);
+        let facts = provider.theme_facts(&saved.join("providers").join(PROVIDER_ID));
         assert_eq!(facts.len(), 1);
         assert!(
             facts[0].value.parse::<usize>().unwrap_or(0) > 0,
@@ -866,6 +925,63 @@ mod tests {
             facts[0].value
         );
 
-        provider.apply(&theme).expect("apply");
+        // 2. Move the lights somewhere else, through the real CLI.
+        let changed = run_binary(
+            "openrgb",
+            &["--mode", "static", "--color", "FFFFFF"],
+            COMMAND_DEADLINE,
+        )
+        .is_some();
+        assert!(changed, "the white probe must at least run");
+
+        let after_change = theme_dir(tmp.path().join("changed").as_path());
+        provider.save(&after_change).expect("capture after the change");
+        let moved = colours_of(
+            &after_change.join("providers").join(PROVIDER_ID).join(PROFILE_FILE),
+        );
+        if moved == original {
+            eprintln!(
+                "live check skipped: no device accepted the static-white probe, so a \
+                 restore cannot be distinguished from a no-op on this hardware"
+            );
+            return;
+        }
+
+        // 3. Restore through the theme, and prove the live state came back.
+        provider.apply(&saved).expect("apply");
+        let restored = theme_dir(tmp.path().join("restored").as_path());
+        provider.save(&restored).expect("capture after the apply");
+        let back = colours_of(
+            &restored.join("providers").join(PROVIDER_ID).join(PROFILE_FILE),
+        );
+
+        assert_eq!(
+            back, original,
+            "applying the theme must put the captured lighting back"
+        );
+    }
+
+    /// The colour list of every controller in a stored profile.
+    fn colours_of(profile: &Path) -> Vec<Vec<u64>> {
+        let raw = fs::read_to_string(profile).expect("profile readable");
+        let parsed = serde_json::from_str::<serde_json::Value>(&raw).expect("profile json");
+        parsed
+            .get("controllers")
+            .and_then(|c| c.as_array())
+            .map(|controllers| {
+                controllers
+                    .iter()
+                    .map(|controller| {
+                        controller
+                            .get("colors")
+                            .and_then(|colours| colours.as_array())
+                            .map(|colours| {
+                                colours.iter().filter_map(|c| c.as_u64()).collect::<Vec<u64>>()
+                            })
+                            .unwrap_or_default()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }

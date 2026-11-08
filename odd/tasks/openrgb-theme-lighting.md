@@ -23,9 +23,12 @@ uses for `noctalia`.
   an unchanged OpenRGB profile document at `{theme_dir}/providers/openrgb/profile.json`.
   Re-saving overwrites it with the state that is live at that moment (the keeper's "o re-guarde").
 
-- **S3 — An apply restores it.** Applying a theme that holds `profile.json` loads that profile by
-  absolute path (`openrgb --profile <abs>`), never by name, so the theme carries its own bytes
-  and no name collision with the keeper's own profiles is possible.
+- **S3 — An apply restores it.** Applying a theme that holds `profile.json` loads that profile into
+  the running instance BY NAME: the theme's bytes are staged under a fixed name (`hve-theme.json`)
+  in OpenRGB's own profiles directory, loaded, and the staging file is removed. An absolute path
+  is a silent no-op in OpenRGB 1.1 (`--profile <abs>` prints "loaded successfully" and changes
+  nothing — measured 2026-11-08), so a path never reaches the CLI. No keeper profile is ever
+  overwritten.
 
 - **S4 — A theme without a profile applies exactly as before.** Old themes, and themes saved while
   OpenRGB was unavailable, apply with no lighting step and no new error.
@@ -77,6 +80,28 @@ uses for `noctalia`.
   `assets/themes/README.md` and enforced by
   `providers::openrgb::tests::the_shipped_themes_carry_no_lighting` (plus a fixture test proving
   the guard bites). No shipped theme was modified.
+- **L5 (2026-11-08, verbatim)**: "nadda sigue sin cambiar". Field failure after the keeper saved two
+  themes with their own lighting: the apply reported success and changed nothing.
+
+### Root cause of L5 — an absolute path is a SILENT NO-OP
+
+Measured on this machine (`openrgb` 1.1, server running):
+
+- `openrgb --profile /home/ximo/.config/hve/themes/JokeRCubo/providers/openrgb/profile.json` →
+  `Profile loaded successfully`, exit 0, and the live colours did NOT change (a follow-up capture
+  still matched the previous state).
+- `cp <same file> ~/.config/OpenRGB/profiles/hve-testname.json && openrgb --profile hve-testname`
+  → the live colours DID change (the follow-up capture matched the loaded profile exactly).
+
+So the instance resolves a profile NAME, not a path. The earlier probe that "proved" the path form
+worked was a false positive: it loaded the state that was already live, which is also why the first
+version of the `--ignored` live test passed while the feature did not work in the field.
+
+Fixes: `apply()` stages the theme's bytes as `hve-theme.json` in the profiles directory, loads it
+by that fixed name, and removes the staging file on every path; the `--ignored` live test now
+CHANGES the lighting first (static white), restores it through the theme, and compares the
+recaptured colours, so a no-op can no longer pass as a success.
+
 
 
 ### Measured evidence (2026-11-07, this machine)
